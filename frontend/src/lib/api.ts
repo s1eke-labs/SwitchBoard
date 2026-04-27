@@ -48,6 +48,7 @@ export type SessionListResponse = {
 export type SessionListParams = {
   query?: string;
   cursor?: string | null;
+  page?: number;
   limit?: number;
 };
 
@@ -175,6 +176,7 @@ export type UsageRequestLogsParams = {
   from?: number;
   to?: number;
   cursor?: string | null;
+  page?: number;
   limit?: number;
 };
 
@@ -243,10 +245,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ custom_name: customName }),
     }),
-  sessions: ({ query = "", cursor = null, limit = 7 }: SessionListParams = {}) => {
+  sessions: ({ query = "", cursor = null, page, limit = 7 }: SessionListParams = {}) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (query.trim()) params.set("query", query.trim());
     if (cursor) params.set("cursor", cursor);
+    if (page !== undefined) params.set("page", String(page));
     return request<SessionListResponse>(`/api/sessions?${params.toString()}`);
   },
   sessionDetail: (threadId: string) =>
@@ -261,11 +264,12 @@ export const api = {
   sessionUserIndex: (threadId: string) =>
     request<SessionUserIndexResponse>(`/api/sessions/${threadId}/user-index`),
   usageAggregates: () => request<UsageAggregatesResponse>("/api/usage/aggregates"),
-  usageRequestLogs: ({ from, to, cursor = null, limit = 50 }: UsageRequestLogsParams = {}) => {
+  usageRequestLogs: ({ from, to, cursor = null, page, limit = 50 }: UsageRequestLogsParams = {}) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (from !== undefined) params.set("from", String(from));
     if (to !== undefined) params.set("to", String(to));
     if (cursor) params.set("cursor", cursor);
+    if (page !== undefined) params.set("page", String(page));
     return request<UsageRequestLogsResponse>(`/api/usage/request-logs?${params.toString()}`);
   },
 };

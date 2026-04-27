@@ -701,8 +701,11 @@ def get_usage_request_logs(
     to_value: str | None = None,
     limit: int = 50,
     cursor: str | None = None,
+    page: int = 1,
 ) -> UsageRequestLogsResponse:
     cursor_value = _decode_request_log_cursor(cursor)
+    if page < 1:
+        raise ValueError("Invalid page")
     sync_usage_events(settings)
     now = _utc_now_ts()
     from_ts = iso_to_ts(from_value) if from_value else now - 60 * 60 * 24
@@ -754,6 +757,44 @@ def get_usage_request_logs(
             """,
             tuple(params),
         ).fetchone()
+        if cursor_value is None and page > 1:
+            boundary = conn.execute(
+                f"""
+                SELECT occurred_at, thread_id, event_index
+                FROM usage_events
+                WHERE {count_where}
+                ORDER BY occurred_at DESC, thread_id DESC, event_index DESC
+                LIMIT 1 OFFSET ?
+                """,
+                (*params, (page - 1) * safe_limit - 1),
+            ).fetchone()
+            if boundary is None:
+                return UsageRequestLogsResponse(
+                    items=[],
+                    next_cursor=None,
+                    total_count=int(summary_row["request_count"]),
+                    summary=_request_log_summary_from_row(summary_row),
+                )
+            page_filters.append(
+                """
+                (
+                    occurred_at < ?
+                    OR (occurred_at = ? AND thread_id < ?)
+                    OR (occurred_at = ? AND thread_id = ? AND event_index < ?)
+                )
+                """
+            )
+            page_params.extend(
+                [
+                    boundary["occurred_at"],
+                    boundary["occurred_at"],
+                    boundary["thread_id"],
+                    boundary["occurred_at"],
+                    boundary["thread_id"],
+                    boundary["event_index"],
+                ]
+            )
+            where = " AND ".join(page_filters)
         rows = list(
             conn.execute(
                 f"""

@@ -177,6 +177,7 @@ def create_app() -> FastAPI:
         to: str | None = None,
         limit: int = 7,
         cursor: str | None = None,
+        page: int = 1,
     ) -> SessionListResponse:
         try:
             return list_sessions(
@@ -187,6 +188,7 @@ def create_app() -> FastAPI:
                 to_ts=iso_to_ts(to) if to else None,
                 limit=limit,
                 cursor=cursor,
+                page=page,
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -238,9 +240,10 @@ def create_app() -> FastAPI:
         to: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        page: int = 1,
     ) -> UsageRequestLogsResponse:
         try:
-            return get_usage_request_logs(settings, from_value=from_, to_value=to, limit=limit, cursor=cursor)
+            return get_usage_request_logs(settings, from_value=from_, to_value=to, limit=limit, cursor=cursor, page=page)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

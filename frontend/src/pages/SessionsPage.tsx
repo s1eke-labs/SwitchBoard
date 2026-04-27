@@ -115,13 +115,10 @@ export function SessionsPage({
   onNavigate: (path: string, replace?: boolean) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
-  const [jumpingPage, setJumpingPage] = useState(false);
-  const cursor = cursorStack[cursorStack.length - 1] ?? null;
-  const page = cursorStack.length;
+  const [page, setPage] = useState(1);
   const sessions = useQuery({
-    queryKey: ["sessions", query, cursor],
-    queryFn: () => api.sessions({ query, cursor, limit: SESSIONS_PAGE_SIZE }),
+    queryKey: ["sessions", query, page],
+    queryFn: () => api.sessions({ query, page, limit: SESSIONS_PAGE_SIZE }),
     placeholderData: (previousData) => previousData,
   });
   const sessionItems = sessions.data?.items ?? [];
@@ -135,8 +132,14 @@ export function SessionsPage({
   });
 
   useEffect(() => {
-    setCursorStack([null]);
+    setPage(1);
   }, [query]);
+
+  useEffect(() => {
+    if (!sessions.isFetching && sessions.data?.total_count && page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, sessions.data?.total_count, sessions.isFetching, totalPages]);
 
   useEffect(() => {
     if (sessionItems[0] && (!selectedThreadId || !sessionItems.some((session) => session.thread_id === selectedThreadId))) {
@@ -144,33 +147,9 @@ export function SessionsPage({
     }
   }, [onNavigate, selectedThreadId, sessionItems]);
 
-  async function selectPage(targetPage: number) {
-    if (targetPage === page || targetPage < 1 || targetPage > totalPages || jumpingPage) return;
-    if (targetPage < page) {
-      setCursorStack((value) => value.slice(0, targetPage));
-      return;
-    }
-    if (!sessions.data?.next_cursor) return;
-
-    setJumpingPage(true);
-    try {
-      const nextStack = [...cursorStack];
-      let pageData = sessions.data;
-      let currentPage = page;
-
-      while (currentPage < targetPage) {
-        if (!pageData.next_cursor) break;
-        nextStack.push(pageData.next_cursor);
-        currentPage += 1;
-        if (currentPage < targetPage) {
-          pageData = await api.sessions({ query, cursor: pageData.next_cursor, limit: SESSIONS_PAGE_SIZE });
-        }
-      }
-
-      setCursorStack(nextStack);
-    } finally {
-      setJumpingPage(false);
-    }
+  function selectPage(targetPage: number) {
+    if (targetPage === page || targetPage < 1 || targetPage > totalPages || sessions.isFetching) return;
+    setPage(targetPage);
   }
 
   return (
@@ -237,38 +216,29 @@ export function SessionsPage({
                     variant="secondary"
                     size="icon"
                     className="h-9 w-9 rounded-lg"
-                    onClick={() => setCursorStack((value) => (value.length > 1 ? value.slice(0, -1) : value))}
-                    disabled={page === 1 || sessions.isFetching || jumpingPage}
+                    onClick={() => setPage((value) => Math.max(1, value - 1))}
+                    disabled={page === 1 || sessions.isFetching}
                   >
                     <ChevronLeft size={16} />
                   </Button>
                   <PageSelector
                     page={page}
                     totalPages={totalPages}
-                    disabled={sessions.isFetching || jumpingPage}
-                    jumping={jumpingPage}
+                    disabled={sessions.isFetching}
+                    jumping={sessions.isFetching}
                     onSelect={selectPage}
                   />
-                  {sessions.data?.next_cursor ? (
-                    <Button
-                      aria-label="Next page"
-                      title="Next page"
-                      variant="secondary"
-                      size="icon"
-                      className="h-9 w-9 rounded-lg"
-                      onClick={() => {
-                        if (!sessions.data?.next_cursor) return;
-                        setCursorStack((value) => [...value, sessions.data.next_cursor!]);
-                      }}
-                      disabled={sessions.isFetching || jumpingPage}
-                    >
-                      <ChevronRight size={16} />
-                    </Button>
-                  ) : (
-                    <Button aria-label="Next page" title="Next page" variant="secondary" size="icon" className="h-9 w-9 rounded-lg" disabled>
-                      <ChevronRight size={16} />
-                    </Button>
-                  )}
+                  <Button
+                    aria-label="Next page"
+                    title="Next page"
+                    variant="secondary"
+                    size="icon"
+                    className="h-9 w-9 rounded-lg"
+                    onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+                    disabled={page >= totalPages || sessions.isFetching}
+                  >
+                    <ChevronRight size={16} />
+                  </Button>
                 </div>
               </div>
             </>

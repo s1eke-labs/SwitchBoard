@@ -81,6 +81,27 @@ def test_sessions_api_returns_bad_request_for_invalid_cursor(monkeypatch, tmp_pa
     assert response.json() == {"detail": "Invalid cursor"}
 
 
+def test_sessions_api_returns_bad_request_for_invalid_page(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    (tmp_path / "codex").mkdir()
+
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+    client = TestClient(main.create_app())
+    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
+
+    response = client.get("/api/sessions", params={"page": "0"})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid page"}
+
+
 def test_usage_request_logs_api_returns_bad_request_for_invalid_cursor(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
@@ -100,6 +121,27 @@ def test_usage_request_logs_api_returns_bad_request_for_invalid_cursor(monkeypat
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Invalid cursor"}
+
+
+def test_usage_request_logs_api_returns_bad_request_for_invalid_page(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    (tmp_path / "codex").mkdir()
+
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+    client = TestClient(main.create_app())
+    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
+
+    response = client.get("/api/usage/request-logs", params={"page": "0"})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid page"}
 
 
 @pytest.mark.asyncio

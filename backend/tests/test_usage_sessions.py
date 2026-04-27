@@ -199,17 +199,25 @@ def test_session_list_reports_total_count_with_filters(tmp_path: Path) -> None:
     filtered = list_sessions(settings, query="Usage", limit=1)
     filtered_second_page = list_sessions(settings, query="Usage", limit=1, cursor=filtered.next_cursor)
     all_sessions_second_page = list_sessions(settings, limit=2, cursor=all_sessions.next_cursor)
+    all_sessions_second_page_by_page = list_sessions(settings, limit=2, page=2)
+    filtered_second_page_by_page = list_sessions(settings, query="Usage", limit=1, page=2)
+    out_of_range = list_sessions(settings, limit=2, page=99)
 
     assert [item.thread_id for item in all_sessions.items] == ["thread-4", "thread-3"]
     assert all_sessions.total_count == 4
     assert all_sessions.next_cursor is not None
     assert [item.thread_id for item in all_sessions_second_page.items] == ["thread-2", "thread-1"]
+    assert [item.thread_id for item in all_sessions_second_page_by_page.items] == ["thread-2", "thread-1"]
     assert all_sessions_second_page.next_cursor is None
     assert [item.thread_id for item in filtered.items] == ["thread-4"]
     assert filtered.total_count == 2
     assert filtered.next_cursor is not None
     assert [item.thread_id for item in filtered_second_page.items] == ["thread-3"]
+    assert [item.thread_id for item in filtered_second_page_by_page.items] == ["thread-3"]
     assert filtered_second_page.next_cursor is None
+    assert out_of_range.items == []
+    assert out_of_range.total_count == 4
+    assert out_of_range.next_cursor is None
 
 
 def test_session_list_rejects_malformed_cursor(tmp_path: Path) -> None:
@@ -218,6 +226,14 @@ def test_session_list_rejects_malformed_cursor(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Invalid cursor"):
         list_sessions(settings, cursor="not-a-valid-cursor")
+
+
+def test_session_list_rejects_invalid_page(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+
+    with pytest.raises(ValueError, match="Invalid page"):
+        list_sessions(settings, page=0)
 
 
 def test_session_detail_remaps_absolute_rollout_under_codex_home(tmp_path: Path) -> None:
@@ -460,6 +476,8 @@ def test_usage_request_logs_filter_and_paginate_descending(tmp_path: Path) -> No
 
     first_page = get_usage_request_logs(settings, "1777075200", "1777161600", limit=2)
     second_page = get_usage_request_logs(settings, "1777075200", "1777161600", limit=2, cursor=first_page.next_cursor)
+    second_page_by_page = get_usage_request_logs(settings, "1777075200", "1777161600", limit=2, page=2)
+    out_of_range = get_usage_request_logs(settings, "1777075200", "1777161600", limit=2, page=99)
 
     assert first_page.total_count == 3
     assert first_page.summary.request_count == 3
@@ -468,7 +486,19 @@ def test_usage_request_logs_filter_and_paginate_descending(tmp_path: Path) -> No
     assert [item.input_tokens for item in first_page.items] == [3000, 2000]
     assert first_page.next_cursor is not None
     assert [item.input_tokens for item in second_page.items] == [1000]
+    assert [item.input_tokens for item in second_page_by_page.items] == [1000]
     assert second_page.next_cursor is None
+    assert out_of_range.items == []
+    assert out_of_range.total_count == 3
+    assert out_of_range.next_cursor is None
+
+
+def test_usage_request_logs_reject_invalid_page(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+
+    with pytest.raises(ValueError, match="Invalid page"):
+        get_usage_request_logs(settings, page=0)
 
 
 def test_usage_request_logs_unknown_model_has_zero_cost(tmp_path: Path) -> None:

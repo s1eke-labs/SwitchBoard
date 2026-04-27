@@ -175,8 +175,11 @@ def list_sessions(
     to_ts: int | None = None,
     limit: int = 50,
     cursor: str | None = None,
+    page: int = 1,
 ) -> SessionListResponse:
     cursor_value = _decode_cursor(cursor)
+    if page < 1:
+        raise ValueError("Invalid page")
     db_path = _state_db_path(settings)
     if not db_path.exists():
         return SessionListResponse(items=[], next_cursor=None, total_count=0)
@@ -217,6 +220,29 @@ def list_sessions(
             f"SELECT COUNT(*) AS total_count FROM threads WHERE {count_where}",
             tuple(params),
         ).fetchone()
+        if cursor_value is None and page > 1:
+            boundary = conn.execute(
+                f"""
+                SELECT {SORT_UPDATED_AT_MS} AS sort_updated_at_ms, id
+                FROM threads
+                WHERE {count_where}
+                ORDER BY {SESSIONS_ORDER_BY}
+                LIMIT 1 OFFSET ?
+                """,
+                (*params, (page - 1) * safe_limit - 1),
+            ).fetchone()
+            if boundary is None:
+                return SessionListResponse(items=[], next_cursor=None, total_count=int(count_row["total_count"]))
+            page_filters.append(f"({SORT_UPDATED_AT_MS} < ? OR ({SORT_UPDATED_AT_MS} = ? AND id < ?))")
+            page_params.extend([int(boundary["sort_updated_at_ms"]), int(boundary["sort_updated_at_ms"]), boundary["id"]])
+            where = " AND ".join(page_filters)
+            sql = f"""
+                SELECT *, {SORT_UPDATED_AT_MS} AS sort_updated_at_ms
+                FROM threads
+                WHERE {where}
+                ORDER BY {SESSIONS_ORDER_BY}
+                LIMIT ?
+            """
         rows = list(conn.execute(sql, (*page_params, safe_limit + 1)))
     items = [_summary_from_row(row) for row in rows[:safe_limit]]
     next_cursor = None

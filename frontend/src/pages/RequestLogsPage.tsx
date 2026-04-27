@@ -226,10 +226,7 @@ function RequestLogRow({ log }: { log: UsageRequestLogDTO }) {
 export function RequestLogsPage() {
   const [range, setRange] = useState<RangeKey>("24h");
   const [windowEnd, setWindowEnd] = useState(() => nowSeconds());
-  const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
-  const [jumpingPage, setJumpingPage] = useState(false);
-  const cursor = cursorStack[cursorStack.length - 1] ?? null;
-  const page = cursorStack.length;
+  const [page, setPage] = useState(1);
   const windowBounds = useMemo(
     () => ({
       from: windowEnd - ranges[range].seconds,
@@ -238,12 +235,12 @@ export function RequestLogsPage() {
     [range, windowEnd],
   );
   const requestLogs = useQuery({
-    queryKey: ["usage-request-logs", range, windowEnd, cursor],
+    queryKey: ["usage-request-logs", range, windowEnd, page],
     queryFn: () =>
       api.usageRequestLogs({
         from: windowBounds.from,
         to: windowBounds.to,
-        cursor,
+        page,
         limit: REQUEST_LOG_PAGE_SIZE,
       }),
     placeholderData: (previousData) => previousData,
@@ -254,42 +251,12 @@ export function RequestLogsPage() {
   function selectRange(nextRange: RangeKey) {
     setRange(nextRange);
     setWindowEnd(nowSeconds());
-    setCursorStack([null]);
-    setJumpingPage(false);
+    setPage(1);
   }
 
-  async function selectPage(targetPage: number) {
-    if (targetPage === page || targetPage < 1 || targetPage > totalPages || jumpingPage) return;
-    if (targetPage < page) {
-      setCursorStack((value) => value.slice(0, targetPage));
-      return;
-    }
-    if (!requestLogs.data?.next_cursor) return;
-
-    setJumpingPage(true);
-    try {
-      const nextStack = [...cursorStack];
-      let pageData = requestLogs.data;
-      let currentPage = page;
-
-      while (currentPage < targetPage) {
-        if (!pageData.next_cursor) break;
-        nextStack.push(pageData.next_cursor);
-        currentPage += 1;
-        if (currentPage < targetPage) {
-          pageData = await api.usageRequestLogs({
-            from: windowBounds.from,
-            to: windowBounds.to,
-            cursor: pageData.next_cursor,
-            limit: REQUEST_LOG_PAGE_SIZE,
-          });
-        }
-      }
-
-      setCursorStack(nextStack);
-    } finally {
-      setJumpingPage(false);
-    }
+  function selectPage(targetPage: number) {
+    if (targetPage === page || targetPage < 1 || targetPage > totalPages || requestLogs.isFetching) return;
+    setPage(targetPage);
   }
 
   return (
@@ -358,16 +325,16 @@ export function RequestLogsPage() {
                 variant="secondary"
                 size="icon"
                 className="h-9 w-9 rounded-lg"
-                onClick={() => setCursorStack((value) => (value.length > 1 ? value.slice(0, -1) : value))}
-                disabled={page === 1 || requestLogs.isFetching || jumpingPage}
+                onClick={() => setPage((value) => Math.max(1, value - 1))}
+                disabled={page === 1 || requestLogs.isFetching}
               >
                 <ChevronLeft size={16} />
               </Button>
               <PageSelector
                 page={page}
                 totalPages={totalPages}
-                disabled={requestLogs.isFetching || jumpingPage}
-                jumping={jumpingPage}
+                disabled={requestLogs.isFetching}
+                jumping={requestLogs.isFetching}
                 onSelect={selectPage}
               />
               <Button
@@ -376,11 +343,8 @@ export function RequestLogsPage() {
                 variant="secondary"
                 size="icon"
                 className="h-9 w-9 rounded-lg"
-                onClick={() => {
-                  if (!requestLogs.data?.next_cursor) return;
-                  setCursorStack((value) => [...value, requestLogs.data.next_cursor!]);
-                }}
-                disabled={!requestLogs.data?.next_cursor || requestLogs.isFetching || jumpingPage}
+                onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+                disabled={page >= totalPages || requestLogs.isFetching}
               >
                 <ChevronRight size={16} />
               </Button>
