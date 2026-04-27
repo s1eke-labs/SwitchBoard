@@ -9,6 +9,7 @@ export type AccountDTO = {
   account_id: string;
   display_name: string;
   custom_name: string | null;
+  user_name: string | null;
   current: boolean;
   hidden: boolean;
   plan_type: string | null;
@@ -16,6 +17,8 @@ export type AccountDTO = {
   weekly: LimitDTO | null;
   last_scanned_at: number | null;
   last_error: string | null;
+  failed_scan_count: number;
+  expired: boolean;
 };
 
 export type ScanResult = {
@@ -177,6 +180,8 @@ export const api = {
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   accounts: () => request<AccountDTO[]>("/api/accounts"),
   scan: () => request<ScanResult>("/api/accounts/scan", { method: "POST" }),
+  switchAccount: (accountId: string) =>
+    request<ScanResult>(`/api/accounts/${accountId}/switch`, { method: "POST" }),
   hideAccount: (accountId: string) =>
     request<{ ok: boolean }>(`/api/accounts/${accountId}/hide`, { method: "POST" }),
   renameAccount: (accountId: string, customName: string | null) =>

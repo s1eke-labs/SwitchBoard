@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 
 import pytest
 
-from accounts import hide_account, list_accounts, scan_current_account, set_account_custom_name
+from accounts import account_auth_path, hide_account, list_accounts, scan_current_account, set_account_custom_name, switch_account
+from codex_files import current_auth_path, read_json
 from config import Settings
 from db import connect, init_db, now_ts
 from pricing import estimate_cost
@@ -74,10 +76,13 @@ async def test_scan_current_account_unhides_and_stores_snapshot(monkeypatch: pyt
     result = await scan_current_account(settings)
 
     assert result.status == "ok"
-    assert result.account.display_name == "Ada"
+    assert result.account.display_name == "Old"
+    assert result.account.user_name == "Ada"
     assert result.account.hidden is False
     assert result.account.five_hour is not None
     assert result.account.five_hour.remaining_percent == 78
+    assert account_auth_path(settings, "acct-current").exists()
+    assert read_json(account_auth_path(settings, "acct-current"))["tokens"]["account_id"] == "acct-current"
 
 
 @pytest.mark.asyncio
@@ -190,20 +195,25 @@ async def test_custom_name_overrides_scanned_name_and_can_be_cleared(
 
     monkeypatch.setattr("accounts._fetch_json", fake_fetch)
     result = await scan_current_account(settings)
-    assert result.account.display_name == "Ada"
+    generated_name = result.account.display_name
+    assert re.fullmatch(r"Account-\d{4}", generated_name)
     assert result.account.custom_name is None
+    assert result.account.user_name == "Ada"
 
     renamed = set_account_custom_name(settings, "acct-current", "Primary")
     assert renamed.display_name == "Primary"
     assert renamed.custom_name == "Primary"
+    assert renamed.user_name == "Ada"
 
     scanned_again = await scan_current_account(settings)
     assert scanned_again.account.display_name == "Primary"
     assert scanned_again.account.custom_name == "Primary"
+    assert scanned_again.account.user_name == "Ada"
 
     cleared = set_account_custom_name(settings, "acct-current", " ")
-    assert cleared.display_name == "Ada"
+    assert cleared.display_name == generated_name
     assert cleared.custom_name is None
+    assert cleared.user_name == "Ada"
 
 
 def test_reset_limit_recovers_to_full_remaining(tmp_path: Path) -> None:
@@ -245,7 +255,6 @@ def test_init_db_migrates_custom_name_and_removes_workspace_name(tmp_path: Path)
             CREATE TABLE accounts (
                 account_id TEXT PRIMARY KEY,
                 display_name TEXT NOT NULL,
-                user_name TEXT,
                 workspace_name TEXT,
                 plan_type TEXT,
                 hidden INTEGER NOT NULL DEFAULT 0,
@@ -263,7 +272,81 @@ def test_init_db_migrates_custom_name_and_removes_workspace_name(tmp_path: Path)
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
 
     assert "custom_name" in columns
+    assert "user_name" in columns
+    assert "failed_scan_count" in columns
+    assert "expired_at" in columns
     assert "workspace_name" not in columns
+
+
+@pytest.mark.asyncio
+async def test_switch_account_replaces_current_auth_and_scans(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+
+    async def fake_fetch(_client, url: str, _token: str):
+        if url.endswith("/wham/usage"):
+            return {
+                "primary": {"used_percent": 10, "window_minutes": 300, "resets_at": now_ts() + 60},
+                "secondary": {"used_percent": 20, "window_minutes": 10080, "resets_at": now_ts() + 120},
+            }
+        return {"user": {"name": "Ada"}}
+
+    monkeypatch.setattr("accounts._fetch_json", fake_fetch)
+    _write_auth(settings, "acct-one")
+    await scan_current_account(settings)
+    _write_auth(settings, "acct-two")
+    await scan_current_account(settings)
+
+    result = await switch_account(settings, "acct-one")
+
+    assert result.status == "ok"
+    assert result.account.account_id == "acct-one"
+    assert read_json(current_auth_path(settings.codex_home))["tokens"]["account_id"] == "acct-one"
+
+
+@pytest.mark.asyncio
+async def test_switch_account_requires_stored_auth(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+
+    with pytest.raises(KeyError):
+        await switch_account(settings, "missing-account")
+
+
+@pytest.mark.asyncio
+async def test_failed_scans_mark_account_expired_and_success_clears_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings)
+
+    async def bad_fetch(_client, _url: str, _token: str):
+        return {"unexpected": True}
+
+    monkeypatch.setattr("accounts._fetch_json", bad_fetch)
+    for _ in range(3):
+        result = await scan_current_account(settings)
+
+    assert result.status == "error"
+    assert result.account.failed_scan_count == 3
+    assert result.account.expired is True
+
+    async def good_fetch(_client, url: str, _token: str):
+        if url.endswith("/wham/usage"):
+            return {
+                "primary": {"used_percent": 10, "window_minutes": 300, "resets_at": now_ts() + 60},
+                "secondary": {"used_percent": 20, "window_minutes": 10080, "resets_at": now_ts() + 120},
+            }
+        return {"user": {"name": "Ada"}}
+
+    monkeypatch.setattr("accounts._fetch_json", good_fetch)
+    recovered = await scan_current_account(settings)
+
+    assert recovered.status == "ok"
+    assert recovered.account.failed_scan_count == 0
+    assert recovered.account.expired is False
+    assert recovered.account.last_error is None
 
 
 def test_hide_current_account_is_rejected(tmp_path: Path) -> None:

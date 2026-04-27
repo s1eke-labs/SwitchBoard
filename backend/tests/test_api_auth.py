@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -78,3 +79,26 @@ def test_sessions_api_returns_bad_request_for_invalid_cursor(monkeypatch, tmp_pa
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Invalid cursor"}
+
+
+@pytest.mark.asyncio
+async def test_account_refresh_catches_scan_errors(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    (tmp_path / "codex").mkdir()
+
+    import asyncio
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+
+    async def fail_scan(_settings):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(main, "scan_current_account", fail_scan)
+
+    await main.refresh_current_account(main.get_settings(), asyncio.Lock())

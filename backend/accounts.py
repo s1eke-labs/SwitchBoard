@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import secrets
 import sqlite3
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,6 +15,9 @@ from pydantic import BaseModel
 from codex_files import current_account_id, current_auth_path, read_json
 from config import Settings
 from db import connect, now_ts
+
+
+ACCOUNT_EXPIRED_FAILURES = 3
 
 
 class LimitDTO(BaseModel):
@@ -25,6 +31,7 @@ class AccountDTO(BaseModel):
     account_id: str
     display_name: str
     custom_name: str | None
+    user_name: str | None
     current: bool
     hidden: bool
     plan_type: str | None
@@ -32,6 +39,8 @@ class AccountDTO(BaseModel):
     weekly: LimitDTO | None
     last_scanned_at: int | None
     last_error: str | None
+    failed_scan_count: int
+    expired: bool
 
 
 class ScanResult(BaseModel):
@@ -89,10 +98,12 @@ def _extract_profile(value: Any, claims: dict[str, Any]) -> str | None:
     return user_name
 
 
-def _display_name(account_id: str, user_name: str | None) -> str:
-    if user_name:
-        return user_name
-    return f"Account {account_id[:8]}"
+def _random_display_name(conn: sqlite3.Connection) -> str:
+    for _ in range(100):
+        candidate = f"Account-{secrets.randbelow(10_000):04d}"
+        if conn.execute("SELECT 1 FROM accounts WHERE display_name = ?", (candidate,)).fetchone() is None:
+            return candidate
+    return f"Account-{now_ts() % 10_000:04d}"
 
 
 def _as_float(value: Any) -> float | None:
@@ -246,6 +257,7 @@ def _account_dto(row: sqlite3.Row, snapshot: sqlite3.Row | None, current_id: str
         account_id=row["account_id"],
         display_name=row["custom_name"] or row["display_name"],
         custom_name=row["custom_name"],
+        user_name=row["user_name"],
         current=row["account_id"] == current_id,
         hidden=bool(row["hidden"]),
         plan_type=row["plan_type"],
@@ -253,16 +265,18 @@ def _account_dto(row: sqlite3.Row, snapshot: sqlite3.Row | None, current_id: str
         weekly=weekly,
         last_scanned_at=row["last_scanned_at"],
         last_error=row["last_error"],
+        failed_scan_count=row["failed_scan_count"],
+        expired=row["expired_at"] is not None,
     )
 
 
-def _sort_key(account: AccountDTO) -> tuple[int, int, float]:
+def _sort_key(account: AccountDTO) -> tuple[int, int, int, float]:
     if account.current:
-        return (0, 0, 0.0)
+        return (0, 0, 0, 0.0)
     weekly_remaining = account.weekly.remaining_percent if account.weekly else 100.0
     five_remaining = account.five_hour.remaining_percent if account.five_hour else 100.0
     weekly_exhausted = weekly_remaining <= 0
-    return (1, 1 if weekly_exhausted else 0, -five_remaining)
+    return (1, 1 if account.expired else 0, 1 if weekly_exhausted else 0, -five_remaining)
 
 
 def list_accounts(settings: Settings) -> list[AccountDTO]:
@@ -315,29 +329,86 @@ async def _fetch_json(client: httpx.AsyncClient, url: str, access_token: str) ->
     return response.json()
 
 
+def _auth_tokens(auth: dict[str, Any]) -> tuple[str, str]:
+    tokens = auth.get("tokens")
+    if not isinstance(tokens, dict):
+        raise ValueError("auth.json does not contain ChatGPT tokens")
+    account_id = tokens.get("account_id")
+    access_token = tokens.get("access_token")
+    if not isinstance(account_id, str) or not account_id:
+        raise ValueError("auth.json does not contain tokens.account_id")
+    if not isinstance(access_token, str) or not access_token:
+        raise ValueError("auth.json does not contain tokens.access_token")
+    return account_id, access_token
+
+
+def _account_vault_dir(settings: Settings, account_id: str) -> Path:
+    if not account_id or "/" in account_id or "\\" in account_id or account_id in {".", ".."}:
+        raise ValueError("Invalid account_id")
+    return settings.codex_home / "switchboard" / "accounts" / account_id
+
+
+def account_auth_path(settings: Settings, account_id: str) -> Path:
+    return _account_vault_dir(settings, account_id) / "auth.json"
+
+
+def _write_private_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, ensure_ascii=False)
+    os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, path)
+    os.chmod(path, 0o600)
+
+
+def save_account_auth(settings: Settings, account_id: str, auth: dict[str, Any]) -> None:
+    _write_private_json(account_auth_path(settings, account_id), auth)
+
+
+def switch_account_auth(settings: Settings, account_id: str) -> None:
+    stored_path = account_auth_path(settings, account_id)
+    if not stored_path.exists():
+        raise KeyError(account_id)
+    auth = read_json(stored_path)
+    stored_account_id, _ = _auth_tokens(auth)
+    if stored_account_id != account_id:
+        raise ValueError("Stored auth account_id does not match requested account")
+    _write_private_json(current_auth_path(settings.codex_home), auth)
+
+
+async def switch_account(settings: Settings, account_id: str) -> ScanResult:
+    switch_account_auth(settings, account_id)
+    return await scan_current_account(settings)
+
+
 def _upsert_account(
     conn: sqlite3.Connection,
     account_id: str,
-    display_name: str,
     user_name: str | None,
     plan_type: str | None,
     last_error: str | None,
 ) -> None:
     ts = now_ts()
+    display_name = _random_display_name(conn)
+    failed_scan_count_sql = "0" if last_error is None else "accounts.failed_scan_count + 1"
+    expired_at_sql = "NULL" if last_error is None else f"CASE WHEN accounts.failed_scan_count + 1 >= {ACCOUNT_EXPIRED_FAILURES} THEN COALESCE(accounts.expired_at, excluded.updated_at) ELSE accounts.expired_at END"
     conn.execute(
         """
         INSERT INTO accounts (
             account_id, display_name, user_name, plan_type,
-            hidden, last_scanned_at, last_error, created_at, updated_at
+            hidden, last_scanned_at, last_error, failed_scan_count, expired_at, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(account_id) DO UPDATE SET
-            display_name = excluded.display_name,
             user_name = excluded.user_name,
             plan_type = COALESCE(excluded.plan_type, accounts.plan_type),
             hidden = 0,
             last_scanned_at = excluded.last_scanned_at,
             last_error = excluded.last_error,
+            failed_scan_count = """ + failed_scan_count_sql + """,
+            expired_at = """ + expired_at_sql + """,
             updated_at = excluded.updated_at
         """,
         (
@@ -347,6 +418,8 @@ def _upsert_account(
             plan_type,
             ts,
             last_error,
+            1 if last_error else 0,
+            None,
             ts,
             ts,
         ),
@@ -359,15 +432,9 @@ async def scan_current_account(settings: Settings) -> ScanResult:
         raise FileNotFoundError(f"{auth_path} does not exist")
 
     auth = read_json(auth_path)
-    tokens = auth.get("tokens")
-    if not isinstance(tokens, dict):
-        raise ValueError("auth.json does not contain ChatGPT tokens")
-    account_id = tokens.get("account_id")
-    access_token = tokens.get("access_token")
-    if not isinstance(account_id, str) or not account_id:
-        raise ValueError("auth.json does not contain tokens.account_id")
-    if not isinstance(access_token, str) or not access_token:
-        raise ValueError("auth.json does not contain tokens.access_token")
+    account_id, access_token = _auth_tokens(auth)
+    tokens = auth["tokens"]
+    save_account_auth(settings, account_id, auth)
 
     id_claims = _decode_jwt_claims(tokens.get("id_token"))
     profile_payload: Any = {}
@@ -399,14 +466,12 @@ async def scan_current_account(settings: Settings) -> ScanResult:
     if not rate_limits and last_error is None:
         last_error = f"Usage response did not contain rate limits ({_payload_shape(usage_payload)})"
     user_name = _extract_profile(profile_payload, id_claims)
-    display_name = _display_name(account_id, user_name)
     plan_type = rate_limits.get("plan_type") if isinstance(rate_limits.get("plan_type"), str) else None
 
     with connect(settings.db_path) as conn:
         _upsert_account(
             conn,
             account_id,
-            display_name,
             user_name,
             plan_type,
             last_error,

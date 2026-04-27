@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     hidden INTEGER NOT NULL DEFAULT 0,
     last_scanned_at INTEGER,
     last_error TEXT,
+    failed_scan_count INTEGER NOT NULL DEFAULT 0,
+    expired_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -115,6 +117,12 @@ def _migrate_accounts(conn: sqlite3.Connection) -> None:
     columns = _columns(conn, "accounts")
     if "custom_name" not in columns:
         conn.execute("ALTER TABLE accounts ADD COLUMN custom_name TEXT")
+    if "user_name" not in columns:
+        conn.execute("ALTER TABLE accounts ADD COLUMN user_name TEXT")
+    if "failed_scan_count" not in columns:
+        conn.execute("ALTER TABLE accounts ADD COLUMN failed_scan_count INTEGER NOT NULL DEFAULT 0")
+    if "expired_at" not in columns:
+        conn.execute("ALTER TABLE accounts ADD COLUMN expired_at INTEGER")
     if "workspace_name" in columns:
         conn.execute("ALTER TABLE accounts DROP COLUMN workspace_name")
 

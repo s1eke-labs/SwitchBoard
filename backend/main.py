@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from accounts import AccountDTO, ScanResult, hide_account, list_accounts, scan_current_account, set_account_custom_name
+from accounts import AccountDTO, ScanResult, hide_account, list_accounts, scan_current_account, set_account_custom_name, switch_account
 from config import get_settings, validate_runtime_settings
 from db import init_db
 from security import clear_login_cookie, require_auth, set_login_cookie
@@ -38,6 +38,7 @@ from usage import (
 
 
 logger = logging.getLogger(__name__)
+ACCOUNT_REFRESH_SECONDS = 5 * 60
 
 
 class LoginRequest(BaseModel):
@@ -61,10 +62,19 @@ def _seconds_until_next_usage_aggregation() -> float:
     return max(1.0, AGGREGATION_REFRESH_SECONDS - (now % AGGREGATION_REFRESH_SECONDS))
 
 
+async def refresh_current_account(settings, scan_lock: asyncio.Lock) -> None:
+    try:
+        async with scan_lock:
+            await scan_current_account(settings)
+    except Exception:
+        logger.exception("Account refresh failed")
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     validate_runtime_settings(settings)
     init_db(settings.db_path)
+    account_scan_lock = asyncio.Lock()
 
     async def usage_aggregation_loop() -> None:
         while True:
@@ -74,16 +84,26 @@ def create_app() -> FastAPI:
                 logger.exception("Usage aggregation failed")
             await asyncio.sleep(_seconds_until_next_usage_aggregation())
 
+    async def account_refresh_loop() -> None:
+        while True:
+            await asyncio.sleep(ACCOUNT_REFRESH_SECONDS)
+            await refresh_current_account(settings, account_scan_lock)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        task = asyncio.create_task(usage_aggregation_loop())
-        app.state.usage_aggregation_task = task
+        usage_task = asyncio.create_task(usage_aggregation_loop())
+        account_task = asyncio.create_task(account_refresh_loop())
+        app.state.usage_aggregation_task = usage_task
+        app.state.account_refresh_task = account_task
         try:
             yield
         finally:
-            task.cancel()
+            usage_task.cancel()
+            account_task.cancel()
             with suppress(asyncio.CancelledError):
-                await task
+                await usage_task
+            with suppress(asyncio.CancelledError):
+                await account_task
 
     app = FastAPI(title="SwitchBoard", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
@@ -113,7 +133,18 @@ def create_app() -> FastAPI:
     @app.post("/api/accounts/scan", response_model=ScanResult, dependencies=authed)
     async def scan_account() -> ScanResult:
         try:
-            return await scan_current_account(settings)
+            async with account_scan_lock:
+                return await scan_current_account(settings)
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/api/accounts/{account_id}/switch", response_model=ScanResult, dependencies=authed)
+    async def switch_current_account(account_id: str) -> ScanResult:
+        try:
+            async with account_scan_lock:
+                return await switch_account(settings, account_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account auth not found") from exc
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

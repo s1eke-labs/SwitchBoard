@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -19,7 +19,9 @@ import {
   ChevronUp,
   Clock,
   Eye,
+  LayoutGrid,
   Loader2,
+  LogIn,
   LogOut,
   Pencil,
   RefreshCw,
@@ -28,8 +30,8 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { api, AccountDTO, LimitDTO, SessionEvent, SessionEventPreview, SessionSummary, UsageAggregatePointDTO } from "@/lib/api";
-import { formatChartTime, formatNumber, formatPercent, formatTime, shortId } from "@/lib/utils";
+import { api, AccountDTO, LimitDTO, ScanResult, SessionEvent, SessionEventPreview, SessionSummary, UsageAggregatePointDTO } from "@/lib/api";
+import { cn, formatChartTime, formatNumber, formatPercent, formatTime, shortId } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -42,6 +44,23 @@ type ChartPoint = UsageAggregatePointDTO & {
 };
 
 type AccountDensity = "large" | "medium" | "small";
+
+const accountDensityOrder: AccountDensity[] = ["large", "medium", "small"];
+const accountDensityLabels: Record<AccountDensity, string> = {
+  large: "large",
+  medium: "medium",
+  small: "small",
+};
+const accountGridClasses: Record<AccountDensity, string> = {
+  large: "grid-cols-2",
+  medium: "grid-cols-3",
+  small: "grid-cols-4",
+};
+const collapsedRowsByDensity: Record<AccountDensity, number> = {
+  large: 1,
+  medium: 1,
+  small: 2,
+};
 
 type AppRoute =
   | { page: "dashboard" }
@@ -195,6 +214,46 @@ function Login({ onDone }: { onDone: () => void }) {
   );
 }
 
+function Modal({
+  title,
+  children,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4" role="presentation" onMouseDown={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="switch-modal-title"
+        className="w-full max-w-md rounded-lg border bg-white p-5 shadow-soft"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <h2 id="switch-modal-title" className="text-lg font-bold">
+            {title}
+          </h2>
+          <Button variant="ghost" size="icon" aria-label="Close modal" title="Close modal" onClick={onClose}>
+            <X size={16} />
+          </Button>
+        </div>
+        <div className="mt-3 text-sm leading-6 text-muted-foreground">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 function LimitMeter({ label, limit }: { label: string; limit: LimitDTO | null }) {
   const remaining = limit?.remaining_percent ?? 100;
   return (
@@ -214,18 +273,33 @@ function LimitMeter({ label, limit }: { label: string; limit: LimitDTO | null })
   );
 }
 
+function LimitSummary({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-md bg-muted px-2.5 py-2">
+      <div className="truncate text-xs font-semibold text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate text-base font-bold leading-none">{value}</div>
+    </div>
+  );
+}
+
 function AccountCard({
   account,
   onHide,
   onRename,
+  onSwitch,
   renaming,
+  switching,
   density,
+  expanded,
 }: {
   account: AccountDTO;
   onHide: (id: string) => void;
   onRename: (id: string, customName: string | null) => Promise<unknown>;
+  onSwitch: (id: string) => void;
   renaming: boolean;
+  switching: boolean;
   density: AccountDensity;
+  expanded: boolean;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draftName, setDraftName] = useState(account.custom_name ?? account.display_name);
@@ -254,20 +328,29 @@ function AccountCard({
   }
 
   const isLarge = density === "large";
+  const isMedium = density === "medium";
   const isSmall = density === "small";
   const fiveHour = formatPercent(account.five_hour?.remaining_percent ?? 100);
   const weekly = formatPercent(account.weekly?.remaining_percent ?? 100);
+  const showUserName = Boolean(account.user_name && account.user_name !== account.display_name);
+  const actionButtonClass = isLarge ? undefined : "h-8 w-8";
+  const iconSize = isLarge ? 16 : 15;
 
   return (
-    <Card className={`min-h-0 overflow-hidden ${account.current ? "border-blue-300 bg-blue-50/40" : ""}`}>
-      <CardContent className={isLarge ? "p-4" : isSmall ? "p-3" : "p-3.5"}>
-        <div className={`${isLarge ? "mb-4" : "mb-3"} flex items-start justify-between gap-3`}>
-          <div className="min-w-0">
+    <Card className={cn("h-full min-h-0 overflow-hidden", account.current && "border-blue-300 bg-blue-50/40")}>
+      <CardContent
+        className={cn(
+          "flex h-full min-h-0 flex-col",
+          isLarge ? (expanded ? "p-5" : "p-4") : isMedium ? (expanded ? "p-4" : "p-3.5") : expanded ? "p-3.5" : "p-3",
+        )}
+      >
+        <div className={cn("flex items-start justify-between gap-3", isLarge ? (expanded ? "mb-5" : "mb-4") : isMedium ? "mb-3" : "mb-2.5")}>
+          <div className="min-w-0 flex-1">
             {isEditing ? (
               <form onSubmit={saveName} className="flex min-w-0 flex-wrap items-center gap-2">
                 <Input
                   autoFocus
-                  className={isSmall ? "h-8 w-36 max-w-full" : "h-9 w-56 max-w-full"}
+                  className={isSmall ? "h-8 w-32 max-w-full" : isMedium ? "h-8 w-44 max-w-full" : "h-9 w-56 max-w-full"}
                   placeholder="Custom name"
                   value={draftName}
                   onChange={(event) => setDraftName(event.target.value)}
@@ -276,27 +359,31 @@ function AccountCard({
                   aria-label="Save name"
                   title="Save name"
                   size="icon"
+                  className={actionButtonClass}
                   type="submit"
                   disabled={renaming}
                 >
-                  {renaming ? <Loader2 className="animate-spin" size={16} /> : <Check size={16} />}
+                  {renaming ? <Loader2 className="animate-spin" size={iconSize} /> : <Check size={iconSize} />}
                 </Button>
                 <Button
                   aria-label="Cancel rename"
                   title="Cancel rename"
                   size="icon"
+                  className={actionButtonClass}
                   type="button"
                   variant="ghost"
                   onClick={cancelEditing}
                   disabled={renaming}
                 >
-                  <X size={16} />
+                  <X size={iconSize} />
                 </Button>
               </form>
             ) : (
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className={`${isSmall ? "text-sm" : "text-base"} truncate font-bold`}>{account.display_name}</h3>
+              <div className={cn("flex min-w-0 flex-wrap items-center gap-2", isSmall && "gap-x-1.5 gap-y-1")}>
+                <h3 className={cn("min-w-0 truncate font-bold", isSmall ? "text-sm" : "text-base")}>{account.display_name}</h3>
                 {account.current ? <Badge tone="blue">Current</Badge> : null}
+                {account.expired ? <Badge tone="orange">Expired</Badge> : null}
+                {!isSmall && showUserName ? <Badge tone="neutral">{account.user_name}</Badge> : null}
                 {!isSmall && account.plan_type ? <Badge tone="neutral">{account.plan_type}</Badge> : null}
               </div>
             )}
@@ -304,15 +391,29 @@ function AccountCard({
             {renameError ? <p className="mt-2 text-xs text-destructive">{renameError}</p> : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {!account.current ? (
+              <Button
+                aria-label="Switch account"
+                title="Switch account"
+                size="icon"
+                variant="secondary"
+                className={actionButtonClass}
+                onClick={() => onSwitch(account.account_id)}
+                disabled={switching}
+              >
+                {switching ? <Loader2 className="animate-spin" size={iconSize} /> : <LogIn size={iconSize} />}
+              </Button>
+            ) : null}
             {!isEditing ? (
               <Button
                 aria-label="Rename account"
                 title="Rename account"
                 size="icon"
                 variant="ghost"
+                className={actionButtonClass}
                 onClick={beginEditing}
               >
-                <Pencil size={16} />
+                <Pencil size={iconSize} />
               </Button>
             ) : null}
             {!account.current ? (
@@ -321,23 +422,19 @@ function AccountCard({
                 title="Hide account"
                 size="icon"
                 variant="ghost"
+                className={actionButtonClass}
                 onClick={() => onHide(account.account_id)}
+                disabled={switching}
               >
-                <Trash2 size={16} />
+                <Trash2 size={iconSize} />
               </Button>
             ) : null}
           </div>
         </div>
         {isSmall ? (
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="rounded-md bg-muted px-2 py-1">
-              <div className="font-semibold text-muted-foreground">5h</div>
-              <div className="font-bold">{fiveHour}</div>
-            </div>
-            <div className="rounded-md bg-muted px-2 py-1">
-              <div className="font-semibold text-muted-foreground">Weekly</div>
-              <div className="font-bold">{weekly}</div>
-            </div>
+          <div className="mt-auto grid grid-cols-2 gap-2">
+            <LimitSummary label="5h" value={fiveHour} />
+            <LimitSummary label="Weekly" value={weekly} />
           </div>
         ) : (
           <div className={`grid ${isLarge ? "gap-4 sm:grid-cols-2" : "gap-3"}`}>
@@ -348,10 +445,16 @@ function AccountCard({
         {isLarge ? (
           <div className="mt-4 flex min-w-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
             <span className="truncate">Scanned {formatTime(account.last_scanned_at)}</span>
-            {account.last_error ? <span className="truncate text-orange-700">Last scan failed</span> : null}
+            {account.last_error ? (
+              <span className="truncate text-orange-700">
+                Last scan failed{account.failed_scan_count ? ` x${account.failed_scan_count}` : ""}
+              </span>
+            ) : null}
           </div>
         ) : account.last_error ? (
-          <div className="mt-2 truncate text-xs text-orange-700">Last scan failed</div>
+          <div className="mt-2 truncate text-xs text-orange-700">
+            Last scan failed{account.failed_scan_count ? ` x${account.failed_scan_count}` : ""}
+          </div>
         ) : null}
       </CardContent>
     </Card>
@@ -361,9 +464,18 @@ function AccountCard({
 function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
   const [expanded, setExpanded] = useState(false);
   const [density, setDensity] = useState<AccountDensity>("large");
+  const [collapsedHeight, setCollapsedHeight] = useState(0);
+  const [hasOverflowRow, setHasOverflowRow] = useState(false);
+  const [switchNotice, setSwitchNotice] = useState<ScanResult | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
   const queryClient = useQueryClient();
   const scan = useMutation({
     mutationFn: api.scan,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["accounts"] }),
+  });
+  const switchAccount = useMutation({
+    mutationFn: api.switchAccount,
+    onSuccess: (result) => setSwitchNotice(result),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["accounts"] }),
   });
   const hide = useMutation({
@@ -376,43 +488,76 @@ function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["accounts"] }),
   });
   const current = accounts.find((account) => account.current);
-  const visibleAccounts = expanded ? accounts : accounts.slice(0, 2);
-  const gridClass =
-    density === "large" ? "lg:grid-cols-2" : density === "medium" ? "md:grid-cols-2 xl:grid-cols-3" : "md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
-  const hasMoreAccounts = accounts.length > 2;
+  const nextDensity = accountDensityOrder[(accountDensityOrder.indexOf(density) + 1) % accountDensityOrder.length];
+  const densitySwitchLabel = `Accounts view: ${accountDensityLabels[density]}. Switch to ${accountDensityLabels[nextDensity]}`;
+  const gridClass = accountGridClasses[density];
+  const gridGapClass = expanded ? "gap-4" : density === "small" ? "gap-3" : "gap-4";
+  const listStyle = expanded || collapsedHeight === 0 ? undefined : { maxHeight: `${collapsedHeight}px` };
+
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const target = grid;
+
+    function measure() {
+      const items = Array.from(target.children).filter((child): child is HTMLElement => child instanceof HTMLElement);
+      if (!items.length) {
+        setCollapsedHeight(0);
+        setHasOverflowRow(false);
+        return;
+      }
+
+      const rows: HTMLElement[][] = [];
+      for (const item of items) {
+        const row = rows.find((candidate) => Math.abs(candidate[0].offsetTop - item.offsetTop) < 4);
+        if (row) {
+          row.push(item);
+        } else {
+          rows.push([item]);
+        }
+      }
+
+      const visibleRowCount = collapsedRowsByDensity[density];
+      const visibleRows = rows.slice(0, visibleRowCount).flat();
+      const firstTop = rows[0][0].offsetTop;
+      const visibleBottom = Math.max(...visibleRows.map((item) => item.offsetTop + item.offsetHeight));
+      setCollapsedHeight(Math.ceil(visibleBottom - firstTop));
+      setHasOverflowRow(rows.length > visibleRowCount);
+    }
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(target);
+    for (const child of Array.from(target.children)) {
+      if (child instanceof HTMLElement) observer.observe(child);
+    }
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [accounts, density]);
+
+  useEffect(() => {
+    if (!hasOverflowRow) setExpanded(false);
+  }, [hasOverflowRow]);
 
   return (
-    <section className="relative h-[248px] shrink-0">
+    <section className="h-full min-h-0">
       <div
-        className={`left-0 right-0 top-0 z-20 flex min-h-0 flex-col overflow-hidden rounded-lg bg-background ${
-          expanded ? "absolute max-h-[min(70vh,calc(100vh-160px))] shadow-soft" : "relative h-full"
-        }`}
+        className={cn(
+          "z-20 flex min-h-0 flex-col overflow-hidden rounded-lg bg-background",
+          expanded ? "absolute inset-x-4 bottom-4 top-4 p-5 shadow-soft ring-1 ring-border" : "relative h-full",
+        )}
       >
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className={cn("flex min-h-0 flex-1 flex-col", expanded ? "gap-5" : "gap-3")}>
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-2xl font-bold">Accounts</h2>
               <p className="truncate text-sm text-muted-foreground">{current?.display_name ?? "No current account"}</p>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <div className="inline-flex rounded-md border bg-white p-1">
-                {(["large", "medium", "small"] as AccountDensity[]).map((key) => (
-                  <button
-                    key={key}
-                    onClick={() => setDensity(key)}
-                    className={`h-8 min-w-9 rounded-sm px-2 text-xs font-semibold capitalize ${
-                      density === key ? "bg-foreground text-white" : "text-muted-foreground hover:bg-muted"
-                    }`}
-                  >
-                    {key[0].toUpperCase()}
-                  </button>
-                ))}
-              </div>
-              <Button onClick={() => scan.mutate()} disabled={scan.isPending}>
-                {scan.isPending ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
-                Scan
-              </Button>
-              {hasMoreAccounts ? (
+              {hasOverflowRow ? (
                 <Button
                   aria-label={expanded ? "Collapse accounts" : "Expand accounts"}
                   title={expanded ? "Collapse accounts" : "Expand accounts"}
@@ -423,27 +568,56 @@ function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
                   {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                 </Button>
               ) : null}
+              <Button
+                aria-label={densitySwitchLabel}
+                title={densitySwitchLabel}
+                size="icon"
+                variant="secondary"
+                onClick={() => setDensity(nextDensity)}
+              >
+                <LayoutGrid size={16} />
+              </Button>
+              <Button onClick={() => scan.mutate()} disabled={scan.isPending}>
+                {scan.isPending ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
+                Scan
+              </Button>
             </div>
           </div>
           {scan.data?.error ? (
             <div className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800">{scan.data.error}</div>
           ) : null}
-          <div className={`min-h-0 flex-1 ${expanded ? "overflow-auto pr-1" : "overflow-hidden"}`}>
-            <div className={`grid gap-3 ${gridClass}`}>
-              {visibleAccounts.map((account) => (
+          {switchAccount.error ? (
+            <div className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800">{switchAccount.error.message}</div>
+          ) : null}
+          <div className={cn("min-h-0 flex-1", expanded ? "overflow-y-auto pr-2" : "overflow-hidden")} style={listStyle}>
+            <div ref={gridRef} className={cn("grid", gridClass, gridGapClass)}>
+              {accounts.map((account) => (
                 <AccountCard
                   key={account.account_id}
                   account={account}
                   density={density}
+                  expanded={expanded}
                   onHide={(id) => hide.mutate(id)}
                   onRename={(id, customName) => rename.mutateAsync({ accountId: id, customName })}
+                  onSwitch={(id) => switchAccount.mutate(id)}
                   renaming={rename.isPending && rename.variables?.accountId === account.account_id}
+                  switching={switchAccount.isPending && switchAccount.variables === account.account_id}
                 />
               ))}
             </div>
           </div>
         </div>
       </div>
+      {switchNotice ? (
+        <Modal title="Account switched" onClose={() => setSwitchNotice(null)}>
+          <p>Switched to {switchNotice.account.display_name}. Restart Codex for the change to take effect.</p>
+          {switchNotice.error ? (
+            <p className="mt-3 rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-orange-800">
+              Scan warning: {switchNotice.error}
+            </p>
+          ) : null}
+        </Modal>
+      ) : null}
     </section>
   );
 }
@@ -921,7 +1095,7 @@ function NavButton({
   return (
     <button
       onClick={onClick}
-      className={`inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold transition-colors ${
+      className={`inline-flex h-8 items-center gap-2 rounded-md px-2.5 text-sm font-semibold transition-colors ${
         active ? "bg-foreground text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"
       }`}
     >
@@ -948,18 +1122,18 @@ function AppShell({
   return (
     <main className="flex h-screen flex-col overflow-hidden bg-background">
       <header className="shrink-0 border-b bg-white">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-4">
-          <div className="flex min-w-0 flex-wrap items-center gap-4">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
             <button
               onClick={() => onNavigate("/")}
-              className="flex min-w-0 items-center gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex min-w-0 items-center gap-2.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-foreground text-white">
-                <Activity size={20} />
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-foreground text-white">
+                <Activity size={18} />
               </div>
               <div className="min-w-0">
-                <h1 className="truncate text-xl font-bold">SwitchBoard</h1>
-                <p className="truncate text-sm text-muted-foreground">Local Codex console</p>
+                <h1 className="truncate text-lg font-bold leading-5">SwitchBoard</h1>
+                <p className="truncate text-xs text-muted-foreground">Local Codex console</p>
               </div>
             </button>
             <div className="flex items-center gap-1">
@@ -985,7 +1159,7 @@ function AppShell({
 
 function Dashboard({ accounts }: { accounts: AccountDTO[] }) {
   return (
-    <div className="relative mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-4 overflow-hidden px-4 py-4">
+    <div className="relative mx-auto grid min-h-0 w-full max-w-7xl flex-1 grid-rows-[minmax(0,38fr)_minmax(0,62fr)] gap-4 overflow-hidden px-4 py-4">
       <AccountsPanel accounts={accounts} />
       <div className="min-h-0 flex-1 overflow-hidden">
         <TrendsPanel />
