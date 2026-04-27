@@ -2,6 +2,8 @@ import { ReactNode, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, ChevronLeft, ChevronRight, Database, DollarSign, Layers3, Loader2, ReceiptText } from "lucide-react";
 import { api, UsageRequestLogDTO, UsageRequestLogsResponse } from "@/lib/api";
+import { getCurrentLocale, translate, useI18n } from "@/i18n";
+import { formatAppError } from "@/lib/errors";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -22,8 +24,8 @@ function nowSeconds() {
 }
 
 function formatUsd(value: number | null, known: boolean) {
-  if (!known || value === null) return "Unknown";
-  return new Intl.NumberFormat(undefined, {
+  if (!known || value === null) return translate("common.unknown");
+  return new Intl.NumberFormat(getCurrentLocale(), {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: value < 1 ? 4 : 2,
@@ -34,7 +36,7 @@ function formatUsd(value: number | null, known: boolean) {
 function formatCompactThousands(value: number | null | undefined) {
   const safeValue = value ?? 0;
   if (Math.abs(safeValue) < 1000) return formatNumber(safeValue);
-  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(safeValue / 1000)}k`;
+  return `${new Intl.NumberFormat(getCurrentLocale(), { maximumFractionDigits: 1 }).format(safeValue / 1000)}k`;
 }
 
 function RangeButton({
@@ -73,6 +75,7 @@ function PageSelector({
   jumping: boolean;
   onSelect: (page: number) => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const pageCount = Math.max(1, totalPages);
 
@@ -86,11 +89,11 @@ function PageSelector({
         aria-expanded={open}
         aria-haspopup="listbox"
       >
-        {jumping ? "Loading..." : `Page ${Math.min(page, pageCount)} / ${pageCount}`}
+        {jumping ? t("common.loadingEllipsis") : t("common.pageLabel", { page: Math.min(page, pageCount), total: pageCount })}
       </button>
       {open ? (
         <div className="absolute bottom-11 left-1/2 z-20 max-h-56 w-56 -translate-x-1/2 overflow-auto rounded-lg border bg-white p-2 shadow-soft">
-          <div className="grid grid-cols-4 gap-1" role="listbox" aria-label="Select page">
+          <div className="grid grid-cols-4 gap-1" role="listbox" aria-label={t("common.selectPage")}>
             {Array.from({ length: pageCount }, (_, index) => {
               const pageNumber = index + 1;
               const active = pageNumber === page;
@@ -161,37 +164,37 @@ function RequestLogSummaryCards({ data }: { data: UsageRequestLogsResponse | und
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <SummaryCard
-        title="总请求数"
+        title={translate("requestLogs.totalRequests")}
         value={formatNumber(summary?.request_count ?? 0)}
         icon={<Activity size={24} />}
         iconClassName="bg-blue-50 text-blue-600"
       />
       <SummaryCard
-        title="总成本"
+        title={translate("requestLogs.totalCost")}
         value={formatUsd(summary?.total_cost_usd ?? null, Boolean(summary?.cost_known))}
         icon={<DollarSign size={25} />}
         iconClassName="bg-emerald-50 text-emerald-600"
       />
       <SummaryCard
-        title="总 Token 数"
+        title={translate("requestLogs.totalTokens")}
         value={formatNumber(summary?.total_tokens ?? 0)}
         icon={<Layers3 size={25} />}
         iconClassName="bg-purple-50 text-purple-600"
       >
         <div className="space-y-1.5">
-          <SummaryMetricLine label="Input" value={formatCompactThousands(summary?.input_tokens)} />
-          <SummaryMetricLine label="Output" value={formatCompactThousands(summary?.output_tokens)} />
+          <SummaryMetricLine label={translate("usage.input")} value={formatCompactThousands(summary?.input_tokens)} />
+          <SummaryMetricLine label={translate("usage.output")} value={formatCompactThousands(summary?.output_tokens)} />
         </div>
       </SummaryCard>
       <SummaryCard
-        title="缓存 Token"
+        title={translate("requestLogs.cacheTokens")}
         value={formatNumber(summary?.cache_hit_tokens ?? 0)}
         icon={<Database size={25} />}
         iconClassName="bg-orange-50 text-orange-600"
       >
         <div className="space-y-1.5">
-          <SummaryMetricLine label="创建" value={formatCompactThousands(summary?.cache_creation_tokens)} />
-          <SummaryMetricLine label="命中" value={formatCompactThousands(summary?.cache_hit_tokens)} />
+          <SummaryMetricLine label={translate("usage.cacheCreated")} value={formatCompactThousands(summary?.cache_creation_tokens)} />
+          <SummaryMetricLine label={translate("usage.cacheHit")} value={formatCompactThousands(summary?.cache_hit_tokens)} />
         </div>
       </SummaryCard>
     </div>
@@ -205,25 +208,32 @@ function RequestLogRow({ log }: { log: UsageRequestLogDTO }) {
         {formatTime(log.occurred_at)}
       </td>
       <td className="px-4 py-3 align-top">
-        <Badge tone="neutral">{log.billing_model ?? "Unknown"}</Badge>
+        <Badge tone="neutral">{log.billing_model ?? translate("common.unknown")}</Badge>
       </td>
       <td className="px-4 py-3 align-top text-right tabular-nums">
         <div className="font-semibold text-foreground">{formatNumber(log.input_tokens)}</div>
-        <div className="mt-1 text-xs text-muted-foreground">Cache {formatNumber(log.cache_hit_tokens)}</div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {translate("requestLogs.cacheWithCount", { count: formatNumber(log.cache_hit_tokens) })}
+        </div>
       </td>
       <td className="px-4 py-3 align-top text-right tabular-nums">
         <div className="font-semibold text-foreground">{formatNumber(log.output_tokens)}</div>
-        <div className="mt-1 text-xs text-muted-foreground">Reasoning {formatNumber(log.reasoning_output_tokens)}</div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {translate("requestLogs.reasoningWithCount", { count: formatNumber(log.reasoning_output_tokens) })}
+        </div>
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-right align-top tabular-nums">
         <div className="font-semibold text-foreground">{formatUsd(log.total_cost_usd, log.cost_known)}</div>
-        <div className="mt-1 text-xs text-muted-foreground">{formatNumber(log.total_tokens)} tokens</div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {translate("requestLogs.tokensWithCount", { count: formatNumber(log.total_tokens) })}
+        </div>
       </td>
     </tr>
   );
 }
 
 export function RequestLogsPage() {
+  const { t } = useI18n();
   const [range, setRange] = useState<RangeKey>("24h");
   const [windowEnd, setWindowEnd] = useState(() => nowSeconds());
   const [page, setPage] = useState(1);
@@ -264,7 +274,7 @@ export function RequestLogsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3 px-1">
         <div className="flex items-center gap-2">
           <ReceiptText size={20} strokeWidth={1.8} />
-          <h2 className="text-2xl font-bold leading-tight">Request Logs</h2>
+          <h2 className="text-2xl font-bold leading-tight">{t("requestLogs.title")}</h2>
         </div>
         <div className="inline-flex rounded-md border bg-white p-1">
           {(Object.keys(ranges) as RangeKey[]).map((key) => (
@@ -276,9 +286,11 @@ export function RequestLogsPage() {
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg shadow-none">
         <CardHeader className="flex flex-row items-center justify-between gap-3 px-5 py-4">
           <div className="min-w-0">
-            <h3 className="truncate text-base font-bold leading-6">Codex Requests</h3>
+            <h3 className="truncate text-base font-bold leading-6">{t("requestLogs.requestsTitle")}</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              {requestLogs.isPending ? "Loading" : `${formatNumber(requestLogs.data?.total_count ?? 0)} rows`}
+              {requestLogs.isPending
+                ? t("common.loading")
+                : t("requestLogs.rows", { count: formatNumber(requestLogs.data?.total_count ?? 0) })}
             </p>
           </div>
           {requestLogs.isFetching ? <Loader2 className="shrink-0 animate-spin text-muted-foreground" size={18} /> : null}
@@ -286,23 +298,23 @@ export function RequestLogsPage() {
         <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
           {requestLogs.error ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-sm text-destructive">
-              {requestLogs.error.message}
+              {formatAppError(requestLogs.error)}
             </div>
           ) : requestLogs.isPending ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <Loader2 className="mr-2 animate-spin" size={18} />
-              Loading
+              {t("common.loading")}
             </div>
           ) : logs.length ? (
             <div className="min-h-0 flex-1 overflow-auto">
               <table className="w-full min-w-[820px] border-collapse text-sm">
                 <thead className="sticky top-0 z-10 border-b bg-white text-xs font-bold uppercase text-muted-foreground">
                   <tr>
-                    <th className="px-4 py-3 text-left">Time</th>
-                    <th className="px-4 py-3 text-left">Billing model</th>
-                    <th className="px-4 py-3 text-right">Input</th>
-                    <th className="px-4 py-3 text-right">Output</th>
-                    <th className="px-4 py-3 text-right">Total cost</th>
+                    <th className="px-4 py-3 text-left">{t("requestLogs.time")}</th>
+                    <th className="px-4 py-3 text-left">{t("requestLogs.billingModel")}</th>
+                    <th className="px-4 py-3 text-right">{t("usage.input")}</th>
+                    <th className="px-4 py-3 text-right">{t("usage.output")}</th>
+                    <th className="px-4 py-3 text-right">{t("requestLogs.totalCostColumn")}</th>
                   </tr>
                 </thead>
                 <tbody className={cn("bg-white transition-opacity", requestLogs.isFetching ? "opacity-70" : "")}>
@@ -314,14 +326,14 @@ export function RequestLogsPage() {
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
-              No request logs in range
+              {t("requestLogs.noLogsInRange")}
             </div>
           )}
           <div className="flex shrink-0 items-center justify-center border-t p-3">
             <div className="inline-flex items-center gap-2 bg-white">
               <Button
-                aria-label="Previous page"
-                title="Previous page"
+                aria-label={t("common.previousPage")}
+                title={t("common.previousPage")}
                 variant="secondary"
                 size="icon"
                 className="h-9 w-9 rounded-lg"
@@ -338,8 +350,8 @@ export function RequestLogsPage() {
                 onSelect={selectPage}
               />
               <Button
-                aria-label="Next page"
-                title="Next page"
+                aria-label={t("common.nextPage")}
+                title={t("common.nextPage")}
                 variant="secondary"
                 size="icon"
                 className="h-9 w-9 rounded-lg"

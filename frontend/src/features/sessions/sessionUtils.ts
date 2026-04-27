@@ -1,4 +1,5 @@
 import { SessionEvent, SessionUserIndexItem } from "@/lib/api";
+import { getCurrentLocale, translate } from "@/i18n";
 
 export function fullEventBody(event: SessionEvent) {
   if (event.text !== undefined && event.text !== null) return event.text;
@@ -17,9 +18,9 @@ export function formatBytes(bytes: number) {
     unitIndex += 1;
   }
   const maximumFractionDigits = unitIndex === 0 ? 0 : value < 10 ? 1 : 0;
-  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(value)} ${units[unitIndex]}`;
+  return `${new Intl.NumberFormat(getCurrentLocale(), { maximumFractionDigits }).format(value)} ${units[unitIndex]}`;
 }
 
 export function userIndexLabel(item: SessionUserIndexItem) {
-  return item.body_preview.trim().split(/\r?\n/, 1)[0] || "Empty user message";
+  return item.body_preview.trim().split(/\r?\n/, 1)[0] || translate("sessions.emptyUserMessage");
 }

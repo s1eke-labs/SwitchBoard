@@ -17,6 +17,18 @@ from accounts import AccountDTO, ScanResult, hide_account, list_accounts, scan_c
 from config import get_settings, validate_runtime_settings
 from config_transfer import ConfigExportDTO, ConfigImportSummary, export_config, import_config
 from db import init_db
+from issues import (
+    account_auth_not_found_detail,
+    account_issue_from_message,
+    account_not_found_detail,
+    config_import_issue_from_message,
+    http_error,
+    http_error_from_detail,
+    session_event_not_found_detail,
+    session_not_found_detail,
+    sessions_issue_from_message,
+    usage_issue_from_message,
+)
 from security import clear_login_cookie, require_auth, set_login_cookie
 from sessions import (
     SessionDetail,
@@ -120,7 +132,7 @@ def create_app() -> FastAPI:
     @app.post("/api/auth/login", response_model=LoginResponse)
     def login(payload: LoginRequest, response: Response) -> LoginResponse:
         if not hmac.compare_digest(payload.password, settings.app_password):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+            raise http_error(status.HTTP_401_UNAUTHORIZED, "AUTH_INVALID_PASSWORD", "Invalid password")
         set_login_cookie(response, settings)
         return LoginResponse(ok=True)
 
@@ -141,7 +153,7 @@ def create_app() -> FastAPI:
             async with account_scan_lock:
                 return await scan_current_account(settings)
         except (FileNotFoundError, ValueError) as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise http_error_from_detail(status.HTTP_400_BAD_REQUEST, account_issue_from_message(str(exc))) from exc
 
     @app.post("/api/accounts/{account_id}/switch", response_model=ScanResult, dependencies=authed)
     async def switch_current_account(account_id: str) -> ScanResult:
@@ -149,18 +161,18 @@ def create_app() -> FastAPI:
             async with account_scan_lock:
                 return await switch_account(settings, account_id)
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account auth not found") from exc
+            raise http_error_from_detail(status.HTTP_404_NOT_FOUND, account_auth_not_found_detail()) from exc
         except (FileNotFoundError, ValueError) as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise http_error_from_detail(status.HTTP_400_BAD_REQUEST, account_issue_from_message(str(exc))) from exc
 
     @app.post("/api/accounts/{account_id}/hide", response_model=dict[str, bool], dependencies=authed)
     def hide(account_id: str) -> dict[str, bool]:
         try:
             hide_account(settings, account_id)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise http_error_from_detail(status.HTTP_400_BAD_REQUEST, account_issue_from_message(str(exc))) from exc
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
+            raise http_error_from_detail(status.HTTP_404_NOT_FOUND, account_not_found_detail()) from exc
         return {"ok": True}
 
     @app.post("/api/accounts/{account_id}/name", response_model=AccountDTO, dependencies=authed)
@@ -168,7 +180,7 @@ def create_app() -> FastAPI:
         try:
             return set_account_custom_name(settings, account_id, payload.custom_name)
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
+            raise http_error_from_detail(status.HTTP_404_NOT_FOUND, account_not_found_detail()) from exc
 
     @app.get("/api/config/export", response_model=ConfigExportDTO, dependencies=authed)
     def export_switchboard_config() -> ConfigExportDTO:
@@ -180,7 +192,7 @@ def create_app() -> FastAPI:
             payload = await request.json()
             return import_config(settings, payload)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise http_error_from_detail(status.HTTP_400_BAD_REQUEST, config_import_issue_from_message(str(exc))) from exc
 
     @app.get("/api/sessions", response_model=SessionListResponse, dependencies=authed)
     def sessions(
@@ -204,37 +216,37 @@ def create_app() -> FastAPI:
                 page=page,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise http_error_from_detail(status.HTTP_400_BAD_REQUEST, sessions_issue_from_message(str(exc))) from exc
 
     @app.get("/api/sessions/{thread_id}", response_model=SessionDetail, dependencies=authed)
     def session_detail(thread_id: str) -> SessionDetail:
         try:
             return get_session_detail(settings, thread_id)
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found") from exc
+            raise http_error_from_detail(status.HTTP_404_NOT_FOUND, session_not_found_detail()) from exc
 
     @app.get("/api/sessions/{thread_id}/events", response_model=SessionEventsResponse, dependencies=authed)
     def session_events(thread_id: str, cursor: str | None = None, limit: int = 100) -> SessionEventsResponse:
         try:
             return list_session_events(settings, thread_id, cursor=cursor, limit=limit)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise http_error_from_detail(status.HTTP_400_BAD_REQUEST, sessions_issue_from_message(str(exc))) from exc
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found") from exc
+            raise http_error_from_detail(status.HTTP_404_NOT_FOUND, session_not_found_detail()) from exc
 
     @app.get("/api/sessions/{thread_id}/user-index", response_model=SessionUserIndexResponse, dependencies=authed)
     def session_user_index(thread_id: str) -> SessionUserIndexResponse:
         try:
             return list_session_user_index(settings, thread_id)
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found") from exc
+            raise http_error_from_detail(status.HTTP_404_NOT_FOUND, session_not_found_detail()) from exc
 
     @app.get("/api/sessions/{thread_id}/events/{line_no}", response_model=SessionEvent, dependencies=authed)
     def session_event(thread_id: str, line_no: int) -> SessionEvent:
         try:
             return get_session_event(settings, thread_id, line_no)
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session event not found") from exc
+            raise http_error_from_detail(status.HTTP_404_NOT_FOUND, session_event_not_found_detail()) from exc
 
     @app.get("/api/usage/events", response_model=UsageEventsResponse, dependencies=authed)
     def usage_events(
@@ -258,7 +270,7 @@ def create_app() -> FastAPI:
         try:
             return get_usage_request_logs(settings, from_value=from_, to_value=to, limit=limit, cursor=cursor, page=page)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise http_error_from_detail(status.HTTP_400_BAD_REQUEST, usage_issue_from_message(str(exc))) from exc
 
     static_dir = settings.static_dir
     if static_dir and static_dir.exists():

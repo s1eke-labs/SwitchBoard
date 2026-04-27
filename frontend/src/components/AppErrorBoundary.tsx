@@ -2,6 +2,7 @@ import { Component, ErrorInfo, ReactNode } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { translate } from "@/i18n";
 
 type AppErrorBoundaryProps = {
   children: ReactNode;
@@ -35,17 +36,15 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
               <AlertTriangle size={20} />
             </div>
             <div>
-              <h1 className="text-lg font-bold">SwitchBoard hit an unexpected error</h1>
-              <p className="text-sm text-muted-foreground">The app can recover by reloading cleanly.</p>
+              <h1 className="text-lg font-bold">{translate("errorBoundary.title")}</h1>
+              <p className="text-sm text-muted-foreground">{translate("errorBoundary.subtitle")}</p>
             </div>
           </CardHeader>
           <CardContent className="space-y-4 pt-4">
-            <p className="text-sm leading-6 text-muted-foreground">
-              A component crashed while rendering. Reload the application to rebuild the dashboard state.
-            </p>
+            <p className="text-sm leading-6 text-muted-foreground">{translate("errorBoundary.description")}</p>
             <Button onClick={() => window.location.reload()}>
               <RefreshCw size={16} />
-              Reload app
+              {translate("errorBoundary.reloadApp")}
             </Button>
           </CardContent>
         </Card>

@@ -15,6 +15,7 @@ SwitchBoard is a small full-stack app for people who use Codex locally and want 
 - Export and import local account display state for moving SwitchBoard setup between machines.
 - Browse Codex sessions, search by text, and inspect session events.
 - Review request logs, token usage, cache usage, and estimated costs.
+- Default the interface to English or Simplified Chinese based on browser language, with manual switching available on the login page and app header.
 - Run as separate backend/frontend dev servers, a production-style local app, or Docker Compose.
 
 ## Preview

@@ -20,8 +20,16 @@ def test_api_requires_login(monkeypatch, tmp_path) -> None:
     importlib.reload(main)
     client = TestClient(main.create_app())
 
-    assert client.get("/api/accounts").status_code == 401
-    assert client.post("/api/auth/login", json={"password": "bad"}).status_code == 401
+    accounts_response = client.get("/api/accounts")
+    assert accounts_response.status_code == 401
+    assert accounts_response.json() == {
+        "detail": {"code": "AUTH_NOT_AUTHENTICATED", "message": "Not authenticated"}
+    }
+    bad_login = client.post("/api/auth/login", json={"password": "bad"})
+    assert bad_login.status_code == 401
+    assert bad_login.json() == {
+        "detail": {"code": "AUTH_INVALID_PASSWORD", "message": "Invalid password"}
+    }
     login = client.post("/api/auth/login", json={"password": "secret"})
     assert login.status_code == 200
     assert client.get("/api/accounts").status_code == 200
@@ -53,8 +61,16 @@ def test_config_import_export_api_auth_and_summary(monkeypatch, tmp_path) -> Non
         ],
     }
 
-    assert client.get("/api/config/export").status_code == 401
-    assert client.post("/api/config/import", json=payload).status_code == 401
+    export_response = client.get("/api/config/export")
+    assert export_response.status_code == 401
+    assert export_response.json() == {
+        "detail": {"code": "AUTH_NOT_AUTHENTICATED", "message": "Not authenticated"}
+    }
+    import_response = client.post("/api/config/import", json=payload)
+    assert import_response.status_code == 401
+    assert import_response.json() == {
+        "detail": {"code": "AUTH_NOT_AUTHENTICATED", "message": "Not authenticated"}
+    }
     assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
 
     imported = client.post("/api/config/import", json=payload)
@@ -78,6 +94,32 @@ def test_config_import_export_api_auth_and_summary(monkeypatch, tmp_path) -> Non
             "weekly": None,
         }
     ]
+
+
+def test_config_import_api_returns_bad_request_for_invalid_schema(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    (tmp_path / "codex").mkdir()
+
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+    client = TestClient(main.create_app())
+    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
+
+    response = client.post("/api/config/import", json={"schema": "wrong", "accounts": []})
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": {
+            "code": "CONFIG_IMPORT_INVALID_SCHEMA",
+            "message": "Unsupported config schema; expected switchboard.config.v1",
+        }
+    }
 
 
 def test_login_uses_constant_time_compare(monkeypatch, tmp_path) -> None:
@@ -131,7 +173,9 @@ def test_sessions_api_returns_bad_request_for_invalid_cursor(monkeypatch, tmp_pa
     response = client.get("/api/sessions", params={"cursor": "broken"})
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Invalid cursor"}
+    assert response.json() == {
+        "detail": {"code": "SESSIONS_INVALID_CURSOR", "message": "Invalid cursor"}
+    }
 
 
 def test_sessions_api_returns_bad_request_for_invalid_page(monkeypatch, tmp_path) -> None:
@@ -152,7 +196,9 @@ def test_sessions_api_returns_bad_request_for_invalid_page(monkeypatch, tmp_path
     response = client.get("/api/sessions", params={"page": "0"})
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Invalid page"}
+    assert response.json() == {
+        "detail": {"code": "SESSIONS_INVALID_PAGE", "message": "Invalid page"}
+    }
 
 
 def test_usage_request_logs_api_returns_bad_request_for_invalid_cursor(monkeypatch, tmp_path) -> None:
@@ -173,7 +219,9 @@ def test_usage_request_logs_api_returns_bad_request_for_invalid_cursor(monkeypat
     response = client.get("/api/usage/request-logs", params={"cursor": "broken"})
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Invalid cursor"}
+    assert response.json() == {
+        "detail": {"code": "USAGE_INVALID_CURSOR", "message": "Invalid cursor"}
+    }
 
 
 def test_usage_request_logs_api_returns_bad_request_for_invalid_page(monkeypatch, tmp_path) -> None:
@@ -194,7 +242,9 @@ def test_usage_request_logs_api_returns_bad_request_for_invalid_page(monkeypatch
     response = client.get("/api/usage/request-logs", params={"page": "0"})
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Invalid page"}
+    assert response.json() == {
+        "detail": {"code": "USAGE_INVALID_PAGE", "message": "Invalid page"}
+    }
 
 
 @pytest.mark.asyncio

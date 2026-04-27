@@ -364,6 +364,8 @@ async def test_failed_scans_mark_account_expired_and_success_clears_status(
         result = await scan_current_account(settings)
 
     assert result.status == "error"
+    assert result.warning is not None
+    assert result.warning.code == "ACCOUNT_SCAN_WARNING"
     assert result.account.failed_scan_count == 3
     assert result.account.expired is True
 
@@ -379,6 +381,7 @@ async def test_failed_scans_mark_account_expired_and_success_clears_status(
     recovered = await scan_current_account(settings)
 
     assert recovered.status == "ok"
+    assert recovered.warning is None
     assert recovered.account.failed_scan_count == 0
     assert recovered.account.expired is False
     assert recovered.account.last_error is None

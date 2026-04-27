@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Loader2, Search, UserRound } from "lucide-react";
 import { api, SessionSummary } from "@/lib/api";
+import { useI18n } from "@/i18n";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
 import { sessionPath } from "@/app/routing";
 import { SessionEventList } from "@/features/sessions/SessionEventList";
@@ -24,6 +25,7 @@ function PageSelector({
   jumping: boolean;
   onSelect: (page: number) => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const pageCount = Math.max(1, totalPages);
 
@@ -37,11 +39,11 @@ function PageSelector({
         aria-expanded={open}
         aria-haspopup="listbox"
       >
-        {jumping ? "Loading..." : `Page ${Math.min(page, pageCount)} / ${pageCount}`}
+        {jumping ? t("common.loadingEllipsis") : t("common.pageLabel", { page: Math.min(page, pageCount), total: pageCount })}
       </button>
       {open ? (
         <div className="absolute bottom-11 left-1/2 z-20 max-h-56 w-56 -translate-x-1/2 overflow-auto rounded-lg border bg-white p-2 shadow-soft">
-          <div className="grid grid-cols-4 gap-1" role="listbox" aria-label="Select page">
+          <div className="grid grid-cols-4 gap-1" role="listbox" aria-label={t("common.selectPage")}>
             {Array.from({ length: pageCount }, (_, index) => {
               const pageNumber = index + 1;
               const active = pageNumber === page;
@@ -114,6 +116,7 @@ export function SessionsPage({
   selectedThreadId: string | null;
   onNavigate: (path: string, replace?: boolean) => void;
 }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const sessions = useQuery({
@@ -157,13 +160,13 @@ export function SessionsPage({
       <div className="flex flex-wrap items-center justify-between gap-3 px-1">
         <div className="flex items-center gap-2">
           <UserRound size={20} strokeWidth={1.8} />
-          <h2 className="text-2xl font-bold leading-tight">Sessions</h2>
+          <h2 className="text-2xl font-bold leading-tight">{t("sessions.title")}</h2>
         </div>
         <div className="relative w-full sm:w-96">
           <Search className="pointer-events-none absolute left-3 top-2.5 text-muted-foreground" size={16} />
           <Input
             className="h-10 rounded-lg pl-9 text-sm"
-            placeholder="Search sessions"
+            placeholder={t("sessions.searchPlaceholder")}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
@@ -174,7 +177,7 @@ export function SessionsPage({
           {sessions.isPending ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">
               <Loader2 className="mr-2 animate-spin" size={18} />
-              Loading
+              {t("common.loading")}
             </div>
           ) : sessionItems.length || page > 1 ? (
             <>
@@ -201,7 +204,7 @@ export function SessionsPage({
                     className="grid h-full min-h-0"
                     style={{ gridTemplateRows: `repeat(${SESSIONS_PAGE_SIZE}, minmax(0, 1fr))` }}
                   >
-                    <div className="flex h-full min-h-0 items-center border-b px-4 text-sm text-muted-foreground">No sessions on this page</div>
+                    <div className="flex h-full min-h-0 items-center border-b px-4 text-sm text-muted-foreground">{t("sessions.noSessionsOnPage")}</div>
                     {Array.from({ length: SESSIONS_PAGE_SIZE - 1 }, (_, index) => (
                       <EmptySessionSlot key={`empty-page-${index}`} />
                     ))}
@@ -211,8 +214,8 @@ export function SessionsPage({
               <div className="flex items-center justify-center border-t p-3">
                 <div className="inline-flex items-center gap-2 bg-white">
                   <Button
-                    aria-label="Previous page"
-                    title="Previous page"
+                    aria-label={t("common.previousPage")}
+                    title={t("common.previousPage")}
                     variant="secondary"
                     size="icon"
                     className="h-9 w-9 rounded-lg"
@@ -229,8 +232,8 @@ export function SessionsPage({
                     onSelect={selectPage}
                   />
                   <Button
-                    aria-label="Next page"
-                    title="Next page"
+                    aria-label={t("common.nextPage")}
+                    title={t("common.nextPage")}
                     variant="secondary"
                     size="icon"
                     className="h-9 w-9 rounded-lg"
@@ -243,17 +246,20 @@ export function SessionsPage({
               </div>
             </>
           ) : (
-            <div className="p-4 text-sm text-muted-foreground">No sessions</div>
+            <div className="p-4 text-sm text-muted-foreground">{t("sessions.noSessions")}</div>
           )}
         </Card>
         <Card className="flex min-h-0 flex-col overflow-hidden rounded-lg shadow-none">
           <CardHeader className="px-5 py-4">
             <div className="min-w-0">
-              <h3 className="truncate text-base font-bold leading-6">{detail.data?.summary.title ?? "Session detail"}</h3>
+              <h3 className="truncate text-base font-bold leading-6">{detail.data?.summary.title ?? t("sessions.sessionDetail")}</h3>
               <p className="mt-1 truncate text-xs text-muted-foreground">{detail.data?.summary.cwd ?? ""}</p>
               {detail.data ? (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {formatNumber(detail.data.event_count)} events from {formatNumber(detail.data.raw_event_count)} raw lines
+                  {t("sessions.eventsFromRaw", {
+                    eventCount: formatNumber(detail.data.event_count),
+                    rawCount: formatNumber(detail.data.raw_event_count),
+                  })}
                 </p>
               ) : null}
             </div>

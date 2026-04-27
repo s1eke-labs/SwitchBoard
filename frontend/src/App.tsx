@@ -2,7 +2,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { AppShell } from "@/app/AppShell";
 import { useRoute } from "@/app/routing";
+import { useI18n } from "@/i18n";
 import { api } from "@/lib/api";
+import { formatAppError } from "@/lib/errors";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { RequestLogsPage } from "@/pages/RequestLogsPage";
@@ -17,6 +19,7 @@ function errorStatus(error: unknown) {
 export default function App() {
   const queryClient = useQueryClient();
   const { route, navigate } = useRoute();
+  const { t } = useI18n();
   const accounts = useQuery({
     queryKey: ["accounts"],
     queryFn: api.accounts,
@@ -30,7 +33,7 @@ export default function App() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
         <Loader2 className="mr-2 animate-spin" size={18} />
-        Loading
+        {t("common.loading")}
       </main>
     );
   }
@@ -40,7 +43,7 @@ export default function App() {
       <main className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="max-w-md rounded-lg border bg-white p-5 text-sm shadow-soft">
           <h1 className="mb-2 text-lg font-bold">SwitchBoard</h1>
-          <p className="text-destructive">{accounts.error.message}</p>
+          <p className="text-destructive">{formatAppError(accounts.error)}</p>
         </div>
       </main>
     );

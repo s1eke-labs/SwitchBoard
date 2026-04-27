@@ -3,7 +3,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Activity, BarChart3, LogOut, ReceiptText, UserRound } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { AppRoute } from "@/app/routing";
+import { useI18n } from "@/i18n";
 
 function NavButton({
   active,
@@ -36,6 +38,7 @@ export function AppShell({
   children: ReactNode;
 }) {
   const queryClient = useQueryClient();
+  const { t } = useI18n();
   const logout = useMutation({
     mutationFn: api.logout,
     onSuccess: () => queryClient.invalidateQueries(),
@@ -55,27 +58,30 @@ export function AppShell({
               </div>
               <div className="min-w-0">
                 <h1 className="truncate text-lg font-bold leading-5">SwitchBoard</h1>
-                <p className="truncate text-xs text-muted-foreground">Local Codex console</p>
+                <p className="truncate text-xs text-muted-foreground">{t("app.subtitle")}</p>
               </div>
             </button>
             <div className="flex items-center gap-1">
               <NavButton active={route.page === "dashboard"} onClick={() => onNavigate("/")}>
                 <BarChart3 size={16} />
-                Dashboard
+                {t("nav.dashboard")}
               </NavButton>
               <NavButton active={route.page === "sessions"} onClick={() => onNavigate("/sessions")}>
                 <UserRound size={16} />
-                Sessions
+                {t("nav.sessions")}
               </NavButton>
               <NavButton active={route.page === "requestLogs"} onClick={() => onNavigate("/request-logs")}>
                 <ReceiptText size={16} />
-                Request Logs
+                {t("nav.requestLogs")}
               </NavButton>
             </div>
           </div>
-          <Button variant="ghost" size="icon" title="Sign out" aria-label="Sign out" onClick={() => logout.mutate()}>
-            <LogOut size={18} />
-          </Button>
+          <div className="flex items-center gap-2">
+            <LanguageSwitcher />
+            <Button variant="ghost" size="icon" title={t("nav.signOut")} aria-label={t("nav.signOut")} onClick={() => logout.mutate()}>
+              <LogOut size={18} />
+            </Button>
+          </div>
         </div>
       </header>
       {children}

@@ -1,6 +1,8 @@
 import { FormEvent, useState } from "react";
 import { Check, Clock, Loader2, LogIn, Pencil, Trash2, X } from "lucide-react";
 import { AccountDTO, LimitDTO } from "@/lib/api";
+import { useI18n } from "@/i18n";
+import { formatAppError } from "@/lib/errors";
 import { cn, formatPercent, formatTime, shortId } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,9 +45,10 @@ export function AccountCard({
   switching: boolean;
   expanded: boolean;
 }) {
+  const { t } = useI18n();
   const [isEditing, setIsEditing] = useState(false);
   const [draftName, setDraftName] = useState(account.custom_name ?? account.display_name);
-  const [renameError, setRenameError] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<unknown>(null);
 
   function beginEditing() {
     setDraftName(account.custom_name ?? account.display_name);
@@ -65,7 +68,7 @@ export function AccountCard({
       await onRename(account.account_id, draftName.trim() || null);
       setIsEditing(false);
     } catch (error) {
-      setRenameError(error instanceof Error ? error.message : "Rename failed");
+      setRenameError(error);
     }
   }
 
@@ -83,13 +86,13 @@ export function AccountCard({
                 <Input
                   autoFocus
                   className="h-8 w-44 max-w-full"
-                  placeholder="Custom name"
+                  placeholder={t("accounts.customNamePlaceholder")}
                   value={draftName}
                   onChange={(event) => setDraftName(event.target.value)}
                 />
                 <Button
-                  aria-label="Save name"
-                  title="Save name"
+                  aria-label={t("accounts.saveName")}
+                  title={t("accounts.saveName")}
                   size="icon"
                   className={actionButtonClass}
                   type="submit"
@@ -98,8 +101,8 @@ export function AccountCard({
                   {renaming ? <Loader2 className="animate-spin" size={iconSize} /> : <Check size={iconSize} />}
                 </Button>
                 <Button
-                  aria-label="Cancel rename"
-                  title="Cancel rename"
+                  aria-label={t("accounts.cancelRename")}
+                  title={t("accounts.cancelRename")}
                   size="icon"
                   className={actionButtonClass}
                   type="button"
@@ -113,20 +116,24 @@ export function AccountCard({
             ) : (
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="min-w-0 truncate text-base font-bold">{account.display_name}</h3>
-                {account.current ? <Badge tone="blue">Current</Badge> : null}
-                {account.expired ? <Badge tone="orange">Expired</Badge> : null}
+                {account.current ? <Badge tone="blue">{t("accounts.current")}</Badge> : null}
+                {account.expired ? <Badge tone="orange">{t("accounts.expired")}</Badge> : null}
                 {showUserName ? <Badge tone="neutral">{account.user_name}</Badge> : null}
                 {account.plan_type ? <Badge tone="neutral">{account.plan_type}</Badge> : null}
               </div>
             )}
             <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{shortId(account.account_id)}</p>
-            {renameError ? <p className="mt-2 text-xs text-destructive">{renameError}</p> : null}
+            {renameError ? (
+              <p className="mt-2 text-xs text-destructive">
+                {renameError instanceof Error ? formatAppError(renameError) : t("accounts.renameFailedFallback")}
+              </p>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {!account.current ? (
               <Button
-                aria-label="Switch account"
-                title="Switch account"
+                aria-label={t("accounts.switchAccount")}
+                title={t("accounts.switchAccount")}
                 size="icon"
                 variant="secondary"
                 className={actionButtonClass}
@@ -138,8 +145,8 @@ export function AccountCard({
             ) : null}
             {!isEditing ? (
               <Button
-                aria-label="Rename account"
-                title="Rename account"
+                aria-label={t("accounts.renameAccount")}
+                title={t("accounts.renameAccount")}
                 size="icon"
                 variant="ghost"
                 className={actionButtonClass}
@@ -150,8 +157,8 @@ export function AccountCard({
             ) : null}
             {!account.current ? (
               <Button
-                aria-label="Hide account"
-                title="Hide account"
+                aria-label={t("accounts.hideAccount")}
+                title={t("accounts.hideAccount")}
                 size="icon"
                 variant="ghost"
                 className={actionButtonClass}
@@ -165,13 +172,15 @@ export function AccountCard({
         </div>
         <div className="mt-auto">
           <div className="grid gap-3">
-            <LimitMeter label="5h remaining" limit={account.five_hour} />
-            <LimitMeter label="Weekly remaining" limit={account.weekly} />
+            <LimitMeter label={t("accounts.fiveHourRemaining")} limit={account.five_hour} />
+            <LimitMeter label={t("accounts.weeklyRemaining")} limit={account.weekly} />
           </div>
         </div>
         {account.last_error ? (
           <div className="mt-2 truncate text-xs text-orange-700">
-            Last scan failed{account.failed_scan_count ? ` x${account.failed_scan_count}` : ""}
+            {account.failed_scan_count
+              ? t("accounts.lastScanFailedCount", { count: account.failed_scan_count })
+              : t("accounts.lastScanFailed")}
           </div>
         ) : null}
       </CardContent>

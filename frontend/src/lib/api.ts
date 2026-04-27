@@ -5,6 +5,11 @@ export type LimitDTO = {
   resets_at: number | null;
 };
 
+export type IssueDetail = {
+  code: string;
+  message: string;
+};
+
 export type AccountDTO = {
   account_id: string;
   display_name: string;
@@ -24,7 +29,7 @@ export type AccountDTO = {
 export type ScanResult = {
   account: AccountDTO;
   status: "ok" | "error";
-  error: string | null;
+  warning: IssueDetail | null;
 };
 
 export type SwitchBoardConfigAccountDTO = {
@@ -216,6 +221,74 @@ export type UsageRequestLogsParams = {
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
+export class ApiError extends Error {
+  status: number;
+  code: string | null;
+  detail: unknown;
+
+  constructor({
+    message,
+    status,
+    code = null,
+    detail = null,
+  }: {
+    message: string;
+    status: number;
+    code?: string | null;
+    detail?: unknown;
+  }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+function isIssueDetail(value: unknown): value is IssueDetail {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "code" in value &&
+    typeof value.code === "string" &&
+    "message" in value &&
+    typeof value.message === "string"
+  );
+}
+
+function parseErrorDetail(payload: unknown, statusText: string) {
+  const fallbackMessage = statusText || "Request failed";
+  if (typeof payload === "object" && payload !== null && "detail" in payload) {
+    const detail = payload.detail;
+    if (isIssueDetail(detail)) {
+      return {
+        message: detail.message,
+        code: detail.code,
+        detail,
+      };
+    }
+    if (typeof detail === "string") {
+      return {
+        message: detail,
+        code: null,
+        detail,
+      };
+    }
+  }
+  if (isIssueDetail(payload)) {
+    return {
+      message: payload.message,
+      code: payload.code,
+      detail: payload,
+    };
+  }
+  return {
+    message: fallbackMessage,
+    code: null,
+    detail: payload,
+  };
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
   let timedOut = false;
@@ -243,15 +316,22 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       },
     });
     if (!response.ok) {
-      const detail = await response.json().catch(() => ({}));
-      const message = detail?.detail ?? response.statusText;
-      throw Object.assign(new Error(message), { status: response.status });
+      const payload = await response.json().catch(() => ({}));
+      const detail = parseErrorDetail(payload, response.statusText);
+      throw new ApiError({
+        message: detail.message,
+        status: response.status,
+        code: detail.code,
+        detail: detail.detail,
+      });
     }
     return response.json() as Promise<T>;
   } catch (error) {
     if (timedOut) {
-      throw Object.assign(new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds`), {
+      throw new ApiError({
+        message: `Request timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds`,
         status: 408,
+        code: "CLIENT_REQUEST_TIMEOUT",
       });
     }
     throw error;

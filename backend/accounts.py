@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from codex_files import current_account_id, current_auth_path, read_json
 from config import Settings
 from db import connect, now_ts
+from issues import IssueDetail, scan_warning_from_message
 
 
 ACCOUNT_EXPIRED_FAILURES = 3
@@ -46,7 +47,7 @@ class AccountDTO(BaseModel):
 class ScanResult(BaseModel):
     account: AccountDTO
     status: str
-    error: str | None = None
+    warning: IssueDetail | None = None
 
 
 def _decode_jwt_claims(token: str | None) -> dict[str, Any]:
@@ -515,4 +516,8 @@ async def scan_current_account(settings: Settings) -> ScanResult:
         row = conn.execute("SELECT * FROM accounts WHERE account_id = ?", (account_id,)).fetchone()
         account = _account_dto(row, _latest_snapshot(conn, account_id), account_id)
 
-    return ScanResult(account=account, status="error" if last_error else "ok", error=last_error)
+    return ScanResult(
+        account=account,
+        status="error" if last_error else "ok",
+        warning=scan_warning_from_message(last_error) if last_error else None,
+    )

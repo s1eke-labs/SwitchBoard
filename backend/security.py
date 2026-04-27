@@ -5,9 +5,10 @@ import hashlib
 import hmac
 import time
 
-from fastapi import HTTPException, Request, Response, status
+from fastapi import Request, Response, status
 
 from config import Settings
+from issues import http_error
 
 
 def _signature(settings: Settings, issued_at: int) -> str:
@@ -57,4 +58,4 @@ def clear_login_cookie(response: Response, settings: Settings) -> None:
 def require_auth(request: Request) -> None:
     settings: Settings = request.app.state.settings
     if not verify_session_cookie(settings, request.cookies.get(settings.cookie_name)):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        raise http_error(status.HTTP_401_UNAUTHORIZED, "AUTH_NOT_AUTHENTICATED", "Not authenticated")

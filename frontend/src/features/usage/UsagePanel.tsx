@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { BarChart3, Loader2 } from "lucide-react";
 import { api, UsageAggregatePointDTO } from "@/lib/api";
+import { getCurrentLocale, translate, useI18n } from "@/i18n";
 import { formatChartTime, formatNumber } from "@/lib/utils";
 import { useElementSize } from "@/hooks/useElementSize";
 import { Card, CardContent } from "@/components/ui/card";
@@ -30,21 +31,21 @@ const ranges: Record<RangeKey, { label: string }> = {
 const usageSeries = [
   {
     key: "input_tokens",
-    label: "Input",
+    labelKey: "usage.input",
     stroke: "#0075de",
     fill: "url(#usage-input)",
     legendColor: "#0075de",
   },
   {
     key: "cache_hit_tokens",
-    label: "Cache hit",
+    labelKey: "usage.cacheHit",
     stroke: "#2a9d99",
     fill: "url(#usage-cache)",
     legendColor: "#2a9d99",
   },
   {
     key: "output_tokens",
-    label: "Output",
+    labelKey: "usage.output",
     stroke: "#dd5b00",
     fill: "transparent",
     legendColor: "#dd5b00",
@@ -53,7 +54,7 @@ const usageSeries = [
 
 function formatThousandsAxis(value: number) {
   if (!Number.isFinite(value) || value === 0) return "0";
-  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: Math.abs(value) < 10000 ? 1 : 0 }).format(value / 1000)}k`;
+  return `${new Intl.NumberFormat(getCurrentLocale(), { maximumFractionDigits: Math.abs(value) < 10000 ? 1 : 0 }).format(value / 1000)}k`;
 }
 
 function sum<T extends Record<string, unknown>>(items: T[], key: keyof T) {
@@ -70,6 +71,7 @@ function Metric({ label, value }: { label: string; value: number }) {
 }
 
 export function UsagePanel() {
+  useI18n();
   const [range, setRange] = useState<RangeKey>("7d");
   const chartSize = useElementSize<HTMLDivElement>();
   const usageAggregates = useQuery({
@@ -95,7 +97,7 @@ export function UsagePanel() {
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <BarChart3 size={20} />
-          <h2 className="text-2xl font-bold">Usage</h2>
+          <h2 className="text-2xl font-bold">{translate("usage.title")}</h2>
         </div>
         <div className="inline-flex rounded-md border bg-white p-1">
           {(Object.keys(ranges) as RangeKey[]).map((key) => (
@@ -114,7 +116,7 @@ export function UsagePanel() {
           {usageAggregates.isPending ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <Loader2 className="mr-2 animate-spin" size={18} />
-              Loading
+              {translate("common.loading")}
             </div>
           ) : hasUsage ? (
             <>
@@ -150,7 +152,7 @@ export function UsagePanel() {
                         key={series.key}
                         type="monotone"
                         dataKey={series.key}
-                        name={series.label}
+                        name={translate(series.labelKey)}
                         stroke={series.stroke}
                         fill={series.fill}
                         strokeWidth={2}
@@ -163,21 +165,21 @@ export function UsagePanel() {
                 {usageSeries.map((series) => (
                   <div key={series.key} className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
                     <span className="h-0.5 w-6 rounded-full" style={{ backgroundColor: series.legendColor }} />
-                    <span>{series.label}</span>
+                    <span>{translate(series.labelKey)}</span>
                   </div>
                 ))}
               </div>
             </>
           ) : (
-            <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">No usage in range</div>
+            <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">{translate("usage.noUsageInRange")}</div>
           )}
         </CardContent>
       </Card>
       <div className="grid shrink-0 gap-3 sm:grid-cols-4">
-        <Metric label="Input" value={sum(data, "input_tokens")} />
-        <Metric label="Cache created" value={sum(data, "cache_creation_tokens")} />
-        <Metric label="Cache hit" value={sum(data, "cache_hit_tokens")} />
-        <Metric label="Output" value={sum(data, "output_tokens")} />
+        <Metric label={translate("usage.input")} value={sum(data, "input_tokens")} />
+        <Metric label={translate("usage.cacheCreated")} value={sum(data, "cache_creation_tokens")} />
+        <Metric label={translate("usage.cacheHit")} value={sum(data, "cache_hit_tokens")} />
+        <Metric label={translate("usage.output")} value={sum(data, "output_tokens")} />
       </div>
     </section>
   );

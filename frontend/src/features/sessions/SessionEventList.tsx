@@ -3,6 +3,8 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { api, SessionEventPreview, SessionUserIndexItem } from "@/lib/api";
+import { translate, useI18n } from "@/i18n";
+import { formatAppError } from "@/lib/errors";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +17,6 @@ type SessionEventDisplayRole = "user" | "assistant" | "system";
 const eventDisplayStyles: Record<
   SessionEventDisplayRole,
   {
-    label: string;
     avatar: string;
     badgeTone: "blue" | "green" | "neutral";
     avatarClassName: string;
@@ -23,21 +24,18 @@ const eventDisplayStyles: Record<
   }
 > = {
   user: {
-    label: "user",
     avatar: "U",
     badgeTone: "blue",
     avatarClassName: "bg-blue-600 text-white shadow-blue-100",
     panelClassName: "border-blue-200 bg-blue-50/70",
   },
   assistant: {
-    label: "assistant",
     avatar: "A",
     badgeTone: "green",
     avatarClassName: "bg-emerald-600 text-white shadow-emerald-100",
     panelClassName: "border-emerald-200 bg-emerald-50/65",
   },
   system: {
-    label: "system",
     avatar: "S",
     badgeTone: "neutral",
     avatarClassName: "bg-muted-foreground text-white",
@@ -49,6 +47,12 @@ function sessionEventDisplayRole(kind: string): SessionEventDisplayRole {
   if (kind === "user") return "user";
   if (kind === "assistant") return "assistant";
   return "system";
+}
+
+function eventDisplayLabel(role: SessionEventDisplayRole) {
+  if (role === "user") return translate("sessions.user");
+  if (role === "assistant") return translate("sessions.assistant");
+  return translate("sessions.system");
 }
 
 function EventRow({ event, threadId, focused }: { event: SessionEventPreview; threadId: string; focused?: boolean }) {
@@ -94,7 +98,7 @@ function EventRow({ event, threadId, focused }: { event: SessionEventPreview; th
         {expanded ? (
           <div className="ml-10 mt-1 rounded-lg border bg-white px-3.5 py-2 shadow-soft">
             <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-              <span>line {event.line_no}</span>
+              <span>{translate("sessions.line", { line: event.line_no })}</span>
               {event.body_bytes > 0 ? <span>{sizeLabel}</span> : null}
             </div>
             {body ? <pre className="whitespace-pre-wrap break-words text-xs leading-5 text-foreground">{body}</pre> : null}
@@ -102,10 +106,10 @@ function EventRow({ event, threadId, focused }: { event: SessionEventPreview; th
               {event.body_truncated && fullEvent.isFetching ? (
                 <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                   <Loader2 className="animate-spin" size={12} />
-                  Loading
+                  {translate("common.loading")}
                 </span>
               ) : null}
-              {fullEvent.error ? <span className="text-xs text-destructive">{fullEvent.error.message}</span> : null}
+              {fullEvent.error ? <span className="text-xs text-destructive">{formatAppError(fullEvent.error)}</span> : null}
             </div>
           </div>
         ) : null}
@@ -134,8 +138,8 @@ function EventRow({ event, threadId, focused }: { event: SessionEventPreview; th
         >
           <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <Badge tone={display.badgeTone}>{display.label}</Badge>
-              <span className="text-xs font-medium text-muted-foreground">line {event.line_no}</span>
+              <Badge tone={display.badgeTone}>{eventDisplayLabel(displayRole)}</Badge>
+              <span className="text-xs font-medium text-muted-foreground">{translate("sessions.line", { line: event.line_no })}</span>
               {canExpand ? <span className="text-xs text-muted-foreground">{sizeLabel}</span> : null}
             </div>
             {timeLabel ? <span className="text-xs text-muted-foreground">{timeLabel}</span> : null}
@@ -151,15 +155,17 @@ function EventRow({ event, threadId, focused }: { event: SessionEventPreview; th
                 onClick={() => setExpanded((value) => !value)}
               >
                 {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                {expanded ? "Collapse" : "Load full"} - {sizeLabel}
+                {expanded
+                  ? translate("sessions.collapseWithSize", { size: sizeLabel })
+                  : translate("sessions.loadFullWithSize", { size: sizeLabel })}
               </Button>
               {fullEvent.isFetching ? (
                 <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                   <Loader2 className="animate-spin" size={12} />
-                  Loading
+                  {translate("common.loading")}
                 </span>
               ) : null}
-              {fullEvent.error ? <span className="text-xs text-destructive">{fullEvent.error.message}</span> : null}
+              {fullEvent.error ? <span className="text-xs text-destructive">{formatAppError(fullEvent.error)}</span> : null}
             </div>
           ) : null}
         </article>
@@ -183,12 +189,12 @@ function SessionUserDirectory({
   pendingEventIndex: number | null;
   onJump: (item: SessionUserIndexItem) => void;
 }) {
-  const errorMessage = error instanceof Error ? error.message : null;
+  const errorMessage = error ? formatAppError(error) : null;
 
   return (
     <aside className="flex min-h-0 flex-col border-b bg-white lg:border-b-0 lg:border-r">
       <div className="flex h-11 items-center justify-between gap-3 border-b px-4">
-        <span className="text-xs font-bold uppercase text-muted-foreground">User Messages</span>
+        <span className="text-xs font-bold uppercase text-muted-foreground">{translate("sessions.userMessages")}</span>
         <span className="rounded-full border bg-white px-2 py-0.5 text-xs font-semibold text-foreground">
           {loading ? "..." : formatNumber(items.length)}
         </span>
@@ -197,7 +203,7 @@ function SessionUserDirectory({
         {loading ? (
           <div className="flex items-center px-1 py-4 text-xs text-muted-foreground">
             <Loader2 className="mr-2 animate-spin" size={14} />
-            Loading index
+            {translate("sessions.loadingIndex")}
           </div>
         ) : errorMessage ? (
           <div className="px-1 py-4 text-xs text-destructive">{errorMessage}</div>
@@ -229,7 +235,7 @@ function SessionUserDirectory({
                     <span className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
                       {timeLabel ? <span>{timeLabel}</span> : null}
                       {timeLabel ? <span aria-hidden="true">·</span> : null}
-                      <span>line {item.line_no}</span>
+                      <span>{translate("sessions.line", { line: item.line_no })}</span>
                     </span>
                   </span>
                 </button>
@@ -237,7 +243,7 @@ function SessionUserDirectory({
             })}
           </div>
         ) : (
-          <div className="px-1 py-4 text-xs text-muted-foreground">No user messages</div>
+          <div className="px-1 py-4 text-xs text-muted-foreground">{translate("sessions.noUserMessages")}</div>
         )}
       </div>
     </aside>
@@ -253,6 +259,7 @@ export function SessionEventList({
   detailPending: boolean;
   totalEventCount: number | null;
 }) {
+  useI18n();
   const parentRef = useRef<HTMLDivElement | null>(null);
   const [focusedLineNo, setFocusedLineNo] = useState<number | null>(null);
   const [pendingJumpIndex, setPendingJumpIndex] = useState<number | null>(null);
@@ -323,30 +330,30 @@ export function SessionEventList({
     return (
       <div className="flex h-40 items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 animate-spin" size={18} />
-        Loading
+        {translate("common.loading")}
       </div>
     );
   }
 
   if (!activeId) {
-    return <div className="p-4 text-sm text-muted-foreground">No session selected</div>;
+    return <div className="p-4 text-sm text-muted-foreground">{translate("sessions.noSessionSelected")}</div>;
   }
 
   if (events.isPending) {
     return (
       <div className="flex h-40 items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 animate-spin" size={18} />
-        Loading
+        {translate("common.loading")}
       </div>
     );
   }
 
   if (events.error) {
-    return <div className="p-4 text-sm text-destructive">{events.error.message}</div>;
+    return <div className="p-4 text-sm text-destructive">{formatAppError(events.error)}</div>;
   }
 
   if (!eventItems.length) {
-    return <div className="p-4 text-sm text-muted-foreground">No event content</div>;
+    return <div className="p-4 text-sm text-muted-foreground">{translate("sessions.noEventContent")}</div>;
   }
 
   return (
@@ -361,9 +368,12 @@ export function SessionEventList({
       />
       <section className="flex min-h-0 flex-col bg-white">
         <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b px-5">
-          <span className="text-xs font-bold uppercase text-muted-foreground">Events Timeline</span>
+          <span className="text-xs font-bold uppercase text-muted-foreground">{translate("sessions.eventsTimeline")}</span>
           <span className="text-xs text-muted-foreground">
-            Showing {formatNumber(eventItems.length)} of {formatNumber(totalEventCount ?? eventItems.length)} events
+            {translate("sessions.showingEvents", {
+              shown: formatNumber(eventItems.length),
+              total: formatNumber(totalEventCount ?? eventItems.length),
+            })}
           </span>
         </div>
         <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
@@ -386,10 +396,10 @@ export function SessionEventList({
                       {events.isFetchingNextPage ? (
                         <>
                           <Loader2 className="mr-2 animate-spin" size={16} />
-                          Loading more
+                          {translate("sessions.loadMore")}
                         </>
                       ) : (
-                        "Scroll to load more"
+                        translate("sessions.scrollToLoadMore")
                       )}
                     </div>
                   )}
