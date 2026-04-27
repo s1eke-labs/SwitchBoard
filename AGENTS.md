@@ -1,56 +1,21 @@
-# Repository Guidelines
+# Agent Notes
 
-## Project Structure & Module Organization
+Use `README.md` for project overview, setup, commands, Docker behavior, configuration, and repository layout. Keep both README files in sync when changing user-facing behavior, setup, configuration, or security notes.
 
-SwitchBoard is a small full-stack dashboard. Backend code lives in `backend/` as flat Python modules such as `main.py`, `accounts.py`, `sessions.py`, `usage.py`, `db.py`, and `security.py`. Backend tests are in `backend/tests/` and use `test_*.py` naming.
+## Implementation Preferences
 
-Frontend code lives in `frontend/`. Vite/React entry points are `frontend/src/main.tsx` and `frontend/src/App.tsx`; shared client helpers are in `frontend/src/lib/`; reusable UI primitives are in `frontend/src/components/ui/`. Build output is `frontend/dist/`.
+SwitchBoard is still `0.1.0` and unpublished. Do not preserve backward compatibility for APIs, database schema, configuration, or UI behavior unless a task explicitly requires it.
 
-## Build, Test, and Development Commands
+Backend code follows the existing flat FastAPI module style in `backend/`. Use typed public helpers and keep behavior tests focused around the module being changed.
 
-Run backend commands from `backend/`:
+Frontend code uses React, Vite, Tailwind CSS, and shadcn/ui primitives. Prefer existing `frontend/src/components/ui` primitives, add missing shadcn primitives from `frontend/` with `npm run ui -- add <component>`, and keep SwitchBoard-specific composition in `frontend/src/features` or `frontend/src/pages`. Use Sonner toasts for transient status messages.
 
-```bash
-uv run pytest
-APP_PASSWORD=switchboard CODEX_HOME="$HOME/.codex" SWITCHBOARD_DB=/tmp/switchboard-dev.sqlite SWITCHBOARD_STATIC_DIR="$PWD/../frontend/dist" uv run uvicorn main:app --host 127.0.0.1 --port 8080
-```
+## Validation
 
-`uv run pytest` runs the FastAPI/unit tests. The `uvicorn` command starts the app with a temporary SQLite database.
+When changing account scanning, session parsing, request-log aggregation, pricing, authentication, or configuration behavior, add or update focused backend tests.
 
-Run frontend commands from `frontend/`:
+When changing visible frontend behavior, run `npm run lint` from `frontend/`.
 
-```bash
-npm install
-npm run dev
-npm run lint
-npm run build
-npm run preview
-```
+## Security Notes
 
-`npm run dev` starts Vite, `lint` runs TypeScript checks, `build` produces `dist/`, and `preview` serves the built frontend. Docker users can run `docker compose up --build` from the repo root after creating `.env`.
-
-## Coding Style & Naming Conventions
-
-Python targets 3.13 and follows module-level FastAPI patterns. Use 4-space indentation, typed public helpers, and snake_case for modules, functions, and variables. Keep tests close to behavior.
-
-TypeScript uses React, Vite, Tailwind CSS, and shadcn/ui primitives. Use PascalCase for components, camelCase for functions and variables, and keep shared API/client logic in `frontend/src/lib/`. Prefer existing `components/ui` primitives.
-
-For frontend UI, if shadcn/ui provides the needed primitive, use it instead of hand-writing an equivalent custom component. Add missing primitives from `frontend/` with `npm run ui -- add <component>` and import them from `@/components/ui/...`. Keep custom components for SwitchBoard-specific composition and behavior; use Sonner toasts for transient status messages such as successful account switching instead of building custom modal components.
-
-## Versioning & Compatibility
-
-While the project version is `0.1.0`, treat SwitchBoard as an unpublished development build. Do not preserve backward compatibility for APIs, database schema, configuration, or UI behavior unless a task explicitly requires it.
-
-## Testing Guidelines
-
-Backend tests use `pytest` with `pytest-asyncio`; async tests are enabled by `pyproject.toml`. Add tests under `backend/tests/` with names like `test_accounts.py` and functions named `test_<behavior>`. For frontend changes, at minimum run `npm run lint`.
-
-## Commit & Pull Request Guidelines
-
-This repository currently has no committed history, so there is no existing commit convention to preserve. Use concise, imperative commit subjects such as `Add usage session tests` or `Fix account scan error handling`.
-
-Pull requests should include a summary, verification commands, linked issues when applicable, and screenshots for visible UI changes. Note configuration changes involving `.env`, `CODEX_HOME`, `APP_PASSWORD`, or `SWITCHBOARD_DB`.
-
-## Security & Configuration Tips
-
-Do not commit `.env`, SQLite databases, or local Codex credentials. The app should only read `auth.json` from `CODEX_HOME`, and ChatGPT tokens should never be stored. Use `.env.example` and README examples as configuration references.
+SwitchBoard reads `auth.json` plus local Codex session/state files from `CODEX_HOME`. Account switching rewrites `CODEX_HOME/auth.json`, so preserve user credentials carefully and never log token values. ChatGPT tokens must not be stored in SwitchBoard's SQLite database. Hidden accounts and custom account names are SwitchBoard-local metadata.
