@@ -556,8 +556,8 @@ function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
     <section className="h-full min-h-0">
       <div
         className={cn(
-          "z-20 flex min-h-0 flex-col overflow-hidden rounded-lg bg-background",
-          expanded ? "absolute inset-x-4 bottom-4 top-4 p-5 shadow-soft ring-1 ring-border" : "relative h-full",
+          "z-20 flex min-h-0 flex-col overflow-hidden rounded-lg border bg-white shadow-soft",
+          expanded ? "absolute inset-x-4 bottom-4 top-4 p-5 ring-1 ring-border" : "relative h-full p-4",
         )}
       >
         <div className={cn("flex min-h-0 flex-1 flex-col", expanded ? "gap-5" : "gap-3")}>
@@ -654,7 +654,7 @@ function TrendsPanel() {
   const chartReady = chartSize.width > 0 && chartSize.height > 0;
 
   return (
-    <section className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
+    <section className="flex h-full min-h-0 flex-col gap-4 overflow-hidden rounded-lg border bg-white p-4 shadow-soft">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <BarChart3 size={20} />
@@ -672,7 +672,7 @@ function TrendsPanel() {
           ))}
         </div>
       </div>
-      <Card className="min-h-0 flex-1 overflow-hidden">
+      <Card className="min-h-0 flex-1 overflow-hidden shadow-none">
         <CardContent className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
           {usageAggregates.isPending ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
