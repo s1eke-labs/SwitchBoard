@@ -290,6 +290,49 @@ def test_session_user_index_lists_user_events_with_event_indexes(tmp_path: Path)
     assert index.items[0].body_bytes == len("first user message".encode("utf-8"))
 
 
+def test_session_events_skip_duplicate_response_item_user_messages(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    rollout = settings.codex_home / "rollout.jsonl"
+    rows = [
+        {
+            "type": "response_item",
+            "timestamp": "2026-04-25T00:00:00Z",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "duplicated user message"}],
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": "2026-04-25T00:00:00Z",
+            "payload": {"type": "user_message", "message": "duplicated user message"},
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2026-04-25T00:01:00Z",
+            "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "reply"}]},
+        },
+    ]
+    rollout.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    _create_state(settings, rollout)
+
+    detail = get_session_detail(settings, "thread-1")
+    page = list_session_events(settings, "thread-1")
+    index = list_session_user_index(settings, "thread-1")
+
+    assert detail.raw_event_count == 3
+    assert detail.event_count == 2
+    assert [(event.kind, event.line_no, event.body_preview) for event in page.items] == [
+        ("user", 2, "duplicated user message"),
+        ("assistant", 3, "reply"),
+    ]
+    assert [(item.line_no, item.event_index, item.body_preview) for item in index.items] == [
+        (2, 0, "duplicated user message")
+    ]
+
+
 def test_usage_events_fall_back_to_sessions_directory(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     init_db(settings.db_path)

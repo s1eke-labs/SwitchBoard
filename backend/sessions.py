@@ -299,6 +299,8 @@ def _normalize_event(line: dict[str, Any], line_no: int | None = None, max_text_
         return SessionEvent(id=event_id, line_no=line_no, kind="user", timestamp=timestamp, text=_truncate(str(text or ""), max_text_len))
     if payload_type == "message":
         role = payload.get("role") or "assistant"
+        if role == "user":
+            return None
         text = _text_from_content(payload.get("content"))
         return SessionEvent(id=event_id, line_no=line_no, kind=str(role), timestamp=timestamp, text=_truncate(text, max_text_len))
     if payload_type == "agent_message":
@@ -328,6 +330,8 @@ def _is_session_event_line(line: dict[str, Any]) -> bool:
     if line.get("type") in {"session_meta", "turn_context"}:
         return True
     payload = line.get("payload") if isinstance(line.get("payload"), dict) else {}
+    if payload.get("type") == "message" and payload.get("role") == "user":
+        return False
     return payload.get("type") in SESSION_EVENT_PAYLOAD_TYPES
 
 

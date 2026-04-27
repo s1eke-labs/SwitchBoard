@@ -783,10 +783,53 @@ function userIndexLabel(item: SessionUserIndexItem) {
   return item.body_preview.trim().split(/\r?\n/, 1)[0] || "Empty user message";
 }
 
+type SessionEventDisplayRole = "user" | "assistant" | "system";
+
+const eventDisplayStyles: Record<
+  SessionEventDisplayRole,
+  {
+    label: string;
+    avatar: string;
+    badgeTone: "blue" | "green" | "neutral";
+    avatarClassName: string;
+    panelClassName: string;
+  }
+> = {
+  user: {
+    label: "user",
+    avatar: "U",
+    badgeTone: "blue",
+    avatarClassName: "bg-blue-600 text-white shadow-blue-100",
+    panelClassName: "border-blue-200 bg-blue-50/80",
+  },
+  assistant: {
+    label: "assistant",
+    avatar: "A",
+    badgeTone: "green",
+    avatarClassName: "bg-emerald-600 text-white shadow-emerald-100",
+    panelClassName: "border-emerald-200 bg-emerald-50/70",
+  },
+  system: {
+    label: "system",
+    avatar: "S",
+    badgeTone: "neutral",
+    avatarClassName: "bg-muted-foreground text-white",
+    panelClassName: "border-border bg-white",
+  },
+};
+
+function sessionEventDisplayRole(kind: string): SessionEventDisplayRole {
+  if (kind === "user") return "user";
+  if (kind === "assistant") return "assistant";
+  return "system";
+}
+
 function EventRow({ event, threadId, focused }: { event: SessionEventPreview; threadId: string; focused?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const title = event.name ?? event.title ?? event.kind;
-  const isUser = event.kind === "user";
+  const displayRole = sessionEventDisplayRole(event.kind);
+  const display = eventDisplayStyles[displayRole];
+  const isSystem = displayRole === "system";
   const sizeLabel = formatBytes(event.body_bytes);
   const timeLabel = event.timestamp ? formatTime(Date.parse(event.timestamp) / 1000) : "";
   const fullEvent = useQuery({
@@ -796,25 +839,75 @@ function EventRow({ event, threadId, focused }: { event: SessionEventPreview; th
     staleTime: Infinity,
   });
   const body = expanded && fullEvent.data ? fullEventBody(fullEvent.data) : event.body_preview;
-  const canExpand = event.body_truncated;
+  const hasBody = event.body_bytes > 0 || event.body_preview.trim().length > 0;
+  const canExpand = isSystem ? hasBody || event.body_truncated : event.body_truncated;
+
+  if (isSystem) {
+    return (
+      <div className="px-4 py-1">
+        <div className="flex justify-center text-center">
+          <div className="w-full max-w-2xl">
+            <button
+              type="button"
+              className={cn(
+                "inline-flex max-w-full min-w-0 flex-wrap items-center justify-center gap-x-1 gap-y-0 rounded-full px-2 py-0 text-[10px] leading-4 text-muted-foreground transition-colors",
+                canExpand ? "cursor-pointer hover:text-foreground" : "cursor-default",
+                expanded ? "bg-muted/60 text-foreground" : "bg-muted/25",
+                focused ? "ring-2 ring-ring" : "",
+              )}
+              onClick={() => {
+                if (canExpand) setExpanded((value) => !value);
+              }}
+              aria-expanded={canExpand ? expanded : undefined}
+            >
+              {canExpand ? expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} /> : null}
+              <span>{title}</span>
+              <span>line {event.line_no}</span>
+              {timeLabel ? <span>{timeLabel}</span> : null}
+              {event.body_bytes > 0 ? <span>{sizeLabel}</span> : null}
+            </button>
+            {expanded ? (
+              <div className="mt-2 rounded-md border bg-muted/20 px-3.5 py-3 text-left">
+                {body ? <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground">{body}</pre> : null}
+                <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+                  {event.body_truncated && fullEvent.isFetching ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <Loader2 className="animate-spin" size={10} />
+                      Loading
+                    </span>
+                  ) : null}
+                  {fullEvent.error ? <span className="text-[10px] text-destructive">{fullEvent.error.message}</span> : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="px-4 py-3">
-      <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
+      <div className="flex w-full items-start gap-3">
+        <div
+          className={cn(
+            "mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold shadow-sm",
+            display.avatarClassName,
+          )}
+          aria-hidden="true"
+        >
+          {display.avatar}
+        </div>
         <article
           className={cn(
-            "min-w-0 rounded-lg border px-3.5 py-3 shadow-soft transition-shadow",
-            isUser
-              ? "max-w-[92%] border-blue-200 bg-blue-50 sm:max-w-[78%]"
-              : "max-w-[94%] border-border bg-white sm:max-w-[84%]",
+            "min-w-0 flex-1 rounded-lg border px-3.5 py-3 shadow-soft transition-shadow",
+            display.panelClassName,
             focused ? "ring-2 ring-ring" : "",
           )}
         >
           <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <div className={cn("flex min-w-0 flex-wrap items-center gap-2", isUser ? "justify-end" : "justify-start")}>
-              <Badge tone={isUser ? "blue" : event.kind === "assistant" ? "green" : event.kind.startsWith("tool") ? "orange" : "neutral"}>
-                {title}
-              </Badge>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Badge tone={display.badgeTone}>{display.label}</Badge>
               <span className="text-xs font-medium text-muted-foreground">line {event.line_no}</span>
               {canExpand ? <span className="text-xs text-muted-foreground">{sizeLabel}</span> : null}
             </div>

@@ -253,6 +253,13 @@ def _account_dto(row: sqlite3.Row, snapshot: sqlite3.Row | None, current_id: str
             snapshot["weekly_window_minutes"],
             snapshot["weekly_resets_at"],
         )
+        if weekly and weekly.remaining_percent <= 0:
+            five_hour = LimitDTO(
+                used_percent=100.0,
+                remaining_percent=0.0,
+                window_minutes=five_hour.window_minutes if five_hour else None,
+                resets_at=weekly.resets_at,
+            )
     return AccountDTO(
         account_id=row["account_id"],
         display_name=row["custom_name"] or row["display_name"],

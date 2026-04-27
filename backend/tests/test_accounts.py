@@ -247,6 +247,40 @@ def test_reset_limit_recovers_to_full_remaining(tmp_path: Path) -> None:
     assert account.weekly.remaining_percent == 100
 
 
+def test_weekly_exhaustion_zeroes_five_hour_limit(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings)
+    with connect(settings.db_path) as conn:
+        ts = now_ts()
+        five_hour_reset = ts + 3600
+        weekly_reset = ts + 86400
+        conn.execute(
+            """
+            INSERT INTO accounts(account_id, display_name, hidden, created_at, updated_at, last_scanned_at)
+            VALUES (?, ?, 0, ?, ?, ?)
+            """,
+            ("acct-current", "Ada", ts, ts, ts),
+        )
+        conn.execute(
+            """
+            INSERT INTO rate_limit_snapshots(
+                account_id, scanned_at, five_hour_used_percent, five_hour_window_minutes, five_hour_resets_at,
+                weekly_used_percent, weekly_window_minutes, weekly_resets_at, raw_json
+            )
+            VALUES (?, ?, 20, 300, ?, 100, 10080, ?, '{}')
+            """,
+            ("acct-current", ts, five_hour_reset, weekly_reset),
+        )
+
+    account = list_accounts(settings)[0]
+    assert account.five_hour is not None
+    assert account.weekly is not None
+    assert account.weekly.remaining_percent == 0
+    assert account.five_hour.remaining_percent == 0
+    assert account.five_hour.resets_at == weekly_reset
+
+
 def test_init_db_migrates_custom_name_and_removes_workspace_name(tmp_path: Path) -> None:
     db_path = tmp_path / "switchboard.sqlite"
     with connect(db_path) as conn:
