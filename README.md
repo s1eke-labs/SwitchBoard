@@ -7,6 +7,10 @@ SwitchBoard is a small full-stack app:
 - Backend: FastAPI, SQLite, and local Codex account/session readers.
 - Frontend: React, Vite, TypeScript, and Tailwind CSS.
 
+## Preview
+
+![SwitchBoard dashboard](docs/images/dashbord.png)
+
 ## Quick Start
 
 For day-to-day development, run the backend and frontend in two terminals.

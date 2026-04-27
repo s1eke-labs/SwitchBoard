@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Loader2, Search, UserRound } from "lucide-react";
 import { api, SessionSummary } from "@/lib/api";
-import { formatNumber, formatTime } from "@/lib/utils";
+import { cn, formatNumber, formatTime } from "@/lib/utils";
 import { sessionPath } from "@/app/routing";
 import { SessionEventList } from "@/features/sessions/SessionEventList";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,66 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 const SESSIONS_PAGE_SIZE = 7;
+
+function PageSelector({
+  page,
+  totalPages,
+  disabled,
+  jumping,
+  onSelect,
+}: {
+  page: number;
+  totalPages: number;
+  disabled: boolean;
+  jumping: boolean;
+  onSelect: (page: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const pageCount = Math.max(1, totalPages);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="h-9 min-w-24 rounded-md px-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+        onClick={() => setOpen((value) => !value)}
+        disabled={disabled || pageCount <= 1}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+      >
+        {jumping ? "Loading..." : `Page ${Math.min(page, pageCount)} / ${pageCount}`}
+      </button>
+      {open ? (
+        <div className="absolute bottom-11 left-1/2 z-20 max-h-56 w-56 -translate-x-1/2 overflow-auto rounded-lg border bg-white p-2 shadow-soft">
+          <div className="grid grid-cols-4 gap-1" role="listbox" aria-label="Select page">
+            {Array.from({ length: pageCount }, (_, index) => {
+              const pageNumber = index + 1;
+              const active = pageNumber === page;
+              return (
+                <button
+                  key={pageNumber}
+                  type="button"
+                  className={cn(
+                    "h-8 rounded-md text-sm font-semibold transition-colors hover:bg-muted",
+                    active ? "bg-foreground text-white hover:bg-foreground" : "text-foreground",
+                  )}
+                  onClick={() => {
+                    setOpen(false);
+                    onSelect(pageNumber);
+                  }}
+                  role="option"
+                  aria-selected={active}
+                >
+                  {pageNumber}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function SessionButton({
   session,
@@ -23,15 +83,22 @@ function SessionButton({
   return (
     <button
       onClick={onClick}
-      className={`h-full min-h-0 w-full overflow-hidden border-b px-4 py-3 text-left transition-colors ${active ? "bg-blue-50" : "hover:bg-muted"}`}
+      className={cn(
+        "h-full min-h-0 w-full overflow-hidden border-b px-4 py-4 text-left transition-colors last:border-b-0",
+        active ? "bg-blue-50/80" : "bg-white hover:bg-muted/50",
+      )}
     >
-      <div className="line-clamp-2 max-w-full overflow-hidden break-all text-sm font-bold">{session.title}</div>
-      <div className="mt-2 flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted-foreground">
+      <div className="line-clamp-2 max-w-full overflow-hidden break-all text-sm font-bold leading-5 text-foreground">
+        {session.title}
+      </div>
+      <div className="mt-2 flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
         <span>{formatTime(session.updated_at)}</span>
+        <span aria-hidden="true">·</span>
         <span className="truncate">{session.model ?? session.model_provider}</span>
+        <span aria-hidden="true">·</span>
         <span className="shrink-0">{formatNumber(session.tokens_used)}</span>
       </div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">{session.cwd}</div>
+      <div className="mt-1.5 truncate text-xs text-muted-foreground">{session.cwd}</div>
     </button>
   );
 }
@@ -49,6 +116,7 @@ export function SessionsPage({
 }) {
   const [query, setQuery] = useState("");
   const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
+  const [jumpingPage, setJumpingPage] = useState(false);
   const cursor = cursorStack[cursorStack.length - 1] ?? null;
   const page = cursorStack.length;
   const sessions = useQuery({
@@ -76,20 +144,54 @@ export function SessionsPage({
     }
   }, [onNavigate, selectedThreadId, sessionItems]);
 
+  async function selectPage(targetPage: number) {
+    if (targetPage === page || targetPage < 1 || targetPage > totalPages || jumpingPage) return;
+    if (targetPage < page) {
+      setCursorStack((value) => value.slice(0, targetPage));
+      return;
+    }
+    if (!sessions.data?.next_cursor) return;
+
+    setJumpingPage(true);
+    try {
+      const nextStack = [...cursorStack];
+      let pageData = sessions.data;
+      let currentPage = page;
+
+      while (currentPage < targetPage) {
+        if (!pageData.next_cursor) break;
+        nextStack.push(pageData.next_cursor);
+        currentPage += 1;
+        if (currentPage < targetPage) {
+          pageData = await api.sessions({ query, cursor: pageData.next_cursor, limit: SESSIONS_PAGE_SIZE });
+        }
+      }
+
+      setCursorStack(nextStack);
+    } finally {
+      setJumpingPage(false);
+    }
+  }
+
   return (
     <section className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-1">
         <div className="flex items-center gap-2">
-          <UserRound size={20} />
-          <h2 className="text-2xl font-bold">Sessions</h2>
+          <UserRound size={20} strokeWidth={1.8} />
+          <h2 className="text-2xl font-bold leading-tight">Sessions</h2>
         </div>
-        <div className="relative w-full sm:w-80">
+        <div className="relative w-full sm:w-96">
           <Search className="pointer-events-none absolute left-3 top-2.5 text-muted-foreground" size={16} />
-          <Input className="pl-9" placeholder="Search sessions" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <Input
+            className="h-10 rounded-lg pl-9 text-sm"
+            placeholder="Search sessions"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
         </div>
       </div>
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[360px_1fr]">
-        <Card className="flex min-h-0 flex-col overflow-hidden">
+      <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[365px_minmax(0,1fr)]">
+        <Card className="flex min-h-[380px] flex-col overflow-hidden rounded-lg shadow-none">
           {sessions.isPending ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">
               <Loader2 className="mr-2 animate-spin" size={18} />
@@ -128,36 +230,42 @@ export function SessionsPage({
                 )}
               </div>
               <div className="flex items-center justify-center border-t p-3">
-                <div className="inline-flex items-center gap-1 rounded-md border bg-white p-1">
+                <div className="inline-flex items-center gap-2 bg-white">
                   <Button
                     aria-label="Previous page"
                     title="Previous page"
                     variant="secondary"
                     size="icon"
+                    className="h-9 w-9 rounded-lg"
                     onClick={() => setCursorStack((value) => (value.length > 1 ? value.slice(0, -1) : value))}
-                    disabled={page === 1 || sessions.isFetching}
+                    disabled={page === 1 || sessions.isFetching || jumpingPage}
                   >
                     <ChevronLeft size={16} />
                   </Button>
-                  <div className="h-9 min-w-24 px-3 text-center text-sm font-semibold leading-9 text-muted-foreground">
-                    Page {Math.min(page, totalPages)} / {totalPages}
-                  </div>
+                  <PageSelector
+                    page={page}
+                    totalPages={totalPages}
+                    disabled={sessions.isFetching || jumpingPage}
+                    jumping={jumpingPage}
+                    onSelect={selectPage}
+                  />
                   {sessions.data?.next_cursor ? (
                     <Button
                       aria-label="Next page"
                       title="Next page"
                       variant="secondary"
                       size="icon"
+                      className="h-9 w-9 rounded-lg"
                       onClick={() => {
                         if (!sessions.data?.next_cursor) return;
                         setCursorStack((value) => [...value, sessions.data.next_cursor!]);
                       }}
-                      disabled={sessions.isFetching}
+                      disabled={sessions.isFetching || jumpingPage}
                     >
                       <ChevronRight size={16} />
                     </Button>
                   ) : (
-                    <Button aria-label="Next page" title="Next page" variant="secondary" size="icon" disabled>
+                    <Button aria-label="Next page" title="Next page" variant="secondary" size="icon" className="h-9 w-9 rounded-lg" disabled>
                       <ChevronRight size={16} />
                     </Button>
                   )}
@@ -168,11 +276,11 @@ export function SessionsPage({
             <div className="p-4 text-sm text-muted-foreground">No sessions</div>
           )}
         </Card>
-        <Card className="flex min-h-0 flex-col overflow-hidden">
-          <CardHeader>
+        <Card className="flex min-h-0 flex-col overflow-hidden rounded-lg shadow-none">
+          <CardHeader className="px-5 py-4">
             <div className="min-w-0">
-              <h3 className="truncate text-base font-bold">{detail.data?.summary.title ?? "Session detail"}</h3>
-              <p className="truncate text-xs text-muted-foreground">{detail.data?.summary.cwd ?? ""}</p>
+              <h3 className="truncate text-base font-bold leading-6">{detail.data?.summary.title ?? "Session detail"}</h3>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{detail.data?.summary.cwd ?? ""}</p>
               {detail.data ? (
                 <p className="mt-1 text-xs text-muted-foreground">
                   {formatNumber(detail.data.event_count)} events from {formatNumber(detail.data.raw_event_count)} raw lines

@@ -27,14 +27,14 @@ const eventDisplayStyles: Record<
     avatar: "U",
     badgeTone: "blue",
     avatarClassName: "bg-blue-600 text-white shadow-blue-100",
-    panelClassName: "border-blue-200 bg-blue-50/80",
+    panelClassName: "border-blue-200 bg-blue-50/70",
   },
   assistant: {
     label: "assistant",
     avatar: "A",
     badgeTone: "green",
     avatarClassName: "bg-emerald-600 text-white shadow-emerald-100",
-    panelClassName: "border-emerald-200 bg-emerald-50/70",
+    panelClassName: "border-emerald-200 bg-emerald-50/65",
   },
   system: {
     label: "system",
@@ -71,54 +71,54 @@ function EventRow({ event, threadId, focused }: { event: SessionEventPreview; th
 
   if (isSystem) {
     return (
-      <div className="px-4 py-1">
-        <div className="flex justify-center text-center">
-          <div className="w-full max-w-2xl">
-            <button
-              type="button"
-              className={cn(
-                "inline-flex max-w-full min-w-0 flex-wrap items-center justify-center gap-x-1 gap-y-0 rounded-full px-2 py-0 text-[10px] leading-4 text-muted-foreground transition-colors",
-                canExpand ? "cursor-pointer hover:text-foreground" : "cursor-default",
-                expanded ? "bg-muted/60 text-foreground" : "bg-muted/25",
-                focused ? "ring-2 ring-ring" : "",
-              )}
-              onClick={() => {
-                if (canExpand) setExpanded((value) => !value);
-              }}
-              aria-expanded={canExpand ? expanded : undefined}
-            >
-              {canExpand ? expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} /> : null}
-              <span>{title}</span>
+      <div className="relative px-5 py-0.5 sm:px-6">
+        <button
+          type="button"
+          className={cn(
+            "grid min-h-7 w-full grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md text-left text-[11px] transition-colors",
+            canExpand ? "cursor-pointer hover:bg-muted/50" : "cursor-default",
+            expanded ? "bg-muted/50" : "bg-transparent",
+            focused ? "ring-2 ring-ring" : "",
+          )}
+          onClick={() => {
+            if (canExpand) setExpanded((value) => !value);
+          }}
+          aria-expanded={canExpand ? expanded : undefined}
+        >
+          <span className="relative z-10 flex h-8 w-8 items-center justify-center bg-white text-foreground">
+            {canExpand ? expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} /> : null}
+          </span>
+          <span className="min-w-0 truncate text-[10px] font-semibold text-foreground">{title}</span>
+          <span className="shrink-0 text-[11px] text-muted-foreground">{timeLabel}</span>
+        </button>
+        {expanded ? (
+          <div className="ml-10 mt-1 rounded-lg border bg-white px-3.5 py-2 shadow-soft">
+            <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
               <span>line {event.line_no}</span>
-              {timeLabel ? <span>{timeLabel}</span> : null}
               {event.body_bytes > 0 ? <span>{sizeLabel}</span> : null}
-            </button>
-            {expanded ? (
-              <div className="mt-2 rounded-md border bg-muted/20 px-3.5 py-3 text-left">
-                {body ? <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground">{body}</pre> : null}
-                <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
-                  {event.body_truncated && fullEvent.isFetching ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                      <Loader2 className="animate-spin" size={10} />
-                      Loading
-                    </span>
-                  ) : null}
-                  {fullEvent.error ? <span className="text-[10px] text-destructive">{fullEvent.error.message}</span> : null}
-                </div>
-              </div>
-            ) : null}
+            </div>
+            {body ? <pre className="whitespace-pre-wrap break-words text-xs leading-5 text-foreground">{body}</pre> : null}
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              {event.body_truncated && fullEvent.isFetching ? (
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                  <Loader2 className="animate-spin" size={12} />
+                  Loading
+                </span>
+              ) : null}
+              {fullEvent.error ? <span className="text-xs text-destructive">{fullEvent.error.message}</span> : null}
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
     );
   }
 
   return (
-    <div className="px-4 py-3">
+    <div className="relative px-4 py-2.5 sm:px-5">
       <div className="flex w-full items-start gap-3">
         <div
           className={cn(
-            "mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold shadow-sm",
+            "relative z-10 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold shadow-sm",
             display.avatarClassName,
           )}
           aria-hidden="true"
@@ -127,7 +127,7 @@ function EventRow({ event, threadId, focused }: { event: SessionEventPreview; th
         </div>
         <article
           className={cn(
-            "min-w-0 flex-1 rounded-lg border px-3.5 py-3 shadow-soft transition-shadow",
+            "min-w-0 flex-1 rounded-lg border px-3.5 py-3 transition-shadow",
             display.panelClassName,
             focused ? "ring-2 ring-ring" : "",
           )}
@@ -186,48 +186,58 @@ function SessionUserDirectory({
   const errorMessage = error instanceof Error ? error.message : null;
 
   return (
-    <aside className="flex min-h-0 flex-col border-b bg-muted/40 lg:border-b-0 lg:border-r">
-      <div className="flex items-center justify-between gap-3 px-3 py-2">
-        <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">User messages</span>
-        <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-muted-foreground">
+    <aside className="flex min-h-0 flex-col border-b bg-white lg:border-b-0 lg:border-r">
+      <div className="flex h-11 items-center justify-between gap-3 border-b px-4">
+        <span className="text-xs font-bold uppercase text-muted-foreground">User Messages</span>
+        <span className="rounded-full border bg-white px-2 py-0.5 text-xs font-semibold text-foreground">
           {loading ? "..." : formatNumber(items.length)}
         </span>
       </div>
-      <div className="max-h-44 min-h-0 overflow-auto border-t lg:max-h-none lg:flex-1">
+      <div className="max-h-52 min-h-0 overflow-auto px-3 py-4 lg:max-h-none lg:flex-1">
         {loading ? (
-          <div className="flex items-center px-3 py-4 text-xs text-muted-foreground">
+          <div className="flex items-center px-1 py-4 text-xs text-muted-foreground">
             <Loader2 className="mr-2 animate-spin" size={14} />
             Loading index
           </div>
         ) : errorMessage ? (
-          <div className="px-3 py-4 text-xs text-destructive">{errorMessage}</div>
+          <div className="px-1 py-4 text-xs text-destructive">{errorMessage}</div>
         ) : items.length ? (
-          items.map((item) => {
-            const active = item.line_no === activeLineNo || item.event_index === pendingEventIndex;
-            const timeLabel = item.timestamp ? formatTime(Date.parse(item.timestamp) / 1000) : "";
-            return (
-              <button
-                key={item.id}
-                type="button"
-                className={cn(
-                  "block w-full border-b px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-white",
-                  active ? "bg-blue-50" : "bg-transparent",
-                )}
-                onClick={() => onJump(item)}
-              >
-                <span className="line-clamp-2 break-words text-sm font-semibold leading-5 text-foreground">
-                  {userIndexLabel(item)}
-                </span>
-                <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                  {timeLabel ? <span>{timeLabel}</span> : null}
-                  <span>line {item.line_no}</span>
-                  <span>{formatBytes(item.body_bytes)}</span>
-                </span>
-              </button>
-            );
-          })
+          <div className="space-y-3">
+            {items.map((item) => {
+              const active = item.line_no === activeLineNo || item.event_index === pendingEventIndex;
+              const timeLabel = item.timestamp ? formatTime(Date.parse(item.timestamp) / 1000) : "";
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={cn(
+                    "flex w-full items-start gap-3 rounded-lg border bg-white px-3.5 py-3 text-left transition-colors hover:bg-muted/40",
+                    active ? "border-blue-200 bg-blue-50/80 ring-1 ring-blue-100" : "border-border",
+                  )}
+                  onClick={() => onJump(item)}
+                >
+                  <span
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white"
+                    aria-hidden="true"
+                  >
+                    U
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="line-clamp-2 break-words text-sm font-semibold leading-5 text-foreground">
+                      {userIndexLabel(item)}
+                    </span>
+                    <span className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+                      {timeLabel ? <span>{timeLabel}</span> : null}
+                      {timeLabel ? <span aria-hidden="true">·</span> : null}
+                      <span>line {item.line_no}</span>
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         ) : (
-          <div className="px-3 py-4 text-xs text-muted-foreground">No user messages</div>
+          <div className="px-1 py-4 text-xs text-muted-foreground">No user messages</div>
         )}
       </div>
     </aside>
@@ -340,7 +350,7 @@ export function SessionEventList({
   }
 
   return (
-    <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)] lg:grid-rows-1">
+    <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[320px_minmax(0,1fr)] lg:grid-rows-1">
       <SessionUserDirectory
         items={userIndexItems}
         loading={userIndex.isPending}
@@ -349,40 +359,46 @@ export function SessionEventList({
         pendingEventIndex={pendingJumpIndex}
         onJump={jumpToUserMessage}
       />
-      <div ref={parentRef} className="min-h-0 overflow-auto">
-        <div className="sticky top-0 z-10 border-b bg-white px-4 py-2 text-xs font-semibold text-muted-foreground">
-          Showing {formatNumber(eventItems.length)} of {formatNumber(totalEventCount ?? eventItems.length)} events
+      <section className="flex min-h-0 flex-col bg-white">
+        <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b px-5">
+          <span className="text-xs font-bold uppercase text-muted-foreground">Events Timeline</span>
+          <span className="text-xs text-muted-foreground">
+            Showing {formatNumber(eventItems.length)} of {formatNumber(totalEventCount ?? eventItems.length)} events
+          </span>
         </div>
-        <div className="relative" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-          {virtualItems.map((virtualRow) => {
-            const event = eventItems[virtualRow.index];
-            return (
-              <div
-                key={event?.id ?? `placeholder-${virtualRow.index}`}
-                ref={virtualizer.measureElement}
-                data-index={virtualRow.index}
-                className="absolute left-0 top-0 w-full"
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
-              >
-                {event ? (
-                  <EventRow event={event} threadId={activeId} focused={event.line_no === focusedLineNo} />
-                ) : (
-                  <div className="flex items-center justify-center px-4 py-6 text-sm text-muted-foreground">
-                    {events.isFetchingNextPage ? (
-                      <>
-                        <Loader2 className="mr-2 animate-spin" size={16} />
-                        Loading more
-                      </>
-                    ) : (
-                      "Scroll to load more"
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
+          <div className="relative" style={{ height: `${virtualizer.getTotalSize()}px` }}>
+            <div className="pointer-events-none absolute bottom-0 left-[34px] top-0 border-l border-dashed border-border" />
+            {virtualItems.map((virtualRow) => {
+              const event = eventItems[virtualRow.index];
+              return (
+                <div
+                  key={event?.id ?? `placeholder-${virtualRow.index}`}
+                  ref={virtualizer.measureElement}
+                  data-index={virtualRow.index}
+                  className="absolute left-0 top-0 w-full"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  {event ? (
+                    <EventRow event={event} threadId={activeId} focused={event.line_no === focusedLineNo} />
+                  ) : (
+                    <div className="flex items-center justify-center px-4 py-6 text-sm text-muted-foreground">
+                      {events.isFetchingNextPage ? (
+                        <>
+                          <Loader2 className="mr-2 animate-spin" size={16} />
+                          Loading more
+                        </>
+                      ) : (
+                        "Scroll to load more"
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
