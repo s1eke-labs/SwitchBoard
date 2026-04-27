@@ -10,6 +10,7 @@ import pytest
 from accounts import account_auth_path, hide_account, list_accounts, scan_current_account, set_account_custom_name, switch_account
 from codex_files import current_auth_path, read_json
 from config import Settings
+from config_transfer import CONFIG_SCHEMA, export_config, import_config
 from db import connect, init_db, now_ts
 from pricing import estimate_cost
 
@@ -396,6 +397,176 @@ def test_hide_current_account_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError):
         hide_account(settings, "acct-current")
+
+
+def test_export_config_only_includes_account_preferences(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    with connect(settings.db_path) as conn:
+        ts = now_ts()
+        conn.execute(
+            """
+            INSERT INTO accounts(
+                account_id, display_name, custom_name, hidden, user_name, plan_type,
+                last_scanned_at, last_error, created_at, updated_at
+            )
+            VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+            """,
+            ("acct-one", "Account-0001", "Work", "Ada", "team", ts, "secret-ish error", ts, ts),
+        )
+        conn.execute(
+            """
+            INSERT INTO rate_limit_snapshots(
+                account_id, scanned_at, five_hour_used_percent, five_hour_window_minutes,
+                five_hour_resets_at, weekly_used_percent, weekly_window_minutes,
+                weekly_resets_at, raw_json
+            )
+            VALUES (?, ?, 10, 300, ?, 20, 10080, ?, ?)
+            """,
+            ("acct-one", ts, ts + 60, ts + 120, '{"token":"must-not-export"}'),
+        )
+        conn.execute(
+            """
+            INSERT INTO usage_events(
+                thread_id, event_index, occurred_at, model, input_tokens,
+                cache_hit_tokens, cache_creation_tokens, output_tokens,
+                reasoning_output_tokens, total_tokens, cost_usd, cost_known
+            )
+            VALUES ('thread', 1, ?, 'model', 1, 2, 3, 4, 5, 15, 0.01, 1)
+            """,
+            (ts,),
+        )
+
+    exported = export_config(settings).model_dump(by_alias=True)
+
+    assert exported["schema"] == CONFIG_SCHEMA
+    assert exported["accounts"] == [
+        {
+            "account_id": "acct-one",
+            "display_name": "Account-0001",
+            "custom_name": "Work",
+            "hidden": True,
+        }
+    ]
+    assert "token" not in json.dumps(exported)
+    assert "team" not in json.dumps(exported)
+
+
+def test_import_config_updates_existing_account_preferences(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    with connect(settings.db_path) as conn:
+        ts = now_ts()
+        conn.execute(
+            "INSERT INTO accounts(account_id, display_name, custom_name, hidden, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)",
+            ("acct-one", "Account-0001", "Old", ts, ts),
+        )
+
+    summary = import_config(
+        settings,
+        {
+            "schema": CONFIG_SCHEMA,
+            "accounts": [
+                {
+                    "account_id": "acct-one",
+                    "display_name": "Ignored",
+                    "custom_name": "  New Name  ",
+                    "hidden": True,
+                }
+            ],
+        },
+    )
+
+    assert summary.imported == 1
+    assert summary.updated == 1
+    with connect(settings.db_path) as conn:
+        row = conn.execute("SELECT * FROM accounts WHERE account_id = 'acct-one'").fetchone()
+    assert row["display_name"] == "Account-0001"
+    assert row["custom_name"] == "New Name"
+    assert row["hidden"] == 1
+
+
+def test_import_config_creates_unknown_account_placeholder(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+
+    summary = import_config(
+        settings,
+        {
+            "schema": CONFIG_SCHEMA,
+            "accounts": [
+                {
+                    "account_id": "acct-new",
+                    "display_name": "Imported Account",
+                    "custom_name": "",
+                    "hidden": False,
+                }
+            ],
+        },
+    )
+
+    assert summary.created == 1
+    with connect(settings.db_path) as conn:
+        row = conn.execute("SELECT * FROM accounts WHERE account_id = 'acct-new'").fetchone()
+    assert row["display_name"] == "Imported Account"
+    assert row["custom_name"] is None
+    assert row["hidden"] == 0
+
+
+def test_import_config_does_not_hide_current_account(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings, "acct-current")
+    with connect(settings.db_path) as conn:
+        ts = now_ts()
+        conn.execute(
+            "INSERT INTO accounts(account_id, display_name, hidden, created_at, updated_at) VALUES (?, ?, 0, ?, ?)",
+            ("acct-current", "Current", ts, ts),
+        )
+
+    import_config(
+        settings,
+        {
+            "schema": CONFIG_SCHEMA,
+            "accounts": [
+                {
+                    "account_id": "acct-current",
+                    "display_name": "Current",
+                    "custom_name": "Primary",
+                    "hidden": True,
+                }
+            ],
+        },
+    )
+
+    with connect(settings.db_path) as conn:
+        row = conn.execute("SELECT hidden, custom_name FROM accounts WHERE account_id = 'acct-current'").fetchone()
+    assert row["hidden"] == 0
+    assert row["custom_name"] == "Primary"
+
+
+def test_import_config_rejects_invalid_schema_and_account_item(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+
+    with pytest.raises(ValueError, match="Unsupported config schema"):
+        import_config(settings, {"schema": "wrong", "accounts": []})
+
+    with pytest.raises(ValueError, match="hidden must be a boolean"):
+        import_config(
+            settings,
+            {
+                "schema": CONFIG_SCHEMA,
+                "accounts": [
+                    {
+                        "account_id": "acct-one",
+                        "display_name": "Account",
+                        "custom_name": None,
+                        "hidden": "no",
+                    }
+                ],
+            },
+        )
 
 
 def test_unknown_model_cost_is_zero() -> None:

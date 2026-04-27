@@ -27,6 +27,27 @@ export type ScanResult = {
   error: string | null;
 };
 
+export type SwitchBoardConfigAccountDTO = {
+  account_id: string;
+  display_name: string;
+  custom_name: string | null;
+  hidden: boolean;
+};
+
+export type SwitchBoardConfigExportDTO = {
+  schema: "switchboard.config.v1";
+  exported_at: number;
+  accounts: SwitchBoardConfigAccountDTO[];
+};
+
+export type SwitchBoardConfigImportSummary = {
+  ok: boolean;
+  imported: number;
+  created: number;
+  updated: number;
+  skipped: number;
+};
+
 export type SessionSummary = {
   thread_id: string;
   title: string;
@@ -244,6 +265,12 @@ export const api = {
     request<AccountDTO>(`/api/accounts/${accountId}/name`, {
       method: "POST",
       body: JSON.stringify({ custom_name: customName }),
+    }),
+  exportConfig: () => request<SwitchBoardConfigExportDTO>("/api/config/export"),
+  importConfig: (config: unknown) =>
+    request<SwitchBoardConfigImportSummary>("/api/config/import", {
+      method: "POST",
+      body: JSON.stringify(config),
     }),
   sessions: ({ query = "", cursor = null, page, limit = 7 }: SessionListParams = {}) => {
     const params = new URLSearchParams({ limit: String(limit) });

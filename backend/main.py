@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from accounts import AccountDTO, ScanResult, hide_account, list_accounts, scan_current_account, set_account_custom_name, switch_account
 from config import get_settings, validate_runtime_settings
+from config_transfer import ConfigExportDTO, ConfigImportSummary, export_config, import_config
 from db import init_db
 from security import clear_login_cookie, require_auth, set_login_cookie
 from sessions import (
@@ -168,6 +169,18 @@ def create_app() -> FastAPI:
             return set_account_custom_name(settings, account_id, payload.custom_name)
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
+
+    @app.get("/api/config/export", response_model=ConfigExportDTO, dependencies=authed)
+    def export_switchboard_config() -> ConfigExportDTO:
+        return export_config(settings)
+
+    @app.post("/api/config/import", response_model=ConfigImportSummary, dependencies=authed)
+    async def import_switchboard_config(request: Request) -> ConfigImportSummary:
+        try:
+            payload = await request.json()
+            return import_config(settings, payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.get("/api/sessions", response_model=SessionListResponse, dependencies=authed)
     def sessions(

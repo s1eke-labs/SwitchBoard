@@ -1,25 +1,17 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, LayoutGrid, Loader2, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, Loader2, RefreshCw, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { api, AccountDTO } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { AccountCard } from "@/features/accounts/AccountCard";
-import {
-  AccountDensity,
-  accountDensityLabels,
-  accountDensityOrder,
-  accountGridClasses,
-  collapsedRowsByDensity,
-} from "@/features/accounts/accountDisplay";
+
+const COLLAPSED_VISIBLE_COUNT = 3;
 
 export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
   const [expanded, setExpanded] = useState(false);
-  const [density, setDensity] = useState<AccountDensity>("large");
-  const [collapsedHeight, setCollapsedHeight] = useState(0);
-  const [hasOverflowRow, setHasOverflowRow] = useState(false);
-  const gridRef = useRef<HTMLDivElement | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const queryClient = useQueryClient();
   const scan = useMutation({
     mutationFn: api.scan,
@@ -38,12 +30,16 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
       api.renameAccount(accountId, customName),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["accounts"] }),
   });
+  const exportConfig = useMutation({
+    mutationFn: api.exportConfig,
+  });
+  const importConfig = useMutation({
+    mutationFn: api.importConfig,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["accounts"] }),
+  });
   const current = accounts.find((account) => account.current);
-  const nextDensity = accountDensityOrder[(accountDensityOrder.indexOf(density) + 1) % accountDensityOrder.length];
-  const densitySwitchLabel = `Accounts view: ${accountDensityLabels[density]}. Switch to ${accountDensityLabels[nextDensity]}`;
-  const gridClass = accountGridClasses[density];
-  const gridGapClass = expanded ? "gap-4" : density === "small" ? "gap-3" : "gap-4";
-  const listStyle = expanded || collapsedHeight === 0 ? undefined : { maxHeight: `${collapsedHeight}px` };
+  const hasHiddenAccounts = accounts.length > COLLAPSED_VISIBLE_COUNT;
+  const visibleAccounts = expanded ? accounts : accounts.slice(0, COLLAPSED_VISIBLE_COUNT);
 
   function handleSwitch(accountId: string) {
     const targetAccount = accounts.find((account) => account.account_id === accountId);
@@ -70,53 +66,60 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
     });
   }
 
-  useLayoutEffect(() => {
-    const grid = gridRef.current;
-    if (!grid) return;
-    const target = grid;
+  function configFileName() {
+    const value = new Date();
+    const pad = (part: number) => String(part).padStart(2, "0");
+    return `switchboard-config-${value.getFullYear()}${pad(value.getMonth() + 1)}${pad(value.getDate())}-${pad(value.getHours())}${pad(value.getMinutes())}${pad(value.getSeconds())}.json`;
+  }
 
-    function measure() {
-      const items = Array.from(target.children).filter((child): child is HTMLElement => child instanceof HTMLElement);
-      if (!items.length) {
-        setCollapsedHeight(0);
-        setHasOverflowRow(false);
-        return;
-      }
+  function downloadConfigFile(config: unknown) {
+    const blob = new Blob([`${JSON.stringify(config, null, 2)}\n`], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = configFileName();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
 
-      const rows: HTMLElement[][] = [];
-      for (const item of items) {
-        const row = rows.find((candidate) => Math.abs(candidate[0].offsetTop - item.offsetTop) < 4);
-        if (row) {
-          row.push(item);
-        } else {
-          rows.push([item]);
-        }
-      }
+  function handleExportConfig() {
+    const promise = exportConfig.mutateAsync().then((config) => {
+      downloadConfigFile(config);
+      return config;
+    });
 
-      const visibleRowCount = collapsedRowsByDensity[density];
-      const visibleRows = rows.slice(0, visibleRowCount).flat();
-      const firstTop = rows[0][0].offsetTop;
-      const visibleBottom = Math.max(...visibleRows.map((item) => item.offsetTop + item.offsetHeight));
-      setCollapsedHeight(Math.ceil(visibleBottom - firstTop));
-      setHasOverflowRow(rows.length > visibleRowCount);
+    toast.promise(promise, {
+      loading: "Exporting config",
+      success: (config) => ({
+        message: "Config exported",
+        description: `${config.accounts.length} account preferences saved.`,
+      }),
+      error: (error) => ({
+        message: "Export failed",
+        description: error instanceof Error ? error.message : "Unable to export config.",
+      }),
+    });
+  }
+
+  async function handleImportConfig(file: File) {
+    try {
+      const config = JSON.parse(await file.text());
+      const result = await importConfig.mutateAsync(config);
+      toast.success("Config imported", {
+        description: `${result.imported} imported (${result.created} created, ${result.updated} updated).`,
+      });
+    } catch (error) {
+      toast.error("Import failed", {
+        description: error instanceof Error ? error.message : "Unable to import config.",
+      });
     }
-
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(target);
-    for (const child of Array.from(target.children)) {
-      if (child instanceof HTMLElement) observer.observe(child);
-    }
-    window.addEventListener("resize", measure);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", measure);
-    };
-  }, [accounts, density]);
+  }
 
   useEffect(() => {
-    if (!hasOverflowRow) setExpanded(false);
-  }, [hasOverflowRow]);
+    if (!hasHiddenAccounts) setExpanded(false);
+  }, [hasHiddenAccounts]);
 
   return (
     <section className="h-full min-h-0">
@@ -133,7 +136,7 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
               <p className="truncate text-sm text-muted-foreground">{current?.display_name ?? "No current account"}</p>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-              {hasOverflowRow ? (
+              {hasHiddenAccounts ? (
                 <Button
                   aria-label={expanded ? "Collapse accounts" : "Expand accounts"}
                   title={expanded ? "Collapse accounts" : "Expand accounts"}
@@ -144,14 +147,36 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
                   {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                 </Button>
               ) : null}
+              <input
+                ref={importInputRef}
+                type="file"
+                className="hidden"
+                accept="application/json,.json"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) void handleImportConfig(file);
+                }}
+              />
               <Button
-                aria-label={densitySwitchLabel}
-                title={densitySwitchLabel}
+                aria-label="Import config"
+                title="Import config"
                 size="icon"
                 variant="secondary"
-                onClick={() => setDensity(nextDensity)}
+                onClick={() => importInputRef.current?.click()}
+                disabled={importConfig.isPending}
               >
-                <LayoutGrid size={16} />
+                {importConfig.isPending ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
+              </Button>
+              <Button
+                aria-label="Export config"
+                title="Export config"
+                size="icon"
+                variant="secondary"
+                onClick={handleExportConfig}
+                disabled={exportConfig.isPending}
+              >
+                {exportConfig.isPending ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
               </Button>
               <Button onClick={() => scan.mutate()} disabled={scan.isPending}>
                 {scan.isPending ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
@@ -162,13 +187,12 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
           {scan.data?.error ? (
             <div className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800">{scan.data.error}</div>
           ) : null}
-          <div className={cn("min-h-0 flex-1", expanded ? "overflow-y-auto pr-2" : "overflow-hidden")} style={listStyle}>
-            <div ref={gridRef} className={cn("grid", gridClass, gridGapClass)}>
-              {accounts.map((account) => (
+          <div className={cn("min-h-0", expanded ? "flex-1 overflow-y-auto pr-2" : "flex-1 overflow-hidden")}>
+            <div className={cn("grid grid-cols-3 gap-4", !expanded && "h-full auto-rows-fr")}>
+              {visibleAccounts.map((account) => (
                 <AccountCard
                   key={account.account_id}
                   account={account}
-                  density={density}
                   expanded={expanded}
                   onHide={(id) => hide.mutate(id)}
                   onRename={(id, customName) => rename.mutateAsync({ accountId: id, customName })}

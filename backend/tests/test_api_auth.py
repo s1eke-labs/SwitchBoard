@@ -27,6 +27,52 @@ def test_api_requires_login(monkeypatch, tmp_path) -> None:
     assert client.get("/api/accounts").status_code == 200
 
 
+def test_config_import_export_api_auth_and_summary(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    (tmp_path / "codex").mkdir()
+
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+    client = TestClient(main.create_app())
+
+    payload = {
+        "schema": "switchboard.config.v1",
+        "accounts": [
+            {
+                "account_id": "acct-one",
+                "display_name": "Account One",
+                "custom_name": "Work",
+                "hidden": False,
+            }
+        ],
+    }
+
+    assert client.get("/api/config/export").status_code == 401
+    assert client.post("/api/config/import", json=payload).status_code == 401
+    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
+
+    imported = client.post("/api/config/import", json=payload)
+    assert imported.status_code == 200
+    assert imported.json() == {"ok": True, "imported": 1, "created": 1, "updated": 0, "skipped": 0}
+
+    exported = client.get("/api/config/export")
+    assert exported.status_code == 200
+    assert exported.json()["accounts"] == [
+        {
+            "account_id": "acct-one",
+            "display_name": "Account One",
+            "custom_name": "Work",
+            "hidden": False,
+        }
+    ]
+
+
 def test_login_uses_constant_time_compare(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))

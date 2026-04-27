@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { AccountDensity } from "@/features/accounts/accountDisplay";
 
 function LimitMeter({ label, limit }: { label: string; limit: LimitDTO | null }) {
   const remaining = limit?.remaining_percent ?? 100;
@@ -27,15 +26,6 @@ function LimitMeter({ label, limit }: { label: string; limit: LimitDTO | null })
   );
 }
 
-function LimitSummary({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0 rounded-md bg-muted px-2.5 py-2">
-      <div className="truncate text-xs font-semibold text-muted-foreground">{label}</div>
-      <div className="mt-1 truncate text-base font-bold leading-none">{value}</div>
-    </div>
-  );
-}
-
 export function AccountCard({
   account,
   onHide,
@@ -43,7 +33,6 @@ export function AccountCard({
   onSwitch,
   renaming,
   switching,
-  density,
   expanded,
 }: {
   account: AccountDTO;
@@ -52,7 +41,6 @@ export function AccountCard({
   onSwitch: (id: string) => void;
   renaming: boolean;
   switching: boolean;
-  density: AccountDensity;
   expanded: boolean;
 }) {
   const [isEditing, setIsEditing] = useState(false);
@@ -81,30 +69,20 @@ export function AccountCard({
     }
   }
 
-  const isLarge = density === "large";
-  const isMedium = density === "medium";
-  const isSmall = density === "small";
-  const fiveHour = formatPercent(account.five_hour?.remaining_percent ?? 100);
-  const weekly = formatPercent(account.weekly?.remaining_percent ?? 100);
   const showUserName = Boolean(account.user_name && account.user_name !== account.display_name);
-  const actionButtonClass = isLarge ? undefined : "h-8 w-8";
-  const iconSize = isLarge ? 16 : 15;
+  const actionButtonClass = "h-8 w-8";
+  const iconSize = 15;
 
   return (
     <Card className={cn("h-full min-h-0 overflow-hidden", account.current && "border-blue-300 bg-blue-50/40")}>
-      <CardContent
-        className={cn(
-          "flex h-full min-h-0 flex-col",
-          isLarge ? (expanded ? "p-5" : "p-4") : isMedium ? (expanded ? "p-4" : "p-3.5") : expanded ? "p-3.5" : "p-3",
-        )}
-      >
-        <div className={cn("flex items-start justify-between gap-3", isLarge ? (expanded ? "mb-5" : "mb-4") : isMedium ? "mb-3" : "mb-2.5")}>
+      <CardContent className={cn("flex h-full min-h-0 flex-col", expanded ? "p-4" : "p-3.5")}>
+        <div className="mb-3 flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             {isEditing ? (
               <form onSubmit={saveName} className="flex min-w-0 flex-wrap items-center gap-2">
                 <Input
                   autoFocus
-                  className={isSmall ? "h-8 w-32 max-w-full" : isMedium ? "h-8 w-44 max-w-full" : "h-9 w-56 max-w-full"}
+                  className="h-8 w-44 max-w-full"
                   placeholder="Custom name"
                   value={draftName}
                   onChange={(event) => setDraftName(event.target.value)}
@@ -133,15 +111,15 @@ export function AccountCard({
                 </Button>
               </form>
             ) : (
-              <div className={cn("flex min-w-0 flex-wrap items-center gap-2", isSmall && "gap-x-1.5 gap-y-1")}>
-                <h3 className={cn("min-w-0 truncate font-bold", isSmall ? "text-sm" : "text-base")}>{account.display_name}</h3>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h3 className="min-w-0 truncate text-base font-bold">{account.display_name}</h3>
                 {account.current ? <Badge tone="blue">Current</Badge> : null}
                 {account.expired ? <Badge tone="orange">Expired</Badge> : null}
-                {!isSmall && showUserName ? <Badge tone="neutral">{account.user_name}</Badge> : null}
-                {!isSmall && account.plan_type ? <Badge tone="neutral">{account.plan_type}</Badge> : null}
+                {showUserName ? <Badge tone="neutral">{account.user_name}</Badge> : null}
+                {account.plan_type ? <Badge tone="neutral">{account.plan_type}</Badge> : null}
               </div>
             )}
-            {!isSmall ? <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{shortId(account.account_id)}</p> : null}
+            <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{shortId(account.account_id)}</p>
             {renameError ? <p className="mt-2 text-xs text-destructive">{renameError}</p> : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -185,27 +163,13 @@ export function AccountCard({
             ) : null}
           </div>
         </div>
-        {isSmall ? (
-          <div className="mt-auto grid grid-cols-2 gap-2">
-            <LimitSummary label="5h" value={fiveHour} />
-            <LimitSummary label="Weekly" value={weekly} />
-          </div>
-        ) : (
-          <div className={`grid ${isLarge ? "gap-4 sm:grid-cols-2" : "gap-3"}`}>
+        <div className="mt-auto">
+          <div className="grid gap-3">
             <LimitMeter label="5h remaining" limit={account.five_hour} />
             <LimitMeter label="Weekly remaining" limit={account.weekly} />
           </div>
-        )}
-        {isLarge ? (
-          <div className="mt-4 flex min-w-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span className="truncate">Scanned {formatTime(account.last_scanned_at)}</span>
-            {account.last_error ? (
-              <span className="truncate text-orange-700">
-                Last scan failed{account.failed_scan_count ? ` x${account.failed_scan_count}` : ""}
-              </span>
-            ) : null}
-          </div>
-        ) : account.last_error ? (
+        </div>
+        {account.last_error ? (
           <div className="mt-2 truncate text-xs text-orange-700">
             Last scan failed{account.failed_scan_count ? ` x${account.failed_scan_count}` : ""}
           </div>
