@@ -9,7 +9,7 @@ import pytest
 import usage
 from config import Settings
 from db import init_db
-from sessions import get_session_detail, get_session_event, list_session_events, list_sessions
+from sessions import get_session_detail, get_session_event, list_session_events, list_session_user_index, list_sessions
 from usage import get_usage_events
 
 
@@ -256,6 +256,38 @@ def test_session_event_preview_truncates_without_truncating_full_event(tmp_path:
     assert page.items[0].body_truncated is True
     assert len(page.items[0].body_preview) == 4000
     assert full_event.text == full_output
+
+
+def test_session_user_index_lists_user_events_with_event_indexes(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    rollout = settings.codex_home / "rollout.jsonl"
+    rows = [
+        {
+            "type": "event_msg",
+            "timestamp": "2026-04-25T00:00:00Z",
+            "payload": {"type": "user_message", "message": "first user message"},
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2026-04-25T00:01:00Z",
+            "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "reply"}]},
+        },
+        {
+            "type": "event_msg",
+            "timestamp": "2026-04-25T00:02:00Z",
+            "payload": {"type": "user_message", "message": "second user message"},
+        },
+    ]
+    rollout.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    _create_state(settings, rollout)
+
+    index = list_session_user_index(settings, "thread-1")
+
+    assert [item.body_preview for item in index.items] == ["first user message", "second user message"]
+    assert [item.event_index for item in index.items] == [0, 2]
+    assert [item.line_no for item in index.items] == [1, 3]
+    assert index.items[0].body_bytes == len("first user message".encode("utf-8"))
 
 
 def test_usage_events_fall_back_to_sessions_directory(tmp_path: Path) -> None:

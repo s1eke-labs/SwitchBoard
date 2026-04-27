@@ -81,6 +81,19 @@ export type SessionEventPreview = {
   body_bytes: number;
 };
 
+export type SessionUserIndexItem = {
+  id: string;
+  line_no: number;
+  event_index: number;
+  timestamp: string | null;
+  body_preview: string;
+  body_bytes: number;
+};
+
+export type SessionUserIndexResponse = {
+  items: SessionUserIndexItem[];
+};
+
 export type SessionEventsResponse = {
   items: SessionEventPreview[];
   next_cursor: string | null;
@@ -204,5 +217,7 @@ export const api = {
   },
   sessionEvent: (threadId: string, lineNo: number) =>
     request<SessionEvent>(`/api/sessions/${threadId}/events/${lineNo}`),
+  sessionUserIndex: (threadId: string) =>
+    request<SessionUserIndexResponse>(`/api/sessions/${threadId}/user-index`),
   usageAggregates: () => request<UsageAggregatesResponse>("/api/usage/aggregates"),
 };

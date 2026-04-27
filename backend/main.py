@@ -22,10 +22,12 @@ from sessions import (
     SessionEvent,
     SessionEventsResponse,
     SessionListResponse,
+    SessionUserIndexResponse,
     get_session_detail,
     get_session_event,
     iso_to_ts,
     list_session_events,
+    list_session_user_index,
     list_sessions,
 )
 from usage import (
@@ -200,6 +202,13 @@ def create_app() -> FastAPI:
             return list_session_events(settings, thread_id, cursor=cursor, limit=limit)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found") from exc
+
+    @app.get("/api/sessions/{thread_id}/user-index", response_model=SessionUserIndexResponse, dependencies=authed)
+    def session_user_index(thread_id: str) -> SessionUserIndexResponse:
+        try:
+            return list_session_user_index(settings, thread_id)
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found") from exc
 

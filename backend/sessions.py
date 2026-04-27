@@ -15,6 +15,7 @@ from config import Settings
 SORT_UPDATED_AT_MS = "COALESCE(updated_at_ms, updated_at * 1000)"
 SESSIONS_ORDER_BY = f"{SORT_UPDATED_AT_MS} DESC, id DESC"
 SESSION_EVENT_PREVIEW_CHARS = 4_000
+SESSION_USER_INDEX_PREVIEW_CHARS = 160
 SESSION_EVENT_PAYLOAD_TYPES = {
     "user_message",
     "message",
@@ -74,6 +75,19 @@ class SessionEventPreview(BaseModel):
     body_preview: str
     body_truncated: bool
     body_bytes: int
+
+
+class SessionUserIndexItem(BaseModel):
+    id: str
+    line_no: int
+    event_index: int
+    timestamp: str | None = None
+    body_preview: str
+    body_bytes: int
+
+
+class SessionUserIndexResponse(BaseModel):
+    items: list[SessionUserIndexItem]
 
 
 class SessionEventsResponse(BaseModel):
@@ -346,6 +360,20 @@ def _event_preview(event: SessionEvent) -> SessionEventPreview:
     )
 
 
+def _user_index_item(event: SessionEvent, event_index: int) -> SessionUserIndexItem:
+    if event.line_no is None or event.id is None:
+        raise ValueError("Session event is missing line metadata")
+    body = _event_body(event)
+    return SessionUserIndexItem(
+        id=event.id,
+        line_no=event.line_no,
+        event_index=event_index,
+        timestamp=event.timestamp,
+        body_preview=body[:SESSION_USER_INDEX_PREVIEW_CHARS],
+        body_bytes=len(body.encode("utf-8")),
+    )
+
+
 def _resolve_rollout_path(settings: Settings, stored_path: str, thread_id: str) -> Path:
     rollout_path = Path(stored_path)
     candidates: list[Path] = []
@@ -440,6 +468,32 @@ def list_session_events(settings: Settings, thread_id: str, cursor: str | None =
         items=items,
         next_cursor=next_cursor,
     )
+
+
+def list_session_user_index(settings: Settings, thread_id: str) -> SessionUserIndexResponse:
+    _, rollout_path = _session_context(settings, thread_id)
+    items: list[SessionUserIndexItem] = []
+    event_index = 0
+
+    if not rollout_path.exists():
+        return SessionUserIndexResponse(items=items)
+
+    with rollout_path.open("r", encoding="utf-8") as handle:
+        for line_no, raw_line in enumerate(handle, start=1):
+            try:
+                line = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(line, dict):
+                continue
+            event = _normalize_event(line, line_no=line_no)
+            if event is None:
+                continue
+            if event.kind == "user":
+                items.append(_user_index_item(event, event_index))
+            event_index += 1
+
+    return SessionUserIndexResponse(items=items)
 
 
 def get_session_event(settings: Settings, thread_id: str, line_no: int) -> SessionEvent:
