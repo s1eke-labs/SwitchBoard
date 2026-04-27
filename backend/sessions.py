@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import sqlite3
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,18 +17,6 @@ SORT_UPDATED_AT_MS = "COALESCE(updated_at_ms, updated_at * 1000)"
 SESSIONS_ORDER_BY = f"{SORT_UPDATED_AT_MS} DESC, id DESC"
 SESSION_EVENT_PREVIEW_CHARS = 4_000
 SESSION_USER_INDEX_PREVIEW_CHARS = 160
-SESSION_EVENT_PAYLOAD_TYPES = {
-    "user_message",
-    "message",
-    "agent_message",
-    "function_call",
-    "function_call_output",
-    "reasoning",
-    "token_count",
-    "task_started",
-    "task_complete",
-}
-
 
 class SessionSummary(BaseModel):
     thread_id: str
@@ -326,13 +315,40 @@ def _normalize_event(line: dict[str, Any], line_no: int | None = None, max_text_
     return None
 
 
-def _is_session_event_line(line: dict[str, Any]) -> bool:
-    if line.get("type") in {"session_meta", "turn_context"}:
-        return True
+def _event_source_type(line: dict[str, Any]) -> str:
     payload = line.get("payload") if isinstance(line.get("payload"), dict) else {}
-    if payload.get("type") == "message" and payload.get("role") == "user":
-        return False
-    return payload.get("type") in SESSION_EVENT_PAYLOAD_TYPES
+    payload_type = payload.get("type")
+    if payload_type == "message":
+        return f"message:{payload.get('role') or 'assistant'}"
+    return str(payload_type or line.get("type") or "")
+
+
+def _iter_session_events(rollout_path: Path, max_text_len: int | None = 20_000) -> Iterator[SessionEvent]:
+    seen_assistant_text_sources: dict[str, set[str]] = {}
+
+    with rollout_path.open("r", encoding="utf-8") as handle:
+        for line_no, raw_line in enumerate(handle, start=1):
+            try:
+                line = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(line, dict):
+                continue
+            event = _normalize_event(line, line_no=line_no, max_text_len=max_text_len)
+            if event is None:
+                continue
+
+            if event.kind == "user":
+                seen_assistant_text_sources.clear()
+            elif event.kind == "assistant":
+                body = _event_body(event)
+                source_type = _event_source_type(line)
+                source_types = seen_assistant_text_sources.setdefault(body, set())
+                if source_types and source_type not in source_types:
+                    continue
+                source_types.add(source_type)
+
+            yield event
 
 
 def _event_body(event: SessionEvent) -> str:
@@ -416,18 +432,12 @@ def _session_context(settings: Settings, thread_id: str) -> tuple[SessionSummary
 
 def _session_event_counts(rollout_path: Path) -> tuple[int, int]:
     raw_count = 0
-    event_count = 0
     if not rollout_path.exists():
-        return raw_count, event_count
+        return raw_count, 0
     with rollout_path.open("r", encoding="utf-8") as handle:
         for raw_line in handle:
             raw_count += 1
-            try:
-                line = json.loads(raw_line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(line, dict) and _is_session_event_line(line):
-                event_count += 1
+    event_count = sum(1 for _ in _iter_session_events(rollout_path))
     return raw_count, event_count
 
 
@@ -448,25 +458,15 @@ def list_session_events(settings: Settings, thread_id: str, cursor: str | None =
     if not rollout_path.exists():
         return SessionEventsResponse(items=[], next_cursor=None)
 
-    with rollout_path.open("r", encoding="utf-8") as handle:
-        for line_no, raw_line in enumerate(handle, start=1):
-            if line_no <= after_line_no:
-                continue
-            try:
-                line = json.loads(raw_line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(line, dict):
-                continue
-            event = _normalize_event(line, line_no=line_no)
-            if event is None:
-                continue
-            if len(items) < safe_limit:
-                items.append(_event_preview(event))
-                last_seen_line_no = line_no
-                continue
-            next_cursor = _encode_event_cursor(last_seen_line_no)
-            break
+    for event in _iter_session_events(rollout_path):
+        if event.line_no is None or event.line_no <= after_line_no:
+            continue
+        if len(items) < safe_limit:
+            items.append(_event_preview(event))
+            last_seen_line_no = event.line_no
+            continue
+        next_cursor = _encode_event_cursor(last_seen_line_no)
+        break
 
     return SessionEventsResponse(
         items=items,
@@ -482,20 +482,10 @@ def list_session_user_index(settings: Settings, thread_id: str) -> SessionUserIn
     if not rollout_path.exists():
         return SessionUserIndexResponse(items=items)
 
-    with rollout_path.open("r", encoding="utf-8") as handle:
-        for line_no, raw_line in enumerate(handle, start=1):
-            try:
-                line = json.loads(raw_line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(line, dict):
-                continue
-            event = _normalize_event(line, line_no=line_no)
-            if event is None:
-                continue
-            if event.kind == "user":
-                items.append(_user_index_item(event, event_index))
-            event_index += 1
+    for event in _iter_session_events(rollout_path):
+        if event.kind == "user":
+            items.append(_user_index_item(event, event_index))
+        event_index += 1
 
     return SessionUserIndexResponse(items=items)
 

@@ -333,6 +333,81 @@ def test_session_events_skip_duplicate_response_item_user_messages(tmp_path: Pat
     ]
 
 
+def test_session_events_skip_duplicate_assistant_message_sources(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    rollout = settings.codex_home / "rollout.jsonl"
+    rows = [
+        {
+            "type": "event_msg",
+            "timestamp": "2026-04-25T00:00:00Z",
+            "payload": {"type": "user_message", "message": "hello"},
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2026-04-25T00:01:00Z",
+            "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "same reply"}]},
+        },
+        {
+            "type": "event_msg",
+            "timestamp": "2026-04-25T00:01:00Z",
+            "payload": {"type": "agent_message", "message": "same reply"},
+        },
+        {
+            "type": "event_msg",
+            "timestamp": "2026-04-25T00:02:00Z",
+            "payload": {"type": "token_count", "info": {"last_token_usage": {"total_tokens": 10}}},
+        },
+    ]
+    rollout.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    _create_state(settings, rollout)
+
+    detail = get_session_detail(settings, "thread-1")
+    first_page = list_session_events(settings, "thread-1", limit=2)
+    second_page = list_session_events(settings, "thread-1", cursor=first_page.next_cursor, limit=2)
+    index = list_session_user_index(settings, "thread-1")
+
+    assert detail.raw_event_count == 4
+    assert detail.event_count == 3
+    assert [(event.kind, event.line_no, event.body_preview) for event in first_page.items] == [
+        ("user", 1, "hello"),
+        ("assistant", 2, "same reply"),
+    ]
+    assert first_page.next_cursor is not None
+    assert [(event.kind, event.line_no) for event in second_page.items] == [("token_count", 4)]
+    assert second_page.next_cursor is None
+    assert [(item.line_no, item.event_index, item.body_preview) for item in index.items] == [(1, 0, "hello")]
+
+
+def test_session_events_keep_agent_message_without_response_item(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    rollout = settings.codex_home / "rollout.jsonl"
+    rows = [
+        {
+            "type": "event_msg",
+            "timestamp": "2026-04-25T00:00:00Z",
+            "payload": {"type": "user_message", "message": "hello"},
+        },
+        {
+            "type": "event_msg",
+            "timestamp": "2026-04-25T00:01:00Z",
+            "payload": {"type": "agent_message", "message": "agent-only reply"},
+        },
+    ]
+    rollout.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    _create_state(settings, rollout)
+
+    detail = get_session_detail(settings, "thread-1")
+    page = list_session_events(settings, "thread-1")
+
+    assert detail.event_count == 2
+    assert [(event.kind, event.line_no, event.body_preview) for event in page.items] == [
+        ("user", 1, "hello"),
+        ("assistant", 2, "agent-only reply"),
+    ]
+
+
 def test_usage_events_fall_back_to_sessions_directory(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     init_db(settings.db_path)
