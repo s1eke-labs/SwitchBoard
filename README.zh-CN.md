@@ -12,7 +12,7 @@ SwitchBoard 是一个小型全栈应用，适合在本地使用 Codex、并希�
 - 从 ChatGPT 后端扫描账号资料和速率限制快照。
 - 通过更新 `CODEX_HOME/auth.json` 切换本地 Codex 账号。
 - 在 SwitchBoard 内重命名或隐藏账号，不修改 Codex 凭据本身。
-- 导出和导入本地账号偏好，方便在不同安装之间迁移 SwitchBoard 设置。
+- 导出和导入本地账号展示状态，方便在不同安装之间迁移 SwitchBoard 设置。
 - 浏览 Codex 会话，按文本搜索，并查看会话事件。
 - 查看请求日志、Token 用量、缓存用量和预估成本。
 - 支持后端/前端分离开发、本地类生产运行，以及 Docker Compose 运行。
@@ -120,11 +120,11 @@ uv run uvicorn main:app --host 127.0.0.1 --port 8080
 
 ## 配置导入和导出
 
-使用 Accounts 工具栏里的导入和导出按钮，可以在不同安装之间迁移 SwitchBoard 本地账号偏好。
+使用 Accounts 工具栏里的导入和导出按钮，可以在不同安装之间迁移 SwitchBoard 本地账号展示状态。
 
-导出的 JSON 包含账号 ID、生成的显示名、自定义名称和隐藏状态。它不包含 ChatGPT Token、`auth.json`、会话、用量数据、扫描历史、SQLite 缓存或 `.env` 值。
+导出的 JSON 包含账号 ID、生成的显示名、自定义名称、隐藏状态、用户和套餐标签、过期状态、最近扫描时间、5h remaining、Weekly remaining 以及 reset 时间。它不包含 ChatGPT Token、`auth.json`、会话、请求日志、SQLite 用量缓存或 `.env` 值。
 
-导入配置文件时会按 `account_id` 合并：文件中的账号会更新本地自定义名称和隐藏状态，未知账号会创建为占位账号，本地存在但文件中缺失的账号保持不变。当前 Codex 账号永远不会被导入为隐藏状态。
+导入配置文件时会按 `account_id` 合并：文件中的账号会更新本地展示元数据和最新额度快照，未知账号会创建为占位账号，本地存在但文件中缺失的账号保持不变。当前 Codex 账号永远不会被导入为隐藏状态，导入 `current` 标记也不会切换当前 Codex 账号。
 
 ## Docker Compose
 
@@ -175,7 +175,7 @@ frontend/
 - ChatGPT Token 不会存储在 SwitchBoard 的 SQLite 数据库中。
 - 切换账号会重写本地 Codex 的 `auth.json`；需要重启 Codex 才会生效。
 - 隐藏账号和自定义名称都是 SwitchBoard 本地元数据。
-- 配置导出只包含 SwitchBoard 本地账号偏好，绝不会包含凭据。
+- 配置导出只包含 SwitchBoard 本地账号展示状态，绝不会包含凭据。
 - 不要提交 `.env`、SQLite 数据库或本地 Codex 凭据。
 - 用量成本估算使用本地价格表匹配已知模型名；未知模型的成本会保持为 null。
 

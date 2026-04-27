@@ -399,7 +399,7 @@ def test_hide_current_account_is_rejected(tmp_path: Path) -> None:
         hide_account(settings, "acct-current")
 
 
-def test_export_config_only_includes_account_preferences(tmp_path: Path) -> None:
+def test_export_config_includes_display_state_without_credentials(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     init_db(settings.db_path)
     with connect(settings.db_path) as conn:
@@ -446,13 +446,27 @@ def test_export_config_only_includes_account_preferences(tmp_path: Path) -> None
             "display_name": "Account-0001",
             "custom_name": "Work",
             "hidden": True,
+            "user_name": "Ada",
+            "plan_type": "team",
+            "expired": False,
+            "current": False,
+            "last_scanned_at": ts,
+            "five_hour": {
+                "remaining_percent": 90.0,
+                "window_minutes": 300,
+                "resets_at": ts + 60,
+            },
+            "weekly": {
+                "remaining_percent": 80.0,
+                "window_minutes": 10080,
+                "resets_at": ts + 120,
+            },
         }
     ]
     assert "token" not in json.dumps(exported)
-    assert "team" not in json.dumps(exported)
 
 
-def test_import_config_updates_existing_account_preferences(tmp_path: Path) -> None:
+def test_import_config_updates_existing_account_display_state(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     init_db(settings.db_path)
     with connect(settings.db_path) as conn:
@@ -472,6 +486,20 @@ def test_import_config_updates_existing_account_preferences(tmp_path: Path) -> N
                     "display_name": "Ignored",
                     "custom_name": "  New Name  ",
                     "hidden": True,
+                    "user_name": "  Ada  ",
+                    "plan_type": " team ",
+                    "expired": True,
+                    "last_scanned_at": ts + 30,
+                    "five_hour": {
+                        "remaining_percent": 61,
+                        "window_minutes": 300,
+                        "resets_at": ts + 3600,
+                    },
+                    "weekly": {
+                        "remaining_percent": 36,
+                        "window_minutes": 10080,
+                        "resets_at": ts + 7200,
+                    },
                 }
             ],
         },
@@ -484,6 +512,18 @@ def test_import_config_updates_existing_account_preferences(tmp_path: Path) -> N
     assert row["display_name"] == "Account-0001"
     assert row["custom_name"] == "New Name"
     assert row["hidden"] == 1
+    assert row["user_name"] == "Ada"
+    assert row["plan_type"] == "team"
+    assert row["last_scanned_at"] == ts + 30
+    assert row["expired_at"] is not None
+    assert row["failed_scan_count"] == 3
+    with connect(settings.db_path) as conn:
+        snapshot = conn.execute("SELECT * FROM rate_limit_snapshots WHERE account_id = 'acct-one'").fetchone()
+    assert snapshot["scanned_at"] == ts + 30
+    assert snapshot["five_hour_used_percent"] == 39
+    assert snapshot["five_hour_resets_at"] == ts + 3600
+    assert snapshot["weekly_used_percent"] == 64
+    assert snapshot["weekly_resets_at"] == ts + 7200
 
 
 def test_import_config_creates_unknown_account_placeholder(tmp_path: Path) -> None:
@@ -500,6 +540,14 @@ def test_import_config_creates_unknown_account_placeholder(tmp_path: Path) -> No
                     "display_name": "Imported Account",
                     "custom_name": "",
                     "hidden": False,
+                    "user_name": "Kai Smith",
+                    "plan_type": "team",
+                    "expired": False,
+                    "five_hour": {
+                        "remaining_percent": 0,
+                        "window_minutes": 300,
+                        "resets_at": 1777345200,
+                    },
                 }
             ],
         },
@@ -511,6 +559,12 @@ def test_import_config_creates_unknown_account_placeholder(tmp_path: Path) -> No
     assert row["display_name"] == "Imported Account"
     assert row["custom_name"] is None
     assert row["hidden"] == 0
+    assert row["user_name"] == "Kai Smith"
+    assert row["plan_type"] == "team"
+    with connect(settings.db_path) as conn:
+        snapshot = conn.execute("SELECT * FROM rate_limit_snapshots WHERE account_id = 'acct-new'").fetchone()
+    assert snapshot["five_hour_used_percent"] == 100
+    assert snapshot["five_hour_resets_at"] == 1777345200
 
 
 def test_import_config_does_not_hide_current_account(tmp_path: Path) -> None:

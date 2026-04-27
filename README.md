@@ -12,7 +12,7 @@ SwitchBoard is a small full-stack app for people who use Codex locally and want 
 - Scan account profile and rate-limit snapshots from the ChatGPT backend.
 - Switch the local Codex account by updating `CODEX_HOME/auth.json`.
 - Rename or hide accounts inside SwitchBoard without changing Codex credentials.
-- Export and import local account preferences for moving SwitchBoard setup between machines.
+- Export and import local account display state for moving SwitchBoard setup between machines.
 - Browse Codex sessions, search by text, and inspect session events.
 - Review request logs, token usage, cache usage, and estimated costs.
 - Run as separate backend/frontend dev servers, a production-style local app, or Docker Compose.
@@ -120,11 +120,11 @@ Open `http://127.0.0.1:8080` and sign in with `APP_PASSWORD`.
 
 ## Config Import and Export
 
-Use the import and export buttons in the Accounts toolbar to move SwitchBoard-local account preferences between installs.
+Use the import and export buttons in the Accounts toolbar to move SwitchBoard-local account display state between installs.
 
-The exported JSON includes account IDs, generated display names, custom names, and hidden status. It does not include ChatGPT tokens, `auth.json`, sessions, usage data, scan history, SQLite caches, or `.env` values.
+The exported JSON includes account IDs, generated display names, custom names, hidden status, user and plan labels, expired status, last scan time, 5h remaining, weekly remaining, and reset times. It does not include ChatGPT tokens, `auth.json`, sessions, request logs, SQLite usage caches, or `.env` values.
 
-Importing a config file merges by `account_id`: accounts in the file update local custom names and hidden status, unknown accounts are created as placeholders, and local accounts missing from the file are left unchanged. The current Codex account is never imported as hidden.
+Importing a config file merges by `account_id`: accounts in the file update local display metadata and latest rate-limit snapshot, unknown accounts are created as placeholders, and local accounts missing from the file are left unchanged. The current Codex account is never imported as hidden, and importing a `current` marker never switches the active Codex account.
 
 ## Docker Compose
 
@@ -175,7 +175,7 @@ frontend/
 - ChatGPT tokens are not stored in SwitchBoard's SQLite database.
 - Account switching rewrites the local Codex `auth.json`; restart Codex for the change to take effect.
 - Hidden accounts and custom names are SwitchBoard-local metadata.
-- Config export includes only SwitchBoard-local account preferences and never includes credentials.
+- Config export includes only SwitchBoard-local account display state and never includes credentials.
 - Do not commit `.env`, SQLite databases, or local Codex credentials.
 - Usage cost estimates use a local pricing table for known model names; unknown model costs remain null.
 

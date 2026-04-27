@@ -69,6 +69,13 @@ def test_config_import_export_api_auth_and_summary(monkeypatch, tmp_path) -> Non
             "display_name": "Account One",
             "custom_name": "Work",
             "hidden": False,
+            "user_name": None,
+            "plan_type": None,
+            "expired": False,
+            "current": False,
+            "last_scanned_at": None,
+            "five_hour": None,
+            "weekly": None,
         }
     ]
 

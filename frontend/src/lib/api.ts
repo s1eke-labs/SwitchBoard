@@ -32,6 +32,19 @@ export type SwitchBoardConfigAccountDTO = {
   display_name: string;
   custom_name: string | null;
   hidden: boolean;
+  user_name: string | null;
+  plan_type: string | null;
+  expired: boolean;
+  current: boolean;
+  last_scanned_at: number | null;
+  five_hour: SwitchBoardConfigLimitDTO | null;
+  weekly: SwitchBoardConfigLimitDTO | null;
+};
+
+export type SwitchBoardConfigLimitDTO = {
+  remaining_percent: number;
+  window_minutes: number | null;
+  resets_at: number | null;
 };
 
 export type SwitchBoardConfigExportDTO = {
