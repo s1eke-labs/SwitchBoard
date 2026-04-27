@@ -33,7 +33,9 @@ npm run preview
 
 Python targets 3.13 and follows module-level FastAPI patterns. Use 4-space indentation, typed public helpers, and snake_case for modules, functions, and variables. Keep tests close to behavior.
 
-TypeScript uses React, Vite, Tailwind CSS, and small UI primitives. Use PascalCase for components, camelCase for functions and variables, and keep shared API/client logic in `frontend/src/lib/`. Prefer existing `components/ui` primitives.
+TypeScript uses React, Vite, Tailwind CSS, and shadcn/ui primitives. Use PascalCase for components, camelCase for functions and variables, and keep shared API/client logic in `frontend/src/lib/`. Prefer existing `components/ui` primitives.
+
+For frontend UI, if shadcn/ui provides the needed primitive, use it instead of hand-writing an equivalent custom component. Add missing primitives from `frontend/` with `npm run ui -- add <component>` and import them from `@/components/ui/...`. Keep custom components for SwitchBoard-specific composition and behavior; use Sonner toasts for transient status messages such as successful account switching instead of building custom modal components.
 
 ## Versioning & Compatibility
 
