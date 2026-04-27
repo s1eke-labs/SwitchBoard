@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from contextlib import asynccontextmanager, suppress
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from accounts import AccountDTO, ScanResult, hide_account, list_accounts, scan_current_account, set_account_custom_name
+from config import get_settings
+from db import init_db
+from security import clear_login_cookie, require_auth, set_login_cookie
+from sessions import SessionDetail, SessionListResponse, get_session_detail, iso_to_ts, list_sessions
+from usage import (
+    AGGREGATION_REFRESH_SECONDS,
+    UsageAggregatesResponse,
+    UsageEventsResponse,
+    get_usage_aggregates,
+    get_usage_events,
+)
+
+
+logger = logging.getLogger(__name__)
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+class LoginResponse(BaseModel):
+    ok: bool
+
+
+class AccountNameRequest(BaseModel):
+    custom_name: str | None = None
+
+
+def auth_dependency(request: Request) -> None:
+    require_auth(request)
+
+
+def _seconds_until_next_usage_aggregation() -> float:
+    now = time.time()
+    return max(1.0, AGGREGATION_REFRESH_SECONDS - (now % AGGREGATION_REFRESH_SECONDS))
+
+
+def create_app() -> FastAPI:
+    settings = get_settings()
+    init_db(settings.db_path)
+
+    async def usage_aggregation_loop() -> None:
+        while True:
+            try:
+                await asyncio.to_thread(get_usage_aggregates, settings)
+            except Exception:
+                logger.exception("Usage aggregation failed")
+            await asyncio.sleep(_seconds_until_next_usage_aggregation())
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        task = asyncio.create_task(usage_aggregation_loop())
+        app.state.usage_aggregation_task = task
+        try:
+            yield
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    app = FastAPI(title="SwitchBoard", version="0.1.0", lifespan=lifespan)
+    app.state.settings = settings
+
+    @app.get("/api/health")
+    def health() -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.post("/api/auth/login", response_model=LoginResponse)
+    def login(payload: LoginRequest, response: Response) -> LoginResponse:
+        if payload.password != settings.app_password:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+        set_login_cookie(response, settings)
+        return LoginResponse(ok=True)
+
+    @app.post("/api/auth/logout", response_model=LoginResponse)
+    def logout(response: Response) -> LoginResponse:
+        clear_login_cookie(response, settings)
+        return LoginResponse(ok=True)
+
+    authed = [Depends(auth_dependency)]
+
+    @app.get("/api/accounts", response_model=list[AccountDTO], dependencies=authed)
+    def accounts() -> list[AccountDTO]:
+        return list_accounts(settings)
+
+    @app.post("/api/accounts/scan", response_model=ScanResult, dependencies=authed)
+    async def scan_account() -> ScanResult:
+        try:
+            return await scan_current_account(settings)
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/api/accounts/{account_id}/hide", response_model=dict[str, bool], dependencies=authed)
+    def hide(account_id: str) -> dict[str, bool]:
+        try:
+            hide_account(settings, account_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
+        return {"ok": True}
+
+    @app.post("/api/accounts/{account_id}/name", response_model=AccountDTO, dependencies=authed)
+    def rename_account(account_id: str, payload: AccountNameRequest) -> AccountDTO:
+        try:
+            return set_account_custom_name(settings, account_id, payload.custom_name)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
+
+    @app.get("/api/sessions", response_model=SessionListResponse, dependencies=authed)
+    def sessions(
+        query: str | None = None,
+        cwd: str | None = None,
+        from_: Annotated[str | None, Query(alias="from")] = None,
+        to: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> SessionListResponse:
+        return list_sessions(
+            settings,
+            query=query,
+            cwd=cwd,
+            from_ts=iso_to_ts(from_) if from_ else None,
+            to_ts=iso_to_ts(to) if to else None,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    @app.get("/api/sessions/{thread_id}", response_model=SessionDetail, dependencies=authed)
+    def session_detail(thread_id: str) -> SessionDetail:
+        try:
+            return get_session_detail(settings, thread_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found") from exc
+
+    @app.get("/api/usage/events", response_model=UsageEventsResponse, dependencies=authed)
+    def usage_events(
+        from_: Annotated[str | None, Query(alias="from")] = None,
+        to: str | None = None,
+    ) -> UsageEventsResponse:
+        return get_usage_events(settings, from_, to)
+
+    @app.get("/api/usage/aggregates", response_model=UsageAggregatesResponse, dependencies=authed)
+    def usage_aggregates() -> UsageAggregatesResponse:
+        return get_usage_aggregates(settings)
+
+    static_dir = settings.static_dir
+    if static_dir and static_dir.exists():
+        assets_dir = static_dir / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+        @app.get("/{path:path}", include_in_schema=False)
+        def spa(path: str) -> FileResponse:
+            candidate = static_dir / path
+            if path and candidate.exists() and candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(static_dir / "index.html")
+
+    return app
+
+
+app = create_app()

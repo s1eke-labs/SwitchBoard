@@ -1,0 +1,287 @@
+from __future__ import annotations
+
+import base64
+import json
+from pathlib import Path
+
+import pytest
+
+from accounts import hide_account, list_accounts, scan_current_account, set_account_custom_name
+from config import Settings
+from db import connect, init_db, now_ts
+from pricing import estimate_cost
+
+
+def _jwt(claims: dict[str, str]) -> str:
+    payload = json.dumps(claims).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+    return f"header.{encoded}.sig"
+
+
+def _settings(tmp_path: Path) -> Settings:
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    return Settings(
+        app_password="secret",
+        codex_home=codex_home,
+        db_path=tmp_path / "switchboard.sqlite",
+        chatgpt_backend_base="https://example.test/backend-api",
+        static_dir=None,
+    )
+
+
+def _write_auth(settings: Settings, account_id: str = "acct-current") -> None:
+    (settings.codex_home / "auth.json").write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "account_id": account_id,
+                    "access_token": "access",
+                    "id_token": _jwt({"name": "Ada"}),
+                    "refresh_token": "refresh",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.asyncio
+async def test_scan_current_account_unhides_and_stores_snapshot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings)
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO accounts(account_id, display_name, hidden, created_at, updated_at)
+            VALUES (?, ?, 1, ?, ?)
+            """,
+            ("acct-current", "Old", now_ts(), now_ts()),
+        )
+
+    async def fake_fetch(_client, url: str, _token: str):
+        if url.endswith("/wham/usage"):
+            return {
+                "primary": {"used_percent": 22, "window_minutes": 300, "resets_at": now_ts() + 60},
+                "secondary": {"used_percent": 7, "window_minutes": 10080, "resets_at": now_ts() + 120},
+                "plan_type": "team",
+            }
+        return {"user": {"name": "Ada"}}
+
+    monkeypatch.setattr("accounts._fetch_json", fake_fetch)
+    result = await scan_current_account(settings)
+
+    assert result.status == "ok"
+    assert result.account.display_name == "Ada"
+    assert result.account.hidden is False
+    assert result.account.five_hour is not None
+    assert result.account.five_hour.remaining_percent == 78
+
+
+@pytest.mark.asyncio
+async def test_scan_current_account_reads_wham_usage_limit_shape(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings)
+    primary_reset = now_ts() + 3600
+    weekly_reset = now_ts() + 86400
+
+    async def fake_fetch(_client, url: str, _token: str):
+        if url.endswith("/wham/usage"):
+            return {
+                "plan_type": "team",
+                "five_hour_limit": {
+                    "used_percent": 51.0,
+                    "remaining_percent": 49.0,
+                    "window_minutes": 300,
+                    "resets_at_unix": primary_reset,
+                    "resets_at_local": "2026-04-26T00:46:28+08:00",
+                },
+                "weekly_limit": {
+                    "used_percent": 70.0,
+                    "remaining_percent": 30.0,
+                    "window_minutes": 10080,
+                    "resets_at_unix": weekly_reset,
+                    "resets_at_local": "2026-05-01T11:53:21+08:00",
+                },
+                "credits": {"has_credits": False},
+                "limit_reached": False,
+                "allowed": True,
+            }
+        return {"user": {"name": "Ada"}}
+
+    monkeypatch.setattr("accounts._fetch_json", fake_fetch)
+    result = await scan_current_account(settings)
+
+    assert result.account.plan_type == "team"
+    assert result.account.five_hour is not None
+    assert result.account.weekly is not None
+    assert result.account.five_hour.remaining_percent == 49
+    assert result.account.five_hour.resets_at == primary_reset
+    assert result.account.weekly.remaining_percent == 30
+    assert result.account.weekly.resets_at == weekly_reset
+
+
+@pytest.mark.asyncio
+async def test_scan_current_account_reads_raw_wham_rate_limit_shape(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings)
+    primary_reset = now_ts() + 3600
+    weekly_reset = now_ts() + 86400
+
+    async def fake_fetch(_client, url: str, _token: str):
+        if url.endswith("/wham/usage"):
+            return {
+                "plan_type": "team",
+                "rate_limit": {
+                    "allowed": True,
+                    "limit_reached": False,
+                    "primary_window": {
+                        "limit_window_seconds": 18000,
+                        "reset_after_seconds": 13772,
+                        "reset_at": primary_reset,
+                        "used_percent": 80,
+                    },
+                    "secondary_window": {
+                        "limit_window_seconds": 604800,
+                        "reset_after_seconds": 485785,
+                        "reset_at": weekly_reset,
+                        "used_percent": 75,
+                    },
+                },
+                "credits": {"has_credits": False},
+            }
+        return {"user": {"name": "Ada"}}
+
+    monkeypatch.setattr("accounts._fetch_json", fake_fetch)
+    result = await scan_current_account(settings)
+
+    assert result.account.plan_type == "team"
+    assert result.account.five_hour is not None
+    assert result.account.weekly is not None
+    assert result.account.five_hour.remaining_percent == 20
+    assert result.account.five_hour.window_minutes == 300
+    assert result.account.five_hour.resets_at == primary_reset
+    assert result.account.weekly.remaining_percent == 25
+    assert result.account.weekly.window_minutes == 10080
+    assert result.account.weekly.resets_at == weekly_reset
+
+
+@pytest.mark.asyncio
+async def test_custom_name_overrides_scanned_name_and_can_be_cleared(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings)
+
+    async def fake_fetch(_client, url: str, _token: str):
+        if url.endswith("/wham/usage"):
+            return {
+                "primary": {"used_percent": 10, "window_minutes": 300, "resets_at": now_ts() + 60},
+                "secondary": {"used_percent": 20, "window_minutes": 10080, "resets_at": now_ts() + 120},
+            }
+        return {"user": {"name": "Ada"}}
+
+    monkeypatch.setattr("accounts._fetch_json", fake_fetch)
+    result = await scan_current_account(settings)
+    assert result.account.display_name == "Ada"
+    assert result.account.custom_name is None
+
+    renamed = set_account_custom_name(settings, "acct-current", "Primary")
+    assert renamed.display_name == "Primary"
+    assert renamed.custom_name == "Primary"
+
+    scanned_again = await scan_current_account(settings)
+    assert scanned_again.account.display_name == "Primary"
+    assert scanned_again.account.custom_name == "Primary"
+
+    cleared = set_account_custom_name(settings, "acct-current", " ")
+    assert cleared.display_name == "Ada"
+    assert cleared.custom_name is None
+
+
+def test_reset_limit_recovers_to_full_remaining(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings)
+    with connect(settings.db_path) as conn:
+        ts = now_ts()
+        conn.execute(
+            """
+            INSERT INTO accounts(account_id, display_name, hidden, created_at, updated_at, last_scanned_at)
+            VALUES (?, ?, 0, ?, ?, ?)
+            """,
+            ("acct-current", "Ada", ts, ts, ts),
+        )
+        conn.execute(
+            """
+            INSERT INTO rate_limit_snapshots(
+                account_id, scanned_at, five_hour_used_percent, five_hour_window_minutes, five_hour_resets_at,
+                weekly_used_percent, weekly_window_minutes, weekly_resets_at, raw_json
+            )
+            VALUES (?, ?, 95, 300, ?, 100, 10080, ?, '{}')
+            """,
+            ("acct-current", ts, ts - 1, ts - 1),
+        )
+
+    account = list_accounts(settings)[0]
+    assert account.five_hour is not None
+    assert account.weekly is not None
+    assert account.five_hour.remaining_percent == 100
+    assert account.weekly.remaining_percent == 100
+
+
+def test_init_db_migrates_custom_name_and_removes_workspace_name(tmp_path: Path) -> None:
+    db_path = tmp_path / "switchboard.sqlite"
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE accounts (
+                account_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                user_name TEXT,
+                workspace_name TEXT,
+                plan_type TEXT,
+                hidden INTEGER NOT NULL DEFAULT 0,
+                last_scanned_at INTEGER,
+                last_error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+
+    assert "custom_name" in columns
+    assert "workspace_name" not in columns
+
+
+def test_hide_current_account_is_rejected(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings)
+    with connect(settings.db_path) as conn:
+        ts = now_ts()
+        conn.execute(
+            "INSERT INTO accounts(account_id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("acct-current", "Ada", ts, ts),
+        )
+
+    with pytest.raises(ValueError):
+        hide_account(settings, "acct-current")
+
+
+def test_unknown_model_cost_is_null() -> None:
+    cost, known = estimate_cost("mystery-model", 1000, 100, 50)
+    assert cost is None
+    assert known is False
