@@ -41,11 +41,17 @@ def set_login_cookie(response: Response, settings: Settings) -> None:
         max_age=settings.cookie_max_age_seconds,
         httponly=True,
         samesite="lax",
+        secure=settings.cookie_secure,
     )
 
 
 def clear_login_cookie(response: Response, settings: Settings) -> None:
-    response.delete_cookie(settings.cookie_name)
+    response.delete_cookie(
+        settings.cookie_name,
+        httponly=True,
+        samesite="lax",
+        secure=settings.cookie_secure,
+    )
 
 
 def require_auth(request: Request) -> None:

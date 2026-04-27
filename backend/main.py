@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import time
 from contextlib import asynccontextmanager, suppress
@@ -13,10 +14,20 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from accounts import AccountDTO, ScanResult, hide_account, list_accounts, scan_current_account, set_account_custom_name
-from config import get_settings
+from config import get_settings, validate_runtime_settings
 from db import init_db
 from security import clear_login_cookie, require_auth, set_login_cookie
-from sessions import SessionDetail, SessionListResponse, get_session_detail, iso_to_ts, list_sessions
+from sessions import (
+    SessionDetail,
+    SessionEvent,
+    SessionEventsResponse,
+    SessionListResponse,
+    get_session_detail,
+    get_session_event,
+    iso_to_ts,
+    list_session_events,
+    list_sessions,
+)
 from usage import (
     AGGREGATION_REFRESH_SECONDS,
     UsageAggregatesResponse,
@@ -52,6 +63,7 @@ def _seconds_until_next_usage_aggregation() -> float:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    validate_runtime_settings(settings)
     init_db(settings.db_path)
 
     async def usage_aggregation_loop() -> None:
@@ -82,7 +94,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/auth/login", response_model=LoginResponse)
     def login(payload: LoginRequest, response: Response) -> LoginResponse:
-        if payload.password != settings.app_password:
+        if not hmac.compare_digest(payload.password, settings.app_password):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
         set_login_cookie(response, settings)
         return LoginResponse(ok=True)
@@ -128,18 +140,21 @@ def create_app() -> FastAPI:
         cwd: str | None = None,
         from_: Annotated[str | None, Query(alias="from")] = None,
         to: str | None = None,
-        limit: int = 50,
+        limit: int = 7,
         cursor: str | None = None,
     ) -> SessionListResponse:
-        return list_sessions(
-            settings,
-            query=query,
-            cwd=cwd,
-            from_ts=iso_to_ts(from_) if from_ else None,
-            to_ts=iso_to_ts(to) if to else None,
-            limit=limit,
-            cursor=cursor,
-        )
+        try:
+            return list_sessions(
+                settings,
+                query=query,
+                cwd=cwd,
+                from_ts=iso_to_ts(from_) if from_ else None,
+                to_ts=iso_to_ts(to) if to else None,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.get("/api/sessions/{thread_id}", response_model=SessionDetail, dependencies=authed)
     def session_detail(thread_id: str) -> SessionDetail:
@@ -147,6 +162,22 @@ def create_app() -> FastAPI:
             return get_session_detail(settings, thread_id)
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found") from exc
+
+    @app.get("/api/sessions/{thread_id}/events", response_model=SessionEventsResponse, dependencies=authed)
+    def session_events(thread_id: str, cursor: str | None = None, limit: int = 100) -> SessionEventsResponse:
+        try:
+            return list_session_events(settings, thread_id, cursor=cursor, limit=limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found") from exc
+
+    @app.get("/api/sessions/{thread_id}/events/{line_no}", response_model=SessionEvent, dependencies=authed)
+    def session_event(thread_id: str, line_no: int) -> SessionEvent:
+        try:
+            return get_session_event(settings, thread_id, line_no)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session event not found") from exc
 
     @app.get("/api/usage/events", response_model=UsageEventsResponse, dependencies=authed)
     def usage_events(

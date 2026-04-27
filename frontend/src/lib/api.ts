@@ -49,6 +49,8 @@ export type SessionListParams = {
 };
 
 export type SessionEvent = {
+  id: string | null;
+  line_no: number | null;
   kind: string;
   timestamp: string | null;
   title?: string | null;
@@ -60,8 +62,32 @@ export type SessionEvent = {
 
 export type SessionDetail = {
   summary: SessionSummary;
-  events: SessionEvent[];
   raw_event_count: number;
+  event_count: number;
+};
+
+export type SessionEventPreview = {
+  id: string;
+  line_no: number;
+  kind: string;
+  timestamp: string | null;
+  title?: string | null;
+  name?: string | null;
+  body_preview: string;
+  body_truncated: boolean;
+  body_bytes: number;
+};
+
+export type SessionEventsResponse = {
+  items: SessionEventPreview[];
+  next_cursor: string | null;
+  raw_event_count: number | null;
+  event_count: number | null;
+};
+
+export type SessionEventsParams = {
+  cursor?: string | null;
+  limit?: number;
 };
 
 export type UsageBucket = "hour" | "day" | "week";
@@ -95,20 +121,51 @@ export type UsageAggregatesResponse = {
   ranges: Record<string, UsageRangeAggregateDTO>;
 };
 
+const REQUEST_TIMEOUT_MS = 10_000;
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-  if (!response.ok) {
-    const detail = await response.json().catch(() => ({}));
-    const message = detail?.detail ?? response.statusText;
-    throw Object.assign(new Error(message), { status: response.status });
+  const controller = new AbortController();
+  let timedOut = false;
+  const handleAbort = () => controller.abort();
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
+
+  if (init?.signal) {
+    if (init.signal.aborted) {
+      handleAbort();
+    } else {
+      init.signal.addEventListener("abort", handleAbort, { once: true });
+    }
   }
-  return response.json() as Promise<T>;
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      const message = detail?.detail ?? response.statusText;
+      throw Object.assign(new Error(message), { status: response.status });
+    }
+    return response.json() as Promise<T>;
+  } catch (error) {
+    if (timedOut) {
+      throw Object.assign(new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds`), {
+        status: 408,
+      });
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+    init?.signal?.removeEventListener("abort", handleAbort);
+  }
 }
 
 export const api = {
@@ -127,7 +184,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ custom_name: customName }),
     }),
-  sessions: ({ query = "", cursor = null, limit = 30 }: SessionListParams = {}) => {
+  sessions: ({ query = "", cursor = null, limit = 7 }: SessionListParams = {}) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (query.trim()) params.set("query", query.trim());
     if (cursor) params.set("cursor", cursor);
@@ -135,5 +192,12 @@ export const api = {
   },
   sessionDetail: (threadId: string) =>
     request<SessionDetail>(`/api/sessions/${threadId}`),
+  sessionEvents: (threadId: string, { cursor = null, limit = 100 }: SessionEventsParams = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    return request<SessionEventsResponse>(`/api/sessions/${threadId}/events?${params.toString()}`);
+  },
+  sessionEvent: (threadId: string, lineNo: number) =>
+    request<SessionEvent>(`/api/sessions/${threadId}/events/${lineNo}`),
   usageAggregates: () => request<UsageAggregatesResponse>("/api/usage/aggregates"),
 };

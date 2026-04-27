@@ -4,10 +4,12 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 import usage
 from config import Settings
 from db import init_db
-from sessions import get_session_detail, list_sessions
+from sessions import get_session_detail, get_session_event, list_session_events, list_sessions
 from usage import get_usage_events
 
 
@@ -155,7 +157,16 @@ def test_sessions_and_usage_events_from_rollout(tmp_path: Path) -> None:
     assert listed.total_count == 1
 
     detail = get_session_detail(settings, "thread-1")
-    assert [event.kind for event in detail.events] == ["user", "assistant", "token_count"]
+    assert detail.raw_event_count == 3
+    assert detail.event_count == 3
+
+    first_page = list_session_events(settings, "thread-1", limit=2)
+    second_page = list_session_events(settings, "thread-1", cursor=first_page.next_cursor, limit=2)
+    assert [event.kind for event in first_page.items] == ["user", "assistant"]
+    assert first_page.next_cursor is not None
+    assert [event.kind for event in second_page.items] == ["token_count"]
+    assert second_page.next_cursor is None
+    assert get_session_event(settings, "thread-1", first_page.items[1].line_no).text == "hi"
 
     events = get_usage_events(settings, "1777075200", "1777161600")
     assert len(events.items) == 1
@@ -185,13 +196,27 @@ def test_session_list_reports_total_count_with_filters(tmp_path: Path) -> None:
 
     all_sessions = list_sessions(settings, limit=2)
     filtered = list_sessions(settings, query="Usage", limit=1)
+    filtered_second_page = list_sessions(settings, query="Usage", limit=1, cursor=filtered.next_cursor)
+    all_sessions_second_page = list_sessions(settings, limit=2, cursor=all_sessions.next_cursor)
 
-    assert len(all_sessions.items) == 2
+    assert [item.thread_id for item in all_sessions.items] == ["thread-4", "thread-3"]
     assert all_sessions.total_count == 4
-    assert all_sessions.next_cursor == "2"
-    assert len(filtered.items) == 1
+    assert all_sessions.next_cursor is not None
+    assert [item.thread_id for item in all_sessions_second_page.items] == ["thread-2", "thread-1"]
+    assert all_sessions_second_page.next_cursor is None
+    assert [item.thread_id for item in filtered.items] == ["thread-4"]
     assert filtered.total_count == 2
-    assert filtered.next_cursor == "1"
+    assert filtered.next_cursor is not None
+    assert [item.thread_id for item in filtered_second_page.items] == ["thread-3"]
+    assert filtered_second_page.next_cursor is None
+
+
+def test_session_list_rejects_malformed_cursor(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+
+    with pytest.raises(ValueError, match="Invalid cursor"):
+        list_sessions(settings, cursor="not-a-valid-cursor")
 
 
 def test_session_detail_remaps_absolute_rollout_under_codex_home(tmp_path: Path) -> None:
@@ -209,7 +234,28 @@ def test_session_detail_remaps_absolute_rollout_under_codex_home(tmp_path: Path)
     detail = get_session_detail(settings, "thread-1")
 
     assert detail.raw_event_count == 3
-    assert [event.kind for event in detail.events] == ["user", "assistant", "token_count"]
+    assert detail.event_count == 3
+
+
+def test_session_event_preview_truncates_without_truncating_full_event(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    rollout = settings.codex_home / "rollout.jsonl"
+    full_output = "x" * 5001
+    row = {
+        "type": "response_item",
+        "timestamp": "2026-04-25T00:01:00Z",
+        "payload": {"type": "function_call_output", "output": full_output},
+    }
+    rollout.write_text(json.dumps(row), encoding="utf-8")
+    _create_state(settings, rollout)
+
+    page = list_session_events(settings, "thread-1")
+    full_event = get_session_event(settings, "thread-1", page.items[0].line_no)
+
+    assert page.items[0].body_truncated is True
+    assert len(page.items[0].body_preview) == 4000
+    assert full_event.text == full_output
 
 
 def test_usage_events_fall_back_to_sessions_directory(tmp_path: Path) -> None:

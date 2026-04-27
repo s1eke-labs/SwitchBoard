@@ -44,11 +44,14 @@ The backend reads configuration from environment variables.
 | Variable | Required | Description |
 | --- | --- | --- |
 | `APP_PASSWORD` | Yes | Password used to sign in to SwitchBoard. |
-| `CODEX_HOME` | Yes | Codex home directory. SwitchBoard reads `auth.json` from here. |
+| `CODEX_HOME` | Yes | Codex home directory. It must exist at startup, and SwitchBoard reads `auth.json` from here. |
 | `SWITCHBOARD_DB` | No | SQLite database path. Defaults to local app behavior if omitted. |
 | `SWITCHBOARD_STATIC_DIR` | No | Built frontend directory served by the backend, usually `frontend/dist`. |
+| `SWITCHBOARD_COOKIE_SECURE` | No | Controls the session cookie `Secure` flag. Defaults to `false` for local HTTP development; set it to `true` behind HTTPS. |
 
 For local development, `/tmp/switchboard-dev.sqlite` is a convenient disposable database path.
+
+If `CODEX_HOME` is missing or points to a file instead of a directory, SwitchBoard now fails fast during startup with a clear error.
 
 ## Development Commands
 

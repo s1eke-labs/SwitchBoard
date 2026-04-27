@@ -34,6 +34,18 @@ def _default_db_path() -> Path:
     return Path.cwd() / "data" / "switchboard.sqlite"
 
 
+def _parse_bool_env(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    value = raw_value.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be a boolean value like 1/0, true/false, yes/no, or on/off.")
+
+
 @dataclass(frozen=True)
 class Settings:
     app_password: str
@@ -43,6 +55,14 @@ class Settings:
     static_dir: Path | None
     cookie_name: str = "switchboard_session"
     cookie_max_age_seconds: int = 60 * 60 * 24 * 7
+    cookie_secure: bool = False
+
+
+def validate_runtime_settings(settings: Settings) -> None:
+    if not settings.codex_home.exists():
+        raise RuntimeError(f"CODEX_HOME does not exist: {settings.codex_home}")
+    if not settings.codex_home.is_dir():
+        raise RuntimeError(f"CODEX_HOME is not a directory: {settings.codex_home}")
 
 
 @lru_cache
@@ -61,4 +81,5 @@ def get_settings() -> Settings:
             "CHATGPT_BACKEND_BASE", "https://chatgpt.com/backend-api"
         ).rstrip("/"),
         static_dir=Path(static_dir_raw).expanduser() if static_dir_raw else None,
+        cookie_secure=_parse_bool_env("SWITCHBOARD_COOKIE_SECURE", default=False),
     )

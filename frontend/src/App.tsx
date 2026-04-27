@@ -1,5 +1,6 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Area,
   AreaChart,
@@ -27,7 +28,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { api, AccountDTO, LimitDTO, SessionEvent, SessionSummary, UsageAggregatePointDTO } from "@/lib/api";
+import { api, AccountDTO, LimitDTO, SessionEvent, SessionEventPreview, SessionSummary, UsageAggregatePointDTO } from "@/lib/api";
 import { formatChartTime, formatNumber, formatPercent, formatTime, shortId } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +54,7 @@ const ranges: Record<RangeKey, { label: string }> = {
   "90d": { label: "90d" },
 };
 const SESSIONS_PAGE_SIZE = 7;
+const SESSION_EVENTS_PAGE_SIZE = 80;
 const usageSeries = [
   {
     key: "input_tokens",
@@ -573,16 +575,160 @@ function Metric({ label, value }: { label: string; value: number }) {
   );
 }
 
-function EventRow({ event }: { event: SessionEvent }) {
+function fullEventBody(event: SessionEvent) {
+  if (event.text !== undefined && event.text !== null) return event.text;
+  if (event.arguments !== undefined && event.arguments !== null) return JSON.stringify(event.arguments, null, 2);
+  if (event.data !== undefined && event.data !== null) return JSON.stringify(event.data, null, 2);
+  return "";
+}
+
+function EventRow({ event, threadId }: { event: SessionEventPreview; threadId: string }) {
+  const [expanded, setExpanded] = useState(false);
   const title = event.name ?? event.title ?? event.kind;
-  const body = event.text ?? (event.arguments !== undefined ? JSON.stringify(event.arguments, null, 2) : event.data !== undefined ? JSON.stringify(event.data, null, 2) : "");
+  const fullEvent = useQuery({
+    queryKey: ["session-event", threadId, event.line_no],
+    queryFn: () => api.sessionEvent(threadId, event.line_no),
+    enabled: expanded && event.body_truncated,
+    staleTime: Infinity,
+  });
+  const body = expanded && fullEvent.data ? fullEventBody(fullEvent.data) : event.body_preview;
+  const canExpand = event.body_truncated;
+
   return (
     <div className="border-b px-4 py-3 last:border-b-0">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <Badge tone={event.kind === "user" ? "blue" : event.kind === "assistant" ? "green" : "neutral"}>{title}</Badge>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Badge tone={event.kind === "user" ? "blue" : event.kind === "assistant" ? "green" : "neutral"}>{title}</Badge>
+          <span className="text-xs font-semibold text-muted-foreground">line {event.line_no}</span>
+          {canExpand ? <span className="text-xs text-muted-foreground">{formatNumber(event.body_bytes)} bytes</span> : null}
+        </div>
         <span className="text-xs text-muted-foreground">{event.timestamp ? formatTime(Date.parse(event.timestamp) / 1000) : ""}</span>
       </div>
       {body ? <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground">{body}</pre> : null}
+      {canExpand ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={() => setExpanded((value) => !value)}>
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            {expanded ? "Collapse" : "Load full"}
+          </Button>
+          {fullEvent.isFetching ? (
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="animate-spin" size={12} />
+              Loading
+            </span>
+          ) : null}
+          {fullEvent.error ? <span className="text-xs text-destructive">{fullEvent.error.message}</span> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SessionEventList({
+  activeId,
+  detailPending,
+  totalEventCount,
+}: {
+  activeId: string | null;
+  detailPending: boolean;
+  totalEventCount: number | null;
+}) {
+  const parentRef = useRef<HTMLDivElement | null>(null);
+  const events = useInfiniteQuery({
+    queryKey: ["session-events", activeId],
+    queryFn: ({ pageParam }) =>
+      api.sessionEvents(activeId!, { cursor: pageParam as string | null, limit: SESSION_EVENTS_PAGE_SIZE }),
+    enabled: Boolean(activeId),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+  });
+  const eventItems = useMemo(() => events.data?.pages.flatMap((page) => page.items) ?? [], [events.data]);
+  const rowCount = eventItems.length + (events.hasNextPage ? 1 : 0);
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 176,
+    overscan: 8,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+
+  useEffect(() => {
+    parentRef.current?.scrollTo({ top: 0 });
+    virtualizer.scrollToOffset(0);
+  }, [activeId, virtualizer]);
+
+  useEffect(() => {
+    const lastItem = virtualItems[virtualItems.length - 1];
+    if (!lastItem || !events.hasNextPage || events.isFetchingNextPage) return;
+    if (lastItem.index >= eventItems.length - 12) {
+      events.fetchNextPage();
+    }
+  }, [eventItems.length, events, virtualItems]);
+
+  if (detailPending && activeId) {
+    return (
+      <div className="flex h-40 items-center justify-center text-muted-foreground">
+        <Loader2 className="mr-2 animate-spin" size={18} />
+        Loading
+      </div>
+    );
+  }
+
+  if (!activeId) {
+    return <div className="p-4 text-sm text-muted-foreground">No session selected</div>;
+  }
+
+  if (events.isPending) {
+    return (
+      <div className="flex h-40 items-center justify-center text-muted-foreground">
+        <Loader2 className="mr-2 animate-spin" size={18} />
+        Loading
+      </div>
+    );
+  }
+
+  if (events.error) {
+    return <div className="p-4 text-sm text-destructive">{events.error.message}</div>;
+  }
+
+  if (!eventItems.length) {
+    return <div className="p-4 text-sm text-muted-foreground">No event content</div>;
+  }
+
+  return (
+    <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
+      <div className="sticky top-0 z-10 border-b bg-white px-4 py-2 text-xs font-semibold text-muted-foreground">
+        Showing {formatNumber(eventItems.length)} of {formatNumber(totalEventCount ?? eventItems.length)} events
+      </div>
+      <div className="relative" style={{ height: `${virtualizer.getTotalSize()}px` }}>
+        {virtualItems.map((virtualRow) => {
+          const event = eventItems[virtualRow.index];
+          return (
+            <div
+              key={event?.id ?? "loader"}
+              ref={virtualizer.measureElement}
+              data-index={virtualRow.index}
+              className="absolute left-0 top-0 w-full"
+              style={{ transform: `translateY(${virtualRow.start}px)` }}
+            >
+              {event ? (
+                <EventRow event={event} threadId={activeId} />
+              ) : (
+                <div className="flex items-center justify-center border-b px-4 py-6 text-sm text-muted-foreground">
+                  {events.isFetchingNextPage ? (
+                    <>
+                      <Loader2 className="mr-2 animate-spin" size={16} />
+                      Loading more
+                    </>
+                  ) : (
+                    "Scroll to load more"
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -624,11 +770,11 @@ function SessionsPage({
   onNavigate: (path: string, replace?: boolean) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [page, setPage] = useState(1);
-  const [pagePickerOpen, setPagePickerOpen] = useState(false);
-  const cursor = page > 1 ? String((page - 1) * SESSIONS_PAGE_SIZE) : null;
+  const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
+  const cursor = cursorStack[cursorStack.length - 1] ?? null;
+  const page = cursorStack.length;
   const sessions = useQuery({
-    queryKey: ["sessions", query, page],
+    queryKey: ["sessions", query, cursor],
     queryFn: () => api.sessions({ query, cursor, limit: SESSIONS_PAGE_SIZE }),
     placeholderData: (previousData) => previousData,
   });
@@ -643,12 +789,11 @@ function SessionsPage({
   });
 
   useEffect(() => {
-    setPage(1);
-    setPagePickerOpen(false);
+    setCursorStack([null]);
   }, [query]);
 
   useEffect(() => {
-    if (!selectedThreadId && sessionItems[0]) {
+    if (sessionItems[0] && (!selectedThreadId || !sessionItems.some((session) => session.thread_id === selectedThreadId))) {
       onNavigate(sessionPath(sessionItems[0].thread_id), true);
     }
   }, [onNavigate, selectedThreadId, sessionItems]);
@@ -706,63 +851,38 @@ function SessionsPage({
               </div>
               <div className="flex items-center justify-center border-t p-3">
                 <div className="inline-flex items-center gap-1 rounded-md border bg-white p-1">
-                <Button
-                  aria-label="Previous page"
-                  title="Previous page"
-                  variant="secondary"
-                  size="icon"
-                  onClick={() => setPage((value) => Math.max(1, value - 1))}
-                  disabled={page === 1 || sessions.isFetching}
-                >
-                  <ChevronLeft size={16} />
-                </Button>
-                <div className="relative">
-                  <button
-                    className="h-9 min-w-24 whitespace-nowrap rounded-sm px-3 text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={() => {
-                      setPagePickerOpen((value) => !value);
-                    }}
-                  >
-                    Page {Math.min(page, totalPages)} / {totalPages}
-                  </button>
-                  {pagePickerOpen ? (
-                    <div className="absolute bottom-11 left-1/2 z-10 grid max-h-64 w-48 -translate-x-1/2 grid-cols-4 gap-1 overflow-auto rounded-md border bg-white p-2 shadow-soft">
-                      {Array.from({ length: totalPages }, (_, index) => {
-                        const pageNumber = index + 1;
-                        return (
-                          <button
-                            key={pageNumber}
-                            className={`h-8 rounded-sm text-xs font-semibold ${
-                              pageNumber === page ? "bg-foreground text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                            }`}
-                            onClick={() => {
-                              setPage(pageNumber);
-                              setPagePickerOpen(false);
-                            }}
-                          >
-                            {pageNumber}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-                {sessions.data?.next_cursor ? (
                   <Button
-                    aria-label="Next page"
-                    title="Next page"
+                    aria-label="Previous page"
+                    title="Previous page"
                     variant="secondary"
                     size="icon"
-                    onClick={() => setPage((value) => value + 1)}
-                    disabled={sessions.isFetching}
+                    onClick={() => setCursorStack((value) => (value.length > 1 ? value.slice(0, -1) : value))}
+                    disabled={page === 1 || sessions.isFetching}
                   >
-                    <ChevronRight size={16} />
+                    <ChevronLeft size={16} />
                   </Button>
-                ) : (
-                  <Button aria-label="Next page" title="Next page" variant="secondary" size="icon" disabled>
-                    <ChevronRight size={16} />
-                  </Button>
-                )}
+                  <div className="h-9 min-w-24 px-3 text-center text-sm font-semibold leading-9 text-muted-foreground">
+                    Page {Math.min(page, totalPages)} / {totalPages}
+                  </div>
+                  {sessions.data?.next_cursor ? (
+                    <Button
+                      aria-label="Next page"
+                      title="Next page"
+                      variant="secondary"
+                      size="icon"
+                      onClick={() => {
+                        if (!sessions.data?.next_cursor) return;
+                        setCursorStack((value) => [...value, sessions.data.next_cursor!]);
+                      }}
+                      disabled={sessions.isFetching}
+                    >
+                      <ChevronRight size={16} />
+                    </Button>
+                  ) : (
+                    <Button aria-label="Next page" title="Next page" variant="secondary" size="icon" disabled>
+                      <ChevronRight size={16} />
+                    </Button>
+                  )}
                 </div>
               </div>
             </>
@@ -775,20 +895,14 @@ function SessionsPage({
             <div className="min-w-0">
               <h3 className="truncate text-base font-bold">{detail.data?.summary.title ?? "Session detail"}</h3>
               <p className="truncate text-xs text-muted-foreground">{detail.data?.summary.cwd ?? ""}</p>
+              {detail.data ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {formatNumber(detail.data.event_count)} events from {formatNumber(detail.data.raw_event_count)} raw lines
+                </p>
+              ) : null}
             </div>
           </CardHeader>
-          <div className="min-h-0 flex-1 overflow-auto">
-            {detail.isPending && activeId ? (
-              <div className="flex h-40 items-center justify-center text-muted-foreground">
-                <Loader2 className="mr-2 animate-spin" size={18} />
-                Loading
-              </div>
-            ) : detail.data?.events.length ? (
-              detail.data.events.map((event, index) => <EventRow key={`${event.kind}-${index}`} event={event} />)
-            ) : (
-              <div className="p-4 text-sm text-muted-foreground">No event content</div>
-            )}
-          </div>
+          <SessionEventList activeId={activeId} detailPending={detail.isPending} totalEventCount={detail.data?.event_count ?? null} />
         </Card>
       </div>
     </section>
