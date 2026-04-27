@@ -178,3 +178,7 @@ frontend/
 - Config export includes only SwitchBoard-local account preferences and never includes credentials.
 - Do not commit `.env`, SQLite databases, or local Codex credentials.
 - Usage cost estimates use a local pricing table for known model names; unknown model costs remain null.
+
+## License
+
+MIT
