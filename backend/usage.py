@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -33,6 +34,42 @@ class UsageEventDTO(BaseModel):
 
 class UsageEventsResponse(BaseModel):
     items: list[UsageEventDTO]
+
+
+class UsageRequestLogDTO(BaseModel):
+    id: str
+    thread_id: str
+    event_index: int
+    occurred_at: int
+    billing_model: str | None
+    input_tokens: int
+    cache_creation_tokens: int
+    cache_hit_tokens: int
+    output_tokens: int
+    reasoning_output_tokens: int
+    total_tokens: int
+    total_cost_usd: float | None
+    cost_known: bool
+
+
+class UsageRequestLogSummaryDTO(BaseModel):
+    request_count: int
+    input_tokens: int
+    cache_creation_tokens: int
+    cache_hit_tokens: int
+    output_tokens: int
+    reasoning_output_tokens: int
+    total_tokens: int
+    total_cost_usd: float | None
+    cost_known: bool
+    unknown_cost_events: int
+
+
+class UsageRequestLogsResponse(BaseModel):
+    items: list[UsageRequestLogDTO]
+    next_cursor: str | None
+    total_count: int
+    summary: UsageRequestLogSummaryDTO
 
 
 class UsageAggregatePointDTO(BaseModel):
@@ -93,6 +130,39 @@ RANGE_SPECS = (
     UsageRangeSpec("90d", 60 * 60 * 24 * 90, "week"),
 )
 _USAGE_STORAGE_LOCK = RLock()
+
+
+def _request_log_id(thread_id: str, event_index: int) -> str:
+    return f"{thread_id}:{event_index}"
+
+
+def _encode_request_log_cursor(occurred_at: int, thread_id: str, event_index: int) -> str:
+    payload = json.dumps(
+        {"occurred_at": occurred_at, "thread_id": thread_id, "event_index": event_index},
+        separators=(",", ":"),
+    )
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _decode_request_log_cursor(cursor: str | None) -> tuple[int, str, int] | None:
+    if cursor is None:
+        return None
+    padded = cursor + "=" * (-len(cursor) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        payload = json.loads(decoded)
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("Invalid cursor") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid cursor")
+    occurred_at = payload.get("occurred_at")
+    thread_id = payload.get("thread_id")
+    event_index = payload.get("event_index")
+    if not isinstance(occurred_at, int) or not isinstance(thread_id, str) or not isinstance(event_index, int):
+        raise ValueError("Invalid cursor")
+    if not thread_id or event_index < 0:
+        raise ValueError("Invalid cursor")
+    return occurred_at, thread_id, event_index
 
 
 def _utc_now_ts() -> int:
@@ -336,9 +406,21 @@ def _sync_usage_events(settings: Settings) -> None:
             )
 
 
+def _mark_unknown_cost_events_zero(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        UPDATE usage_events
+        SET cost_usd = 0.0, cost_known = 1
+        WHERE cost_known = 0 OR cost_usd IS NULL
+        """
+    )
+
+
 def sync_usage_events(settings: Settings) -> None:
     with _USAGE_STORAGE_LOCK:
         _sync_usage_events(settings)
+        with connect(settings.db_path) as conn:
+            _mark_unknown_cost_events_zero(conn)
 
 
 def _new_aggregate_point(bucket_start: int, bucket: str) -> dict[str, Any]:
@@ -482,6 +564,7 @@ def _ensure_usage_aggregates(settings: Settings) -> int:
         now = _utc_now_ts()
         generated_at = _floor_to_interval(now, AGGREGATION_REFRESH_SECONDS)
         with connect(settings.db_path) as conn:
+            _mark_unknown_cost_events_zero(conn)
             source_event_count, source_max_occurred_at = _usage_events_fingerprint(conn)
             run = conn.execute("SELECT * FROM usage_aggregate_runs WHERE id = 1").fetchone()
             if not _aggregation_due(run, now, source_event_count, source_max_occurred_at):
@@ -574,4 +657,125 @@ def get_usage_events(settings: Settings, from_value: str | None, to_value: str |
             )
             for row in rows
         ]
+    )
+
+
+def _request_log_from_row(row: sqlite3.Row) -> UsageRequestLogDTO:
+    return UsageRequestLogDTO(
+        id=_request_log_id(row["thread_id"], row["event_index"]),
+        thread_id=row["thread_id"],
+        event_index=row["event_index"],
+        occurred_at=row["occurred_at"],
+        billing_model=row["model"],
+        input_tokens=row["input_tokens"],
+        cache_creation_tokens=row["cache_creation_tokens"],
+        cache_hit_tokens=row["cache_hit_tokens"],
+        output_tokens=row["output_tokens"],
+        reasoning_output_tokens=row["reasoning_output_tokens"],
+        total_tokens=row["total_tokens"],
+        total_cost_usd=row["cost_usd"],
+        cost_known=bool(row["cost_known"]),
+    )
+
+
+def _request_log_summary_from_row(row: sqlite3.Row) -> UsageRequestLogSummaryDTO:
+    request_count = int(row["request_count"])
+    unknown_cost_events = int(row["unknown_cost_events"])
+    return UsageRequestLogSummaryDTO(
+        request_count=request_count,
+        input_tokens=int(row["input_tokens"] or 0),
+        cache_creation_tokens=int(row["cache_creation_tokens"] or 0),
+        cache_hit_tokens=int(row["cache_hit_tokens"] or 0),
+        output_tokens=int(row["output_tokens"] or 0),
+        reasoning_output_tokens=int(row["reasoning_output_tokens"] or 0),
+        total_tokens=int(row["total_tokens"] or 0),
+        total_cost_usd=round(float(row["known_cost_usd"] or 0), 8) if unknown_cost_events == 0 else None,
+        cost_known=unknown_cost_events == 0,
+        unknown_cost_events=unknown_cost_events,
+    )
+
+
+def get_usage_request_logs(
+    settings: Settings,
+    from_value: str | None = None,
+    to_value: str | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+) -> UsageRequestLogsResponse:
+    cursor_value = _decode_request_log_cursor(cursor)
+    sync_usage_events(settings)
+    now = _utc_now_ts()
+    from_ts = iso_to_ts(from_value) if from_value else now - 60 * 60 * 24
+    to_ts = iso_to_ts(to_value) if to_value else now
+    safe_limit = max(1, min(limit, 100))
+    filters = ["occurred_at >= ?", "occurred_at <= ?"]
+    params: list[Any] = [from_ts, to_ts]
+    page_filters = list(filters)
+    page_params = list(params)
+    if cursor_value is not None:
+        cursor_occurred_at, cursor_thread_id, cursor_event_index = cursor_value
+        page_filters.append(
+            """
+            (
+                occurred_at < ?
+                OR (occurred_at = ? AND thread_id < ?)
+                OR (occurred_at = ? AND thread_id = ? AND event_index < ?)
+            )
+            """
+        )
+        page_params.extend(
+            [
+                cursor_occurred_at,
+                cursor_occurred_at,
+                cursor_thread_id,
+                cursor_occurred_at,
+                cursor_thread_id,
+                cursor_event_index,
+            ]
+        )
+
+    where = " AND ".join(page_filters)
+    count_where = " AND ".join(filters)
+    with connect(settings.db_path) as conn:
+        summary_row = conn.execute(
+            f"""
+            SELECT
+                COUNT(*) AS request_count,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+                COALESCE(SUM(cache_hit_tokens), 0) AS cache_hit_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(reasoning_output_tokens), 0) AS reasoning_output_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(SUM(CASE WHEN cost_known = 1 AND cost_usd IS NOT NULL THEN cost_usd ELSE 0 END), 0) AS known_cost_usd,
+                COALESCE(SUM(CASE WHEN cost_known = 1 AND cost_usd IS NOT NULL THEN 0 ELSE 1 END), 0) AS unknown_cost_events
+            FROM usage_events
+            WHERE {count_where}
+            """,
+            tuple(params),
+        ).fetchone()
+        rows = list(
+            conn.execute(
+                f"""
+                SELECT *
+                FROM usage_events
+                WHERE {where}
+                ORDER BY occurred_at DESC, thread_id DESC, event_index DESC
+                LIMIT ?
+                """,
+                (*page_params, safe_limit + 1),
+            )
+        )
+
+    page_rows = rows[:safe_limit]
+    next_cursor = None
+    if len(rows) > safe_limit:
+        last = page_rows[-1]
+        next_cursor = _encode_request_log_cursor(last["occurred_at"], last["thread_id"], last["event_index"])
+
+    return UsageRequestLogsResponse(
+        items=[_request_log_from_row(row) for row in page_rows],
+        next_cursor=next_cursor,
+        total_count=int(summary_row["request_count"]),
+        summary=_request_log_summary_from_row(summary_row),
     )

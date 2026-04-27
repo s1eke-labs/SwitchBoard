@@ -81,6 +81,27 @@ def test_sessions_api_returns_bad_request_for_invalid_cursor(monkeypatch, tmp_pa
     assert response.json() == {"detail": "Invalid cursor"}
 
 
+def test_usage_request_logs_api_returns_bad_request_for_invalid_cursor(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    (tmp_path / "codex").mkdir()
+
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+    client = TestClient(main.create_app())
+    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
+
+    response = client.get("/api/usage/request-logs", params={"cursor": "broken"})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid cursor"}
+
+
 @pytest.mark.asyncio
 async def test_account_refresh_catches_scan_errors(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")

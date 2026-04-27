@@ -49,7 +49,12 @@ def estimate_cost(
 ) -> tuple[float | None, bool]:
     normalized = normalize_model(model)
     if not normalized or normalized not in MODEL_PRICES:
-        return None, False
+        # Some Codex logs use private/internal routing names such as
+        # codex-auto-review that do not have a public OpenAI price entry.
+        # Show those as zero-cost estimates instead of making the whole
+        # dashboard range unknown; this is a display convention, not an
+        # assertion that the underlying service is officially free.
+        return 0.0, True
     price = MODEL_PRICES[normalized]
     uncached_input = max(input_tokens - cache_hit_tokens, 0)
     cached_rate = price.cached_input_per_million

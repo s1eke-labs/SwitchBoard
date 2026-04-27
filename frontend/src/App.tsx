@@ -5,6 +5,7 @@ import { useRoute } from "@/app/routing";
 import { api } from "@/lib/api";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { RequestLogsPage } from "@/pages/RequestLogsPage";
 import { SessionsPage } from "@/pages/SessionsPage";
 
 function errorStatus(error: unknown) {
@@ -50,6 +51,10 @@ export default function App() {
       {route.page === "sessions" ? (
         <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-hidden px-4 py-6">
           <SessionsPage selectedThreadId={route.threadId} onNavigate={navigate} />
+        </div>
+      ) : route.page === "requestLogs" ? (
+        <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-hidden px-4 py-6">
+          <RequestLogsPage />
         </div>
       ) : (
         <DashboardPage accounts={accounts.data ?? []} />

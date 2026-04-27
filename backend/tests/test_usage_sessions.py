@@ -10,7 +10,7 @@ import usage
 from config import Settings
 from db import init_db
 from sessions import get_session_detail, get_session_event, list_session_events, list_session_user_index, list_sessions
-from usage import get_usage_events
+from usage import get_usage_events, get_usage_request_logs
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -30,6 +30,7 @@ def _create_state(
     rollout: Path,
     stored_rollout_path: str | None = None,
     extra_threads: list[tuple[str, str]] | None = None,
+    model: str | None = "gpt-5.5",
 ) -> None:
     conn = sqlite3.connect(settings.codex_home / "state_5.sqlite")
     conn.execute(
@@ -72,9 +73,9 @@ def _create_state(
             sandbox_policy, approval_mode, tokens_used, model, created_at_ms, updated_at_ms
         )
         VALUES (?, ?, 1000, 1100, 'cli', 'openai', '/repo', 'Build app',
-                'workspace-write', 'on-request', 100, 'gpt-5.5', 1000000, 1100000)
+                'workspace-write', 'on-request', 100, ?, 1000000, 1100000)
         """,
-        ("thread-1", stored_rollout_path or str(rollout)),
+        ("thread-1", stored_rollout_path or str(rollout), model),
     )
     for index, (thread_id, title) in enumerate(extra_threads or [], start=2):
         conn.execute(
@@ -421,6 +422,71 @@ def test_usage_events_fall_back_to_sessions_directory(tmp_path: Path) -> None:
     assert len(events.items) == 1
     assert events.items[0].input_tokens == 1000
     assert events.items[0].cache_hit_tokens == 400
+
+
+def test_usage_request_logs_default_to_recent_day(monkeypatch, tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    rollout = settings.codex_home / "rollout.jsonl"
+    _write_rollout(rollout)
+    _append_usage_row(rollout, "2026-04-23T00:00:00Z", 2000)
+    _create_state(settings, rollout)
+    monkeypatch.setattr(usage, "_utc_now_ts", lambda: 1777078800)
+
+    logs = get_usage_request_logs(settings)
+
+    assert logs.total_count == 1
+    assert logs.summary.request_count == 1
+    assert logs.summary.total_tokens == 1050
+    assert logs.summary.cache_hit_tokens == 400
+    assert logs.summary.total_cost_usd is not None
+    assert logs.next_cursor is None
+    assert len(logs.items) == 1
+    assert logs.items[0].id == "thread-1:2"
+    assert logs.items[0].billing_model == "gpt-5.5"
+    assert logs.items[0].input_tokens == 1000
+    assert logs.items[0].output_tokens == 50
+    assert logs.items[0].total_cost_usd is not None
+
+
+def test_usage_request_logs_filter_and_paginate_descending(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    rollout = settings.codex_home / "rollout.jsonl"
+    _write_rollout(rollout)
+    _append_usage_row(rollout, "2026-04-25T00:03:00Z", 2000)
+    _append_usage_row(rollout, "2026-04-25T00:03:00Z", 3000)
+    _create_state(settings, rollout)
+
+    first_page = get_usage_request_logs(settings, "1777075200", "1777161600", limit=2)
+    second_page = get_usage_request_logs(settings, "1777075200", "1777161600", limit=2, cursor=first_page.next_cursor)
+
+    assert first_page.total_count == 3
+    assert first_page.summary.request_count == 3
+    assert first_page.summary.input_tokens == 6000
+    assert first_page.summary.output_tokens == 70
+    assert [item.input_tokens for item in first_page.items] == [3000, 2000]
+    assert first_page.next_cursor is not None
+    assert [item.input_tokens for item in second_page.items] == [1000]
+    assert second_page.next_cursor is None
+
+
+def test_usage_request_logs_unknown_model_has_zero_cost(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    rollout = settings.codex_home / "rollout.jsonl"
+    _write_rollout(rollout)
+    _create_state(settings, rollout, model="mystery-model")
+
+    logs = get_usage_request_logs(settings, "1777075200", "1777161600")
+
+    assert len(logs.items) == 1
+    assert logs.items[0].billing_model == "mystery-model"
+    assert logs.items[0].total_cost_usd == 0.0
+    assert logs.items[0].cost_known is True
+    assert logs.summary.total_cost_usd == 0.0
+    assert logs.summary.cost_known is True
+    assert logs.summary.unknown_cost_events == 0
 
 
 def test_usage_aggregates_are_precomputed_for_all_ranges(monkeypatch, tmp_path: Path) -> None:

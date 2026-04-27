@@ -34,8 +34,10 @@ from usage import (
     AGGREGATION_REFRESH_SECONDS,
     UsageAggregatesResponse,
     UsageEventsResponse,
+    UsageRequestLogsResponse,
     get_usage_aggregates,
     get_usage_events,
+    get_usage_request_logs,
 )
 
 
@@ -229,6 +231,18 @@ def create_app() -> FastAPI:
     @app.get("/api/usage/aggregates", response_model=UsageAggregatesResponse, dependencies=authed)
     def usage_aggregates() -> UsageAggregatesResponse:
         return get_usage_aggregates(settings)
+
+    @app.get("/api/usage/request-logs", response_model=UsageRequestLogsResponse, dependencies=authed)
+    def usage_request_logs(
+        from_: Annotated[str | None, Query(alias="from")] = None,
+        to: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> UsageRequestLogsResponse:
+        try:
+            return get_usage_request_logs(settings, from_value=from_, to_value=to, limit=limit, cursor=cursor)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     static_dir = settings.static_dir
     if static_dir and static_dir.exists():

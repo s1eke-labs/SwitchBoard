@@ -398,7 +398,7 @@ def test_hide_current_account_is_rejected(tmp_path: Path) -> None:
         hide_account(settings, "acct-current")
 
 
-def test_unknown_model_cost_is_null() -> None:
+def test_unknown_model_cost_is_zero() -> None:
     cost, known = estimate_cost("mystery-model", 1000, 100, 50)
-    assert cost is None
-    assert known is False
+    assert cost == 0.0
+    assert known is True

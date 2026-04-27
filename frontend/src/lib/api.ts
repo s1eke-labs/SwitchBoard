@@ -137,6 +137,47 @@ export type UsageAggregatesResponse = {
   ranges: Record<string, UsageRangeAggregateDTO>;
 };
 
+export type UsageRequestLogDTO = {
+  id: string;
+  thread_id: string;
+  event_index: number;
+  occurred_at: number;
+  billing_model: string | null;
+  input_tokens: number;
+  cache_creation_tokens: number;
+  cache_hit_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+  total_tokens: number;
+  total_cost_usd: number | null;
+  cost_known: boolean;
+};
+
+export type UsageRequestLogsResponse = {
+  items: UsageRequestLogDTO[];
+  next_cursor: string | null;
+  total_count: number;
+  summary: {
+    request_count: number;
+    input_tokens: number;
+    cache_creation_tokens: number;
+    cache_hit_tokens: number;
+    output_tokens: number;
+    reasoning_output_tokens: number;
+    total_tokens: number;
+    total_cost_usd: number | null;
+    cost_known: boolean;
+    unknown_cost_events: number;
+  };
+};
+
+export type UsageRequestLogsParams = {
+  from?: number;
+  to?: number;
+  cursor?: string | null;
+  limit?: number;
+};
+
 const REQUEST_TIMEOUT_MS = 10_000;
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -220,4 +261,11 @@ export const api = {
   sessionUserIndex: (threadId: string) =>
     request<SessionUserIndexResponse>(`/api/sessions/${threadId}/user-index`),
   usageAggregates: () => request<UsageAggregatesResponse>("/api/usage/aggregates"),
+  usageRequestLogs: ({ from, to, cursor = null, limit = 50 }: UsageRequestLogsParams = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (from !== undefined) params.set("from", String(from));
+    if (to !== undefined) params.set("to", String(to));
+    if (cursor) params.set("cursor", cursor);
+    return request<UsageRequestLogsResponse>(`/api/usage/request-logs?${params.toString()}`);
+  },
 };

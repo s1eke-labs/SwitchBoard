@@ -2,13 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 
 export type AppRoute =
   | { page: "dashboard" }
-  | { page: "sessions"; threadId: string | null };
+  | { page: "sessions"; threadId: string | null }
+  | { page: "requestLogs" };
 
 export function parseRoute(pathname = window.location.pathname): AppRoute {
   const segments = pathname.split("/").filter(Boolean);
   if (segments[0] === "sessions") {
     const rawThreadId = segments.slice(1).join("/");
     return { page: "sessions", threadId: rawThreadId ? decodeURIComponent(rawThreadId) : null };
+  }
+  if (segments[0] === "request-logs") {
+    return { page: "requestLogs" };
   }
   return { page: "dashboard" };
 }
