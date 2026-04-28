@@ -51,6 +51,7 @@ from usage import (
     get_usage_events,
     get_usage_request_logs,
 )
+from vault_crypto import ensure_auth_vault_key
 from version import __version__
 
 
@@ -91,6 +92,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     validate_runtime_settings(settings)
     init_db(settings.db_path)
+    ensure_auth_vault_key(settings)
     account_scan_lock = asyncio.Lock()
 
     async def usage_aggregation_loop() -> None:

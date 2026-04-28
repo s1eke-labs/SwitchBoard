@@ -16,6 +16,7 @@ from codex_files import current_account_id, current_auth_path, read_json
 from config import Settings
 from db import connect, now_ts
 from issues import IssueDetail, scan_warning_from_message
+from vault_crypto import decrypt_auth, encrypt_auth
 from version import USER_AGENT
 
 
@@ -454,7 +455,11 @@ def _write_private_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def save_account_auth(settings: Settings, account_id: str, auth: dict[str, Any]) -> None:
-    _write_private_json(account_auth_path(settings, account_id), auth)
+    _write_private_json(account_auth_path(settings, account_id), encrypt_auth(settings, auth))
+
+
+def _read_stored_auth(settings: Settings, path: Path) -> dict[str, Any]:
+    return decrypt_auth(settings, read_json(path))
 
 
 def _migrated_account_auth_path(settings: Settings, account_id: str) -> Path:
@@ -463,11 +468,11 @@ def _migrated_account_auth_path(settings: Settings, account_id: str) -> Path:
         return stored_path
     legacy_path = _legacy_account_auth_path(settings, account_id)
     if legacy_path.exists():
-        auth = read_json(legacy_path)
+        auth = _read_stored_auth(settings, legacy_path)
         stored_account_id, _ = _auth_tokens(auth)
         if stored_account_id != account_id:
             return legacy_path
-        _write_private_json(stored_path, auth)
+        save_account_auth(settings, account_id, auth)
     return stored_path
 
 
@@ -475,7 +480,7 @@ def switch_account_auth(settings: Settings, account_id: str) -> None:
     stored_path = _migrated_account_auth_path(settings, account_id)
     if not stored_path.exists():
         raise KeyError(account_id)
-    auth = read_json(stored_path)
+    auth = _read_stored_auth(settings, stored_path)
     stored_account_id, _ = _auth_tokens(auth)
     if stored_account_id != account_id:
         raise ValueError("Stored auth account_id does not match requested account")

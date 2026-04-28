@@ -11,6 +11,7 @@ from accounts import (
     account_auth_path,
     hide_account,
     list_accounts,
+    save_account_auth,
     scan_current_account,
     set_account_custom_name,
     switch_account,
@@ -21,6 +22,7 @@ from config import Settings
 from config_transfer import CONFIG_SCHEMA, export_config, import_config
 from db import connect, init_db, now_ts
 from pricing import estimate_cost
+from vault_crypto import auth_vault_key_path, decrypt_auth, encrypted_auth_payload, ensure_auth_vault_key
 
 
 def _jwt(claims: dict[str, str]) -> str:
@@ -56,6 +58,10 @@ def _write_auth(settings: Settings, account_id: str = "acct-current") -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _read_vault_auth(settings: Settings, account_id: str) -> dict:
+    return decrypt_auth(settings, read_json(account_auth_path(settings, account_id)))
 
 
 def test_write_private_json_preserves_existing_owner_when_running_as_root(
@@ -141,7 +147,10 @@ async def test_scan_current_account_unhides_and_stores_snapshot(monkeypatch: pyt
     assert result.account.five_hour is not None
     assert result.account.five_hour.remaining_percent == 78
     assert account_auth_path(settings, "acct-current").exists()
-    assert read_json(account_auth_path(settings, "acct-current"))["tokens"]["account_id"] == "acct-current"
+    stored_auth = read_json(account_auth_path(settings, "acct-current"))
+    assert encrypted_auth_payload(stored_auth)
+    assert "tokens" not in stored_auth
+    assert decrypt_auth(settings, stored_auth)["tokens"]["account_id"] == "acct-current"
     assert fetched_urls == [f"{settings.chatgpt_backend_base}/wham/usage"]
 
 
@@ -498,6 +507,7 @@ async def test_switch_account_replaces_current_auth_and_scans(monkeypatch: pytes
 
 def test_switch_account_migrates_legacy_codex_home_vault(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
+    init_db(settings.db_path)
     legacy_path = settings.codex_home / "switchboard" / "accounts" / "acct-legacy" / "auth.json"
     legacy_path.parent.mkdir(parents=True)
     legacy_path.write_text(
@@ -509,8 +519,21 @@ def test_switch_account_migrates_legacy_codex_home_vault(tmp_path: Path) -> None
 
     assert legacy_path.exists()
     assert account_auth_path(settings, "acct-legacy").exists()
-    assert read_json(account_auth_path(settings, "acct-legacy"))["tokens"]["account_id"] == "acct-legacy"
+    stored_auth = read_json(account_auth_path(settings, "acct-legacy"))
+    assert encrypted_auth_payload(stored_auth)
+    assert _read_vault_auth(settings, "acct-legacy")["tokens"]["account_id"] == "acct-legacy"
     assert read_json(current_auth_path(settings.codex_home))["tokens"]["account_id"] == "acct-legacy"
+
+
+def test_encrypted_account_vault_requires_key_file(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    save_account_auth(settings, "acct-one", {"tokens": {"account_id": "acct-one", "access_token": "access"}})
+    auth_vault_key_path(settings).unlink()
+    ensure_auth_vault_key(settings)
+
+    with pytest.raises(ValueError, match="Stored auth could not be decrypted"):
+        switch_account_auth(settings, "acct-one")
 
 
 @pytest.mark.asyncio

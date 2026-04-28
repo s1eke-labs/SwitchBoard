@@ -5,6 +5,8 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
+from vault_crypto import auth_vault_key_path
+
 
 def test_api_requires_login(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
@@ -18,7 +20,9 @@ def test_api_requires_login(monkeypatch, tmp_path) -> None:
     import main
 
     importlib.reload(main)
-    client = TestClient(main.create_app())
+    app = main.create_app()
+    client = TestClient(app)
+    assert auth_vault_key_path(app.state.settings).exists()
 
     accounts_response = client.get("/api/accounts")
     assert accounts_response.status_code == 401
