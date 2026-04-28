@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
-import secrets
+import re
 import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
@@ -99,12 +99,39 @@ def _extract_profile(value: Any, claims: dict[str, Any]) -> str | None:
     return user_name
 
 
-def _random_display_name(conn: sqlite3.Connection) -> str:
-    for _ in range(100):
-        candidate = f"Account-{secrets.randbelow(10_000):04d}"
-        if conn.execute("SELECT 1 FROM accounts WHERE display_name = ?", (candidate,)).fetchone() is None:
+def _display_name_base(user_name: str | None) -> str:
+    if not user_name:
+        return "Account"
+    token = user_name.strip().split()[0]
+    if "@" in token:
+        token = token.split("@", 1)[0].split(".", 1)[0]
+    base = "".join(char for char in token if char.isalnum() or char in {"-", "_"}).strip("-_")
+    return base or "Account"
+
+
+def _legacy_random_display_name(value: str) -> bool:
+    return re.fullmatch(r"Account-\d{4}", value) is not None
+
+
+def _next_display_name(conn: sqlite3.Connection, account_id: str, user_name: str | None) -> str:
+    base = _display_name_base(user_name)
+    pattern = re.compile(rf"^{re.escape(base)}-(\d+)$")
+    used_numbers: set[int] = set()
+    used_names: set[str] = set()
+    for row in conn.execute("SELECT account_id, display_name FROM accounts"):
+        display_name = row["display_name"]
+        if row["account_id"] != account_id:
+            used_names.add(display_name)
+        match = pattern.fullmatch(display_name)
+        if match and not (base == "Account" and _legacy_random_display_name(display_name)):
+            used_numbers.add(int(match.group(1)))
+
+    number = 1
+    while True:
+        candidate = f"{base}-{number:02d}"
+        if number not in used_numbers and candidate not in used_names:
             return candidate
-    return f"Account-{now_ts() % 10_000:04d}"
+        number += 1
 
 
 def _as_float(value: Any) -> float | None:
@@ -399,7 +426,12 @@ def _upsert_account(
     last_error: str | None,
 ) -> None:
     ts = now_ts()
-    display_name = _random_display_name(conn)
+    existing = conn.execute("SELECT display_name FROM accounts WHERE account_id = ?", (account_id,)).fetchone()
+    display_name = (
+        _next_display_name(conn, account_id, user_name)
+        if existing is None or _legacy_random_display_name(existing["display_name"])
+        else existing["display_name"]
+    )
     failed_scan_count_sql = "0" if last_error is None else "accounts.failed_scan_count + 1"
     expired_at_sql = "NULL" if last_error is None else f"CASE WHEN accounts.failed_scan_count + 1 >= {ACCOUNT_EXPIRED_FAILURES} THEN COALESCE(accounts.expired_at, excluded.updated_at) ELSE accounts.expired_at END"
     conn.execute(
@@ -410,6 +442,7 @@ def _upsert_account(
         )
         VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(account_id) DO UPDATE SET
+            display_name = excluded.display_name,
             user_name = excluded.user_name,
             plan_type = COALESCE(excluded.plan_type, accounts.plan_type),
             hidden = 0,

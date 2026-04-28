@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -197,7 +196,7 @@ async def test_custom_name_overrides_scanned_name_and_can_be_cleared(
     monkeypatch.setattr("accounts._fetch_json", fake_fetch)
     result = await scan_current_account(settings)
     generated_name = result.account.display_name
-    assert re.fullmatch(r"Account-\d{4}", generated_name)
+    assert generated_name == "Ada-01"
     assert result.account.custom_name is None
     assert result.account.user_name == "Ada"
 
@@ -215,6 +214,65 @@ async def test_custom_name_overrides_scanned_name_and_can_be_cleared(
     assert cleared.display_name == generated_name
     assert cleared.custom_name is None
     assert cleared.user_name == "Ada"
+
+
+@pytest.mark.asyncio
+async def test_scanned_accounts_use_first_name_display_names_with_stable_suffixes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings)
+
+    async def fake_fetch(_client, url: str, _token: str):
+        if url.endswith("/wham/usage"):
+            return {
+                "primary": {"used_percent": 10, "window_minutes": 300, "resets_at": now_ts() + 60},
+                "secondary": {"used_percent": 20, "window_minutes": 10080, "resets_at": now_ts() + 120},
+            }
+        return {"user": {"name": "Ada Lovelace"}}
+
+    monkeypatch.setattr("accounts._fetch_json", fake_fetch)
+
+    first = await scan_current_account(settings)
+    _write_auth(settings, account_id="acct-second")
+    second = await scan_current_account(settings)
+
+    assert first.account.display_name == "Ada-01"
+    assert second.account.display_name == "Ada-02"
+    assert [account.display_name for account in list_accounts(settings)] == ["Ada-02", "Ada-01"]
+
+
+@pytest.mark.asyncio
+async def test_scan_replaces_legacy_random_display_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings)
+    with connect(settings.db_path) as conn:
+        ts = now_ts()
+        conn.execute(
+            """
+            INSERT INTO accounts(account_id, display_name, hidden, created_at, updated_at)
+            VALUES (?, ?, 0, ?, ?)
+            """,
+            ("acct-current", "Account-3842", ts, ts),
+        )
+
+    async def fake_fetch(_client, url: str, _token: str):
+        if url.endswith("/wham/usage"):
+            return {
+                "primary": {"used_percent": 10, "window_minutes": 300, "resets_at": now_ts() + 60},
+                "secondary": {"used_percent": 20, "window_minutes": 10080, "resets_at": now_ts() + 120},
+            }
+        return {"user": {"name": "Ada Lovelace"}}
+
+    monkeypatch.setattr("accounts._fetch_json", fake_fetch)
+
+    result = await scan_current_account(settings)
+
+    assert result.account.display_name == "Ada-01"
 
 
 def test_reset_limit_recovers_to_full_remaining(tmp_path: Path) -> None:
