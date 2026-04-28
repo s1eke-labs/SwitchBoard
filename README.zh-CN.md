@@ -145,9 +145,9 @@ docker compose up --build
 
 除非你设置了不同的 `PORT`，否则打开 `http://127.0.0.1:8080`。
 
-Codex 目录会以只读方式挂载到 `/host-codex`。SwitchBoard 的 SQLite 数据会存储在 `switchboard_data` volume 中。
+Codex 目录会以可读写方式挂载到 `/host-codex`，这样账号切换才能更新 `auth.json`。SwitchBoard 的 SQLite 数据会存储在 `switchboard_data` volume 中。
 
-由于默认 Compose 挂载是只读的，Docker 模式更适合查看账号、会话和用量。账号切换需要对 `CODEX_HOME/auth.json` 有写入权限；如果想在容器内切换账号，请使用上面的本地后端命令，或有意地把挂载改为可写。
+容器进程可能以 root 运行，但 SwitchBoard 替换 `CODEX_HOME/auth.json` 时会保留原文件的 owner 和 group。在挂载的 Codex 目录下新建 SwitchBoard 账号保险库目录时，也会先继承挂载目录 owner 再写入凭据。如果你把挂载改成只读，Docker 模式就只能查看账号、会话和用量。
 
 ## 仓库结构
 
@@ -176,6 +176,7 @@ frontend/
 - SwitchBoard 会从 `CODEX_HOME` 读取 `auth.json` 和本地 Codex 会话/状态文件。
 - ChatGPT Token 不会存储在 SwitchBoard 的 SQLite 数据库中。
 - 切换账号会重写本地 Codex 的 `auth.json`；需要重启 Codex 才会生效。
+- Docker 中切换账号会保留现有 `auth.json` 的 owner/group，并以 `0600` 权限写入。
 - 隐藏账号和自定义名称都是 SwitchBoard 本地元数据。
 - 配置导出只包含 SwitchBoard 本地账号展示状态，绝不会包含凭据。
 - 不要提交 `.env`、SQLite 数据库或本地 Codex 凭据。

@@ -377,12 +377,53 @@ def account_auth_path(settings: Settings, account_id: str) -> Path:
     return _account_vault_dir(settings, account_id) / "auth.json"
 
 
-def _write_private_json(path: Path, value: dict[str, Any]) -> None:
+def _can_chown() -> bool:
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _nearest_existing_parent(path: Path) -> Path:
+    candidate = path
+    while not candidate.exists():
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+    return candidate
+
+
+def _missing_parents(path: Path) -> list[Path]:
+    missing = []
+    candidate = path
+    while not candidate.exists():
+        missing.append(candidate)
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+    return missing
+
+
+def _ensure_private_parent(path: Path) -> os.stat_result | None:
+    owner_source = _nearest_existing_parent(path.parent)
+    owner_stat = owner_source.stat() if owner_source.exists() else None
+    missing = _missing_parents(path.parent)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if owner_stat and _can_chown():
+        for parent in reversed(missing):
+            os.chown(parent, owner_stat.st_uid, owner_stat.st_gid)
     os.chmod(path.parent, 0o700)
+    return owner_stat
+
+
+def _write_private_json(path: Path, value: dict[str, Any]) -> None:
+    existing_stat = path.stat() if path.exists() else None
+    parent_stat = _ensure_private_parent(path)
+    owner_stat = existing_stat or parent_stat
     tmp_path = path.with_name(f".{path.name}.tmp")
     with tmp_path.open("w", encoding="utf-8") as handle:
         json.dump(value, handle, ensure_ascii=False)
+    if owner_stat and _can_chown():
+        os.chown(tmp_path, owner_stat.st_uid, owner_stat.st_gid)
     os.chmod(tmp_path, 0o600)
     os.replace(tmp_path, path)
     os.chmod(path, 0o600)

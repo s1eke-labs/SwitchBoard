@@ -145,9 +145,9 @@ docker compose up --build
 
 Open `http://127.0.0.1:8080` unless you set a different `PORT`.
 
-The Codex directory is mounted read-only at `/host-codex`. SwitchBoard stores its SQLite data in the `switchboard_data` volume.
+The Codex directory is mounted read-write at `/host-codex` so account switching can update `auth.json`. SwitchBoard stores its SQLite data in the `switchboard_data` volume.
 
-Because the default Compose mount is read-only, Docker mode is best for viewing accounts, sessions, and usage. Account switching requires write access to `CODEX_HOME/auth.json`; use the local backend command above or change the mount deliberately if you want switching inside the container.
+The container process may run as root, but SwitchBoard preserves the existing owner and group of `CODEX_HOME/auth.json` when replacing it. New SwitchBoard account-vault directories created under the mounted Codex directory inherit the mount owner before credentials are written. If you change the mount to read-only, Docker mode is limited to viewing accounts, sessions, and usage.
 
 ## Repository Layout
 
@@ -176,6 +176,7 @@ frontend/
 - SwitchBoard reads `auth.json` and local Codex session/state files from `CODEX_HOME`.
 - ChatGPT tokens are not stored in SwitchBoard's SQLite database.
 - Account switching rewrites the local Codex `auth.json`; restart Codex for the change to take effect.
+- Docker account switching preserves the existing `auth.json` owner/group and writes the file with `0600` permissions.
 - Hidden accounts and custom names are SwitchBoard-local metadata.
 - Config export includes only SwitchBoard-local account display state and never includes credentials.
 - Do not commit `.env`, SQLite databases, or local Codex credentials.

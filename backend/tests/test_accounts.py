@@ -6,7 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from accounts import account_auth_path, hide_account, list_accounts, scan_current_account, set_account_custom_name, switch_account
+from accounts import (
+    _write_private_json,
+    account_auth_path,
+    hide_account,
+    list_accounts,
+    scan_current_account,
+    set_account_custom_name,
+    switch_account,
+)
 from codex_files import current_auth_path, read_json
 from config import Settings
 from config_transfer import CONFIG_SCHEMA, export_config, import_config
@@ -47,6 +55,46 @@ def _write_auth(settings: Settings, account_id: str = "acct-current") -> None:
         ),
         encoding="utf-8",
     )
+
+
+def test_write_private_json_preserves_existing_owner_when_running_as_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "auth.json"
+    path.write_text("{}", encoding="utf-8")
+    original_stat = path.stat()
+    chown_calls: list[tuple[Path, int, int]] = []
+
+    monkeypatch.setattr("accounts.os.geteuid", lambda: 0)
+    monkeypatch.setattr("accounts.os.chown", lambda path, uid, gid: chown_calls.append((Path(path), uid, gid)))
+
+    _write_private_json(path, {"tokens": {"account_id": "acct-one", "access_token": "access"}})
+
+    assert chown_calls == [(path.with_name(".auth.json.tmp"), original_stat.st_uid, original_stat.st_gid)]
+    assert read_json(path)["tokens"]["account_id"] == "acct-one"
+
+
+def test_write_private_json_gives_new_account_vault_paths_host_owner_when_running_as_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    codex_home = tmp_path / "codex"
+    path = codex_home / "switchboard" / "accounts" / "acct-one" / "auth.json"
+    codex_home.mkdir()
+    host_stat = codex_home.stat()
+    chown_calls: list[tuple[Path, int, int]] = []
+
+    monkeypatch.setattr("accounts.os.geteuid", lambda: 0)
+    monkeypatch.setattr("accounts.os.chown", lambda path, uid, gid: chown_calls.append((Path(path), uid, gid)))
+
+    _write_private_json(path, {"tokens": {"account_id": "acct-one", "access_token": "access"}})
+
+    assert chown_calls == [
+        (codex_home / "switchboard", host_stat.st_uid, host_stat.st_gid),
+        (codex_home / "switchboard" / "accounts", host_stat.st_uid, host_stat.st_gid),
+        (codex_home / "switchboard" / "accounts" / "acct-one", host_stat.st_uid, host_stat.st_gid),
+        (path.with_name(".auth.json.tmp"), host_stat.st_uid, host_stat.st_gid),
+    ]
+    assert read_json(path)["tokens"]["account_id"] == "acct-one"
 
 
 @pytest.mark.asyncio

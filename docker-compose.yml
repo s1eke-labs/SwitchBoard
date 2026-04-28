@@ -11,7 +11,7 @@ services:
       SWITCHBOARD_DB: ${SWITCHBOARD_DB:-/data/switchboard.sqlite}
       CHATGPT_BACKEND_BASE: ${CHATGPT_BACKEND_BASE:-https://chatgpt.com/backend-api}
     volumes:
-      - ${HOST_CODEX_HOME:-${HOME}/.codex}:/host-codex
+      - ${HOST_CODEX_HOME:-${HOME}/.codex}:/host-codex:rw
       - switchboard_data:/data
     restart: unless-stopped
 
