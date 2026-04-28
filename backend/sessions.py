@@ -461,7 +461,7 @@ def _session_event_counts(rollout_path: Path) -> tuple[int, int]:
     if not rollout_path.exists():
         return raw_count, 0
     with rollout_path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
+        for _ in handle:
             raw_count += 1
     event_count = sum(1 for _ in _iter_session_events(rollout_path))
     return raw_count, event_count

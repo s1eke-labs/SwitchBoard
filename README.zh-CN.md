@@ -80,6 +80,7 @@ npm run dev
 在 `backend/` 目录运行后端命令：
 
 ```bash
+uv run pylint --rcfile=.pylintrc .
 uv run pytest
 APP_PASSWORD=switchboard CODEX_HOME="$HOME/.codex" SWITCHBOARD_DB=/tmp/switchboard-dev.sqlite uv run uvicorn main:app --host 127.0.0.1 --port 8080 --reload
 ```
@@ -94,7 +95,7 @@ npm run build
 npm run preview
 ```
 
-`npm run lint` 会运行 TypeScript 检查。`npm run build` 会生成 `frontend/dist`。
+`uv run pylint --rcfile=.pylintrc .` 会运行后端 lint 检查。`npm run lint` 会运行 TypeScript 检查。`npm run build` 会生成 `frontend/dist`。
 
 ## 本地类生产运行
 

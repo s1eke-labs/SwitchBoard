@@ -4,7 +4,6 @@ import importlib
 
 import pytest
 
-import config
 from config import Settings, get_settings, validate_runtime_settings
 
 

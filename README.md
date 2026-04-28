@@ -80,6 +80,7 @@ If `CODEX_HOME` is missing or points to a file instead of a directory, SwitchBoa
 Run backend commands from `backend/`:
 
 ```bash
+uv run pylint --rcfile=.pylintrc .
 uv run pytest
 APP_PASSWORD=switchboard CODEX_HOME="$HOME/.codex" SWITCHBOARD_DB=/tmp/switchboard-dev.sqlite uv run uvicorn main:app --host 127.0.0.1 --port 8080 --reload
 ```
@@ -94,7 +95,7 @@ npm run build
 npm run preview
 ```
 
-`npm run lint` runs TypeScript checks. `npm run build` creates `frontend/dist`.
+`uv run pylint --rcfile=.pylintrc .` runs backend lint checks. `npm run lint` runs TypeScript checks. `npm run build` creates `frontend/dist`.
 
 ## Production-Style Local Run
 
