@@ -24,6 +24,9 @@ export type AccountDTO = {
   last_error: string | null;
   failed_scan_count: number;
   expired: boolean;
+  usage_started_at: number;
+  usage_ended_at: number | null;
+  usage_seconds: number;
 };
 
 export type ScanResult = {

@@ -440,6 +440,26 @@ def test_usage_events_fall_back_to_sessions_directory(tmp_path: Path) -> None:
     assert events.items[0].cache_hit_tokens == 400
 
 
+def test_usage_events_remap_absolute_rollout_under_codex_home(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    rollout = settings.codex_home / "sessions" / "2026" / "04" / "25" / "rollout-thread-1.jsonl"
+    rollout.parent.mkdir(parents=True)
+    _write_rollout(rollout)
+    _create_state(
+        settings,
+        rollout,
+        stored_rollout_path="/home/debian/.codex/sessions/2026/04/25/rollout-thread-1.jsonl",
+    )
+
+    events = get_usage_events(settings, "1777075200", "1777161600")
+
+    assert len(events.items) == 1
+    assert events.items[0].thread_id == "thread-1"
+    assert events.items[0].input_tokens == 1000
+    assert events.items[0].cache_hit_tokens == 400
+
+
 def test_usage_request_logs_default_to_recent_day(monkeypatch, tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     init_db(settings.db_path)

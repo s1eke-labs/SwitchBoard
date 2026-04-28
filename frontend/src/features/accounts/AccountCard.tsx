@@ -3,7 +3,7 @@ import { Check, Clock, Loader2, LogIn, Pencil, Trash2, X } from "lucide-react";
 import { AccountDTO, LimitDTO } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { formatAppError } from "@/lib/errors";
-import { cn, formatPercent, formatTime, shortId } from "@/lib/utils";
+import { cn, formatDuration, formatPercent, formatTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -122,7 +122,6 @@ export function AccountCard({
                 {account.plan_type ? <Badge tone="neutral">{account.plan_type}</Badge> : null}
               </div>
             )}
-            <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{shortId(account.account_id)}</p>
             {renameError ? (
               <p className="mt-2 text-xs text-destructive">
                 {renameError instanceof Error ? formatAppError(renameError) : t("accounts.renameFailedFallback")}
@@ -172,6 +171,10 @@ export function AccountCard({
         </div>
         <div className="mt-auto">
           <div className="grid gap-3">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <Clock size={13} />
+              <span>{t("accounts.usedFor", { duration: formatDuration(account.usage_seconds) })}</span>
+            </div>
             <LimitMeter label={t("accounts.fiveHourRemaining")} limit={account.five_hour} />
             <LimitMeter label={t("accounts.weeklyRemaining")} limit={account.weekly} />
           </div>

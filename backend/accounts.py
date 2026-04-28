@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
-import secrets
+import re
 import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
@@ -16,6 +16,8 @@ from codex_files import current_account_id, current_auth_path, read_json
 from config import Settings
 from db import connect, now_ts
 from issues import IssueDetail, scan_warning_from_message
+from vault_crypto import decrypt_auth, encrypt_auth
+from version import USER_AGENT
 
 
 ACCOUNT_EXPIRED_FAILURES = 3
@@ -42,6 +44,9 @@ class AccountDTO(BaseModel):
     last_error: str | None
     failed_scan_count: int
     expired: bool
+    usage_started_at: int
+    usage_ended_at: int | None
+    usage_seconds: int
 
 
 class ScanResult(BaseModel):
@@ -80,31 +85,48 @@ def _walk_dicts(value: Any) -> Iterable[dict[str, Any]]:
             yield from _walk_dicts(child)
 
 
-def _extract_profile(value: Any, claims: dict[str, Any]) -> str | None:
-    user_name = _first_string(
+def _extract_profile(claims: dict[str, Any]) -> str | None:
+    return _first_string(
         claims.get("name"),
         claims.get("given_name"),
         claims.get("preferred_username"),
         claims.get("email"),
     )
 
-    for item in _walk_dicts(value):
-        user_name = _first_string(
-            user_name,
-            item.get("name"),
-            item.get("display_name"),
-            item.get("email"),
-            item.get("username"),
-        )
-    return user_name
+
+def _display_name_base(user_name: str | None) -> str:
+    if not user_name:
+        return "Account"
+    token = user_name.strip().split()[0]
+    if "@" in token:
+        token = token.split("@", 1)[0].split(".", 1)[0]
+    base = "".join(char for char in token if char.isalnum() or char in {"-", "_"}).strip("-_")
+    return base or "Account"
 
 
-def _random_display_name(conn: sqlite3.Connection) -> str:
-    for _ in range(100):
-        candidate = f"Account-{secrets.randbelow(10_000):04d}"
-        if conn.execute("SELECT 1 FROM accounts WHERE display_name = ?", (candidate,)).fetchone() is None:
+def _legacy_random_display_name(value: str) -> bool:
+    return re.fullmatch(r"Account-\d{4}", value) is not None
+
+
+def _next_display_name(conn: sqlite3.Connection, account_id: str, user_name: str | None) -> str:
+    base = _display_name_base(user_name)
+    pattern = re.compile(rf"^{re.escape(base)}-(\d+)$")
+    used_numbers: set[int] = set()
+    used_names: set[str] = set()
+    for row in conn.execute("SELECT account_id, display_name FROM accounts"):
+        display_name = row["display_name"]
+        if row["account_id"] != account_id:
+            used_names.add(display_name)
+        match = pattern.fullmatch(display_name)
+        if match and not (base == "Account" and _legacy_random_display_name(display_name)):
+            used_numbers.add(int(match.group(1)))
+
+    number = 1
+    while True:
+        candidate = f"{base}-{number:02d}"
+        if number not in used_numbers and candidate not in used_names:
             return candidate
-    return f"Account-{now_ts() % 10_000:04d}"
+        number += 1
 
 
 def _as_float(value: Any) -> float | None:
@@ -243,6 +265,10 @@ def _latest_snapshot(conn: sqlite3.Connection, account_id: str) -> sqlite3.Row |
 def _account_dto(row: sqlite3.Row, snapshot: sqlite3.Row | None, current_id: str | None) -> AccountDTO:
     five_hour = None
     weekly = None
+    usage_started_at = int(row["created_at"])
+    usage_ended_at = row["expired_at"]
+    usage_end = int(usage_ended_at) if usage_ended_at is not None else now_ts()
+    usage_seconds = max(0, usage_end - usage_started_at)
     if snapshot:
         five_hour = _limit_from_snapshot(
             snapshot["five_hour_used_percent"],
@@ -275,6 +301,9 @@ def _account_dto(row: sqlite3.Row, snapshot: sqlite3.Row | None, current_id: str
         last_error=row["last_error"],
         failed_scan_count=row["failed_scan_count"],
         expired=row["expired_at"] is not None,
+        usage_started_at=usage_started_at,
+        usage_ended_at=usage_ended_at,
+        usage_seconds=usage_seconds,
     )
 
 
@@ -330,7 +359,7 @@ async def _fetch_json(client: httpx.AsyncClient, url: str, access_token: str) ->
         headers={
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
-            "User-Agent": "SwitchBoard/0.1",
+            "User-Agent": USER_AGENT,
         },
     )
     response.raise_for_status()
@@ -353,6 +382,13 @@ def _auth_tokens(auth: dict[str, Any]) -> tuple[str, str]:
 def _account_vault_dir(settings: Settings, account_id: str) -> Path:
     if not account_id or "/" in account_id or "\\" in account_id or account_id in {".", ".."}:
         raise ValueError("Invalid account_id")
+    vault_root = settings.auth_vault_dir or settings.db_path.parent / "auth-vault"
+    return vault_root / account_id
+
+
+def _legacy_account_vault_dir(settings: Settings, account_id: str) -> Path:
+    if not account_id or "/" in account_id or "\\" in account_id or account_id in {".", ".."}:
+        raise ValueError("Invalid account_id")
     return settings.codex_home / "switchboard" / "accounts" / account_id
 
 
@@ -360,26 +396,91 @@ def account_auth_path(settings: Settings, account_id: str) -> Path:
     return _account_vault_dir(settings, account_id) / "auth.json"
 
 
-def _write_private_json(path: Path, value: dict[str, Any]) -> None:
+def _legacy_account_auth_path(settings: Settings, account_id: str) -> Path:
+    return _legacy_account_vault_dir(settings, account_id) / "auth.json"
+
+
+def _can_chown() -> bool:
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _nearest_existing_parent(path: Path) -> Path:
+    candidate = path
+    while not candidate.exists():
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+    return candidate
+
+
+def _missing_parents(path: Path) -> list[Path]:
+    missing = []
+    candidate = path
+    while not candidate.exists():
+        missing.append(candidate)
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+    return missing
+
+
+def _ensure_private_parent(path: Path) -> os.stat_result | None:
+    owner_source = _nearest_existing_parent(path.parent)
+    owner_stat = owner_source.stat() if owner_source.exists() else None
+    missing = _missing_parents(path.parent)
     path.parent.mkdir(parents=True, exist_ok=True)
+    can_chown = bool(owner_stat and _can_chown())
+    for parent in reversed(missing):
+        if can_chown:
+            os.chown(parent, owner_stat.st_uid, owner_stat.st_gid)
+        os.chmod(parent, 0o700)
     os.chmod(path.parent, 0o700)
+    return owner_stat
+
+
+def _write_private_json(path: Path, value: dict[str, Any]) -> None:
+    existing_stat = path.stat() if path.exists() else None
+    parent_stat = _ensure_private_parent(path)
+    owner_stat = existing_stat or parent_stat
     tmp_path = path.with_name(f".{path.name}.tmp")
     with tmp_path.open("w", encoding="utf-8") as handle:
         json.dump(value, handle, ensure_ascii=False)
+    if owner_stat and _can_chown():
+        os.chown(tmp_path, owner_stat.st_uid, owner_stat.st_gid)
     os.chmod(tmp_path, 0o600)
     os.replace(tmp_path, path)
     os.chmod(path, 0o600)
 
 
 def save_account_auth(settings: Settings, account_id: str, auth: dict[str, Any]) -> None:
-    _write_private_json(account_auth_path(settings, account_id), auth)
+    _write_private_json(account_auth_path(settings, account_id), encrypt_auth(settings, auth))
+
+
+def _read_stored_auth(settings: Settings, path: Path) -> dict[str, Any]:
+    return decrypt_auth(settings, read_json(path))
+
+
+def _migrated_account_auth_path(settings: Settings, account_id: str) -> Path:
+    stored_path = account_auth_path(settings, account_id)
+    if stored_path.exists():
+        return stored_path
+    legacy_path = _legacy_account_auth_path(settings, account_id)
+    if legacy_path.exists():
+        auth = _read_stored_auth(settings, legacy_path)
+        stored_account_id, _ = _auth_tokens(auth)
+        if stored_account_id != account_id:
+            return legacy_path
+        save_account_auth(settings, account_id, auth)
+    return stored_path
 
 
 def switch_account_auth(settings: Settings, account_id: str) -> None:
-    stored_path = account_auth_path(settings, account_id)
+    stored_path = _migrated_account_auth_path(settings, account_id)
     if not stored_path.exists():
         raise KeyError(account_id)
-    auth = read_json(stored_path)
+    auth = _read_stored_auth(settings, stored_path)
     stored_account_id, _ = _auth_tokens(auth)
     if stored_account_id != account_id:
         raise ValueError("Stored auth account_id does not match requested account")
@@ -399,7 +500,12 @@ def _upsert_account(
     last_error: str | None,
 ) -> None:
     ts = now_ts()
-    display_name = _random_display_name(conn)
+    existing = conn.execute("SELECT display_name FROM accounts WHERE account_id = ?", (account_id,)).fetchone()
+    display_name = (
+        _next_display_name(conn, account_id, user_name)
+        if existing is None or _legacy_random_display_name(existing["display_name"])
+        else existing["display_name"]
+    )
     failed_scan_count_sql = "0" if last_error is None else "accounts.failed_scan_count + 1"
     expired_at_sql = "NULL" if last_error is None else f"CASE WHEN accounts.failed_scan_count + 1 >= {ACCOUNT_EXPIRED_FAILURES} THEN COALESCE(accounts.expired_at, excluded.updated_at) ELSE accounts.expired_at END"
     conn.execute(
@@ -410,6 +516,7 @@ def _upsert_account(
         )
         VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(account_id) DO UPDATE SET
+            display_name = excluded.display_name,
             user_name = excluded.user_name,
             plan_type = COALESCE(excluded.plan_type, accounts.plan_type),
             hidden = 0,
@@ -445,7 +552,6 @@ async def scan_current_account(settings: Settings) -> ScanResult:
     save_account_auth(settings, account_id, auth)
 
     id_claims = _decode_jwt_claims(tokens.get("id_token"))
-    profile_payload: Any = {}
     usage_payload: Any = {}
     last_error: str | None = None
 
@@ -461,19 +567,13 @@ async def scan_current_account(settings: Settings) -> ScanResult:
             usage_payload = await _fetch_json(
                 client, f"{settings.chatgpt_backend_base}/wham/usage", access_token
             )
-            try:
-                profile_payload = await _fetch_json(
-                    client, f"{settings.chatgpt_backend_base}/api/accounts", access_token
-                )
-            except httpx.HTTPError:
-                profile_payload = {}
     except (httpx.HTTPError, ValueError) as exc:
         last_error = str(exc)
 
     rate_limits = _extract_rate_limits(usage_payload)
     if not rate_limits and last_error is None:
         last_error = f"Usage response did not contain rate limits ({_payload_shape(usage_payload)})"
-    user_name = _extract_profile(profile_payload, id_claims)
+    user_name = _extract_profile(id_claims)
     plan_type = rate_limits.get("plan_type") if isinstance(rate_limits.get("plan_type"), str) else None
 
     with connect(settings.db_path) as conn:

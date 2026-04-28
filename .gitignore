@@ -27,6 +27,7 @@ data/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+tmp/
 
 # Logs
 *.log

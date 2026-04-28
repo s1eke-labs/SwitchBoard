@@ -83,7 +83,7 @@ function PageSelector({
     <div className="relative">
       <button
         type="button"
-        className="h-9 min-w-28 rounded-md px-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+        className="h-9 w-32 rounded-md px-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
         onClick={() => setOpen((value) => !value)}
         disabled={disabled || pageCount <= 1}
         aria-expanded={open}
@@ -208,7 +208,9 @@ function RequestLogRow({ log }: { log: UsageRequestLogDTO }) {
         {formatTime(log.occurred_at)}
       </td>
       <td className="px-4 py-3 align-top">
-        <Badge tone="neutral">{log.billing_model ?? translate("common.unknown")}</Badge>
+        <Badge className="max-w-full truncate" tone="neutral">
+          {log.billing_model ?? translate("common.unknown")}
+        </Badge>
       </td>
       <td className="px-4 py-3 align-top text-right tabular-nums">
         <div className="font-semibold text-foreground">{formatNumber(log.input_tokens)}</div>
@@ -307,7 +309,14 @@ export function RequestLogsPage() {
             </div>
           ) : logs.length ? (
             <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full min-w-[820px] border-collapse text-sm">
+              <table className="w-full min-w-[860px] table-fixed border-collapse text-sm">
+                <colgroup>
+                  <col className="w-[170px]" />
+                  <col className="w-[210px]" />
+                  <col className="w-[155px]" />
+                  <col className="w-[155px]" />
+                  <col className="w-[170px]" />
+                </colgroup>
                 <thead className="sticky top-0 z-10 border-b bg-white text-xs font-bold uppercase text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 text-left">{t("requestLogs.time")}</th>

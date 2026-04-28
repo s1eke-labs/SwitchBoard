@@ -5,10 +5,9 @@ import hmac
 import logging
 import time
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi import Depends, FastAPI, Query, Request, Response, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -52,6 +51,8 @@ from usage import (
     get_usage_events,
     get_usage_request_logs,
 )
+from vault_crypto import ensure_auth_vault_key
+from version import __version__
 
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     validate_runtime_settings(settings)
     init_db(settings.db_path)
+    ensure_auth_vault_key(settings)
     account_scan_lock = asyncio.Lock()
 
     async def usage_aggregation_loop() -> None:
@@ -122,7 +124,7 @@ def create_app() -> FastAPI:
             with suppress(asyncio.CancelledError):
                 await account_task
 
-    app = FastAPI(title="SwitchBoard", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="SwitchBoard", version=__version__, lifespan=lifespan)
     app.state.settings = settings
 
     @app.get("/api/health")
