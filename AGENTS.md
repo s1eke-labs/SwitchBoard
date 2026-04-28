@@ -16,8 +16,11 @@ When changing visible frontend behavior, run `npm run lint` from `frontend/`.
 
 ## Commit Messages
 
-Use Conventional Commits for commit messages: `<type>(<scope>): <summary>`. Write the summary in Chinese unless the surrounding change is already English-only. Prefer concise, imperative summaries.
+Use Conventional Commits for commit messages: `<type>(<scope>): <summary>`. Write the summary in Chinese unless the surrounding change is already English-only. 
 
 ## Security Notes
 
 SwitchBoard reads `auth.json` plus local Codex session/state files from `CODEX_HOME`. Account switching rewrites `CODEX_HOME/auth.json`, so preserve user credentials carefully and never log token values. ChatGPT tokens must not be stored in SwitchBoard's SQLite database. Hidden accounts and custom account names are SwitchBoard-local metadata.
+
+## AI Agent Guidelines
+**Use Chinese**: The AI must use Chinese for all outputs (including but not limited to conversations, explanations, planning, code comments, etc.).

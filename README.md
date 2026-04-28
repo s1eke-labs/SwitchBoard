@@ -8,7 +8,7 @@ SwitchBoard is a small full-stack app for people who use Codex locally and want 
 
 ## Features
 
-- View local Codex accounts and the currently active account.
+- View local Codex accounts, the currently active account, and the elapsed time since each account was added to SwitchBoard.
 - Scan account profile and rate-limit snapshots from the ChatGPT backend.
 - Switch the local Codex account by updating `CODEX_HOME/auth.json`.
 - Rename or hide accounts inside SwitchBoard without changing Codex credentials.

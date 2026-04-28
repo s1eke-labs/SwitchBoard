@@ -392,6 +392,45 @@ def test_weekly_exhaustion_zeroes_five_hour_limit(tmp_path: Path) -> None:
     assert account.five_hour.resets_at == weekly_reset
 
 
+def test_account_usage_duration_uses_created_at_until_now_or_expiration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    _write_auth(settings, "acct-active")
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            "INSERT INTO accounts(account_id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("acct-active", "Active", 1_000, 1_000),
+        )
+        conn.execute(
+            """
+            INSERT INTO accounts(account_id, display_name, created_at, updated_at, expired_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("acct-expired", "Expired", 2_000, 2_000, 2_600),
+        )
+        conn.execute(
+            """
+            INSERT INTO accounts(account_id, display_name, created_at, updated_at, expired_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("acct-invalid", "Invalid", 3_000, 3_000, 2_900),
+        )
+
+    monkeypatch.setattr("accounts.now_ts", lambda: 4_000)
+
+    accounts = {account.account_id: account for account in list_accounts(settings)}
+
+    assert accounts["acct-active"].usage_started_at == 1_000
+    assert accounts["acct-active"].usage_ended_at is None
+    assert accounts["acct-active"].usage_seconds == 3_000
+    assert accounts["acct-expired"].usage_started_at == 2_000
+    assert accounts["acct-expired"].usage_ended_at == 2_600
+    assert accounts["acct-expired"].usage_seconds == 600
+    assert accounts["acct-invalid"].usage_seconds == 0
+
+
 def test_init_db_migrates_custom_name_and_removes_workspace_name(tmp_path: Path) -> None:
     db_path = tmp_path / "switchboard.sqlite"
     with connect(db_path) as conn:

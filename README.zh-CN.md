@@ -8,7 +8,7 @@ SwitchBoard 是一个小型全栈应用，适合在本地使用 Codex、并希�
 
 ## 功能
 
-- 查看本地 Codex 账号和当前生效账号。
+- 查看本地 Codex 账号、当前生效账号，以及每个账号加入 SwitchBoard 后的已使用时间。
 - 从 ChatGPT 后端扫描账号资料和速率限制快照。
 - 通过更新 `CODEX_HOME/auth.json` 切换本地 Codex 账号。
 - 在 SwitchBoard 内重命名或隐藏账号，不修改 Codex 凭据本身。

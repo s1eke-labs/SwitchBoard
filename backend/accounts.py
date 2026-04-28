@@ -42,6 +42,9 @@ class AccountDTO(BaseModel):
     last_error: str | None
     failed_scan_count: int
     expired: bool
+    usage_started_at: int
+    usage_ended_at: int | None
+    usage_seconds: int
 
 
 class ScanResult(BaseModel):
@@ -260,6 +263,10 @@ def _latest_snapshot(conn: sqlite3.Connection, account_id: str) -> sqlite3.Row |
 def _account_dto(row: sqlite3.Row, snapshot: sqlite3.Row | None, current_id: str | None) -> AccountDTO:
     five_hour = None
     weekly = None
+    usage_started_at = int(row["created_at"])
+    usage_ended_at = row["expired_at"]
+    usage_end = int(usage_ended_at) if usage_ended_at is not None else now_ts()
+    usage_seconds = max(0, usage_end - usage_started_at)
     if snapshot:
         five_hour = _limit_from_snapshot(
             snapshot["five_hour_used_percent"],
@@ -292,6 +299,9 @@ def _account_dto(row: sqlite3.Row, snapshot: sqlite3.Row | None, current_id: str
         last_error=row["last_error"],
         failed_scan_count=row["failed_scan_count"],
         expired=row["expired_at"] is not None,
+        usage_started_at=usage_started_at,
+        usage_ended_at=usage_ended_at,
+        usage_seconds=usage_seconds,
     )
 
 
