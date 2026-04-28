@@ -420,7 +420,7 @@ def _user_index_item(event: SessionEvent, event_index: int) -> SessionUserIndexI
     )
 
 
-def _resolve_rollout_path(settings: Settings, stored_path: str, thread_id: str) -> Path:
+def resolve_rollout_path(settings: Settings, stored_path: str, thread_id: str) -> Path:
     rollout_path = Path(stored_path)
     candidates: list[Path] = []
     if rollout_path.is_absolute():
@@ -452,7 +452,7 @@ def _session_context(settings: Settings, thread_id: str) -> tuple[SessionSummary
     if row is None:
         raise KeyError(thread_id)
     summary = _summary_from_row(row)
-    rollout_path = _resolve_rollout_path(settings, row["rollout_path"], thread_id)
+    rollout_path = resolve_rollout_path(settings, row["rollout_path"], thread_id)
     return summary, rollout_path
 
 

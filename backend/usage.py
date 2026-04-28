@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from config import Settings
 from db import connect
 from pricing import estimate_cost
-from sessions import _readonly_connect, _state_db_path, iso_to_ts
+from sessions import _readonly_connect, _state_db_path, iso_to_ts, resolve_rollout_path
 
 
 class UsageEventDTO(BaseModel):
@@ -254,9 +254,7 @@ def _discover_rollouts(settings: Settings) -> list[RolloutSource]:
     sources: dict[Path, RolloutSource] = {}
     thread_rows = _thread_rows(settings)
     for row in thread_rows:
-        rollout_path = Path(row["rollout_path"])
-        if not rollout_path.is_absolute():
-            rollout_path = settings.codex_home / rollout_path
+        rollout_path = resolve_rollout_path(settings, row["rollout_path"], row["id"])
         sources[rollout_path] = RolloutSource(
             thread_id=row["id"],
             path=rollout_path,
