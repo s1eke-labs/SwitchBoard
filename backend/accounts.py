@@ -16,6 +16,7 @@ from codex_files import current_account_id, current_auth_path, read_json
 from config import Settings
 from db import connect, now_ts
 from issues import IssueDetail, scan_warning_from_message
+from version import USER_AGENT
 
 
 ACCOUNT_EXPIRED_FAILURES = 3
@@ -357,7 +358,7 @@ async def _fetch_json(client: httpx.AsyncClient, url: str, access_token: str) ->
         headers={
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
-            "User-Agent": "SwitchBoard/0.1",
+            "User-Agent": USER_AGENT,
         },
     )
     response.raise_for_status()

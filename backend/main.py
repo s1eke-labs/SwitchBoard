@@ -51,6 +51,7 @@ from usage import (
     get_usage_events,
     get_usage_request_logs,
 )
+from version import __version__
 
 
 logger = logging.getLogger(__name__)
@@ -121,7 +122,7 @@ def create_app() -> FastAPI:
             with suppress(asyncio.CancelledError):
                 await account_task
 
-    app = FastAPI(title="SwitchBoard", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="SwitchBoard", version=__version__, lifespan=lifespan)
     app.state.settings = settings
 
     @app.get("/api/health")
