@@ -80,23 +80,13 @@ def _walk_dicts(value: Any) -> Iterable[dict[str, Any]]:
             yield from _walk_dicts(child)
 
 
-def _extract_profile(value: Any, claims: dict[str, Any]) -> str | None:
-    user_name = _first_string(
+def _extract_profile(claims: dict[str, Any]) -> str | None:
+    return _first_string(
         claims.get("name"),
         claims.get("given_name"),
         claims.get("preferred_username"),
         claims.get("email"),
     )
-
-    for item in _walk_dicts(value):
-        user_name = _first_string(
-            user_name,
-            item.get("name"),
-            item.get("display_name"),
-            item.get("email"),
-            item.get("username"),
-        )
-    return user_name
 
 
 def _display_name_base(user_name: str | None) -> str:
@@ -478,7 +468,6 @@ async def scan_current_account(settings: Settings) -> ScanResult:
     save_account_auth(settings, account_id, auth)
 
     id_claims = _decode_jwt_claims(tokens.get("id_token"))
-    profile_payload: Any = {}
     usage_payload: Any = {}
     last_error: str | None = None
 
@@ -494,19 +483,13 @@ async def scan_current_account(settings: Settings) -> ScanResult:
             usage_payload = await _fetch_json(
                 client, f"{settings.chatgpt_backend_base}/wham/usage", access_token
             )
-            try:
-                profile_payload = await _fetch_json(
-                    client, f"{settings.chatgpt_backend_base}/api/accounts", access_token
-                )
-            except httpx.HTTPError:
-                profile_payload = {}
     except (httpx.HTTPError, ValueError) as exc:
         last_error = str(exc)
 
     rate_limits = _extract_rate_limits(usage_payload)
     if not rate_limits and last_error is None:
         last_error = f"Usage response did not contain rate limits ({_payload_shape(usage_payload)})"
-    user_name = _extract_profile(profile_payload, id_claims)
+    user_name = _extract_profile(id_claims)
     plan_type = rate_limits.get("plan_type") if isinstance(rate_limits.get("plan_type"), str) else None
 
     with connect(settings.db_path) as conn:

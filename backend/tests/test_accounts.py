@@ -63,7 +63,10 @@ async def test_scan_current_account_unhides_and_stores_snapshot(monkeypatch: pyt
             ("acct-current", "Old", now_ts(), now_ts()),
         )
 
+    fetched_urls: list[str] = []
+
     async def fake_fetch(_client, url: str, _token: str):
+        fetched_urls.append(url)
         if url.endswith("/wham/usage"):
             return {
                 "primary": {"used_percent": 22, "window_minutes": 300, "resets_at": now_ts() + 60},
@@ -83,6 +86,7 @@ async def test_scan_current_account_unhides_and_stores_snapshot(monkeypatch: pyt
     assert result.account.five_hour.remaining_percent == 78
     assert account_auth_path(settings, "acct-current").exists()
     assert read_json(account_auth_path(settings, "acct-current"))["tokens"]["account_id"] == "acct-current"
+    assert fetched_urls == [f"{settings.chatgpt_backend_base}/wham/usage"]
 
 
 @pytest.mark.asyncio
