@@ -95,7 +95,7 @@ npm run build
 npm run preview
 ```
 
-`uv run pylint --rcfile=.pylintrc .` runs backend lint checks. `npm run lint` runs TypeScript checks. `npm run build` creates `frontend/dist`.
+`uv run pylint --rcfile=.pylintrc .` runs backend lint checks. `npm run lint` runs frontend ESLint and TypeScript checks. `npm run build` creates `frontend/dist`.
 
 ## Production-Style Local Run
 

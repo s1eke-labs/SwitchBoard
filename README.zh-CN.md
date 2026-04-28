@@ -95,7 +95,7 @@ npm run build
 npm run preview
 ```
 
-`uv run pylint --rcfile=.pylintrc .` 会运行后端 lint 检查。`npm run lint` 会运行 TypeScript 检查。`npm run build` 会生成 `frontend/dist`。
+`uv run pylint --rcfile=.pylintrc .` 会运行后端 lint 检查。`npm run lint` 会运行前端 ESLint 和 TypeScript 检查。`npm run build` 会生成 `frontend/dist`。
 
 ## 本地类生产运行
 

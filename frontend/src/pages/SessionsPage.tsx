@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Loader2, Search, UserRound } from "lucide-react";
 import { api, SessionSummary } from "@/lib/api";
@@ -124,7 +124,7 @@ export function SessionsPage({
     queryFn: () => api.sessions({ query, page, limit: SESSIONS_PAGE_SIZE }),
     placeholderData: (previousData) => previousData,
   });
-  const sessionItems = sessions.data?.items ?? [];
+  const sessionItems = useMemo(() => sessions.data?.items ?? [], [sessions.data?.items]);
   const totalPages = Math.max(1, Math.ceil((sessions.data?.total_count ?? 0) / SESSIONS_PAGE_SIZE));
   const emptySlots = Math.max(0, SESSIONS_PAGE_SIZE - sessionItems.length);
   const activeId = selectedThreadId ?? sessionItems[0]?.thread_id ?? null;
