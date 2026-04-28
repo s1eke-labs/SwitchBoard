@@ -34,6 +34,10 @@ def _default_db_path() -> Path:
     return Path.cwd() / "data" / "switchboard.sqlite"
 
 
+def _default_auth_vault_dir(db_path: Path) -> Path:
+    return db_path.parent / "auth-vault"
+
+
 def _parse_bool_env(name: str, default: bool) -> bool:
     raw_value = os.getenv(name)
     if raw_value is None:
@@ -53,6 +57,7 @@ class Settings:
     db_path: Path
     chatgpt_backend_base: str
     static_dir: Path | None
+    auth_vault_dir: Path | None = None
     cookie_name: str = "switchboard_session"
     cookie_max_age_seconds: int = 60 * 60 * 24 * 7
     cookie_secure: bool = False
@@ -73,13 +78,16 @@ def get_settings() -> Settings:
         raise RuntimeError("APP_PASSWORD must be set before starting SwitchBoard.")
 
     static_dir_raw = os.getenv("SWITCHBOARD_STATIC_DIR")
+    db_path = Path(os.getenv("SWITCHBOARD_DB", str(_default_db_path()))).expanduser()
+    auth_vault_raw = os.getenv("SWITCHBOARD_AUTH_VAULT")
     return Settings(
         app_password=password,
         codex_home=Path(os.getenv("CODEX_HOME", str(_default_codex_home()))).expanduser(),
-        db_path=Path(os.getenv("SWITCHBOARD_DB", str(_default_db_path()))).expanduser(),
+        db_path=db_path,
         chatgpt_backend_base=os.getenv(
             "CHATGPT_BACKEND_BASE", "https://chatgpt.com/backend-api"
         ).rstrip("/"),
         static_dir=Path(static_dir_raw).expanduser() if static_dir_raw else None,
+        auth_vault_dir=Path(auth_vault_raw).expanduser() if auth_vault_raw else _default_auth_vault_dir(db_path),
         cookie_secure=_parse_bool_env("SWITCHBOARD_COOKIE_SECURE", default=False),
     )

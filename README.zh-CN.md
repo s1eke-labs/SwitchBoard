@@ -4,7 +4,7 @@ Codex 账号、会话和用量的本地仪表盘。
 
 [English](README.md)
 
-SwitchBoard 是一个小型全栈应用，适合在本地使用 Codex、并希望更清楚查看账号状态、近期会话和 Token 用量的人。它从 `CODEX_HOME` 读取本地 Codex 文件，把 SwitchBoard 自己的元数据写入 SQLite，并通过 FastAPI 后端提供 React 仪表盘。
+SwitchBoard 是一个小型全栈应用，适合在本地使用 Codex、并希望更清楚查看账号状态、近期会话和 Token 用量的人。它从 `CODEX_HOME` 读取本地 Codex 文件，把 SwitchBoard 自己的元数据写入 SQLite，把已保存账号凭据放进私有 SwitchBoard auth vault，并通过 FastAPI 后端提供 React 仪表盘。
 
 ## 功能
 
@@ -38,7 +38,7 @@ SwitchBoard 是一个小型全栈应用，适合在本地使用 Codex、并希�
 cd backend
 APP_PASSWORD=switchboard \
 CODEX_HOME="$HOME/.codex" \
-SWITCHBOARD_DB=/tmp/switchboard-dev.sqlite \
+SWITCHBOARD_DB=./data/switchboard-dev.sqlite \
 uv run uvicorn main:app --host 127.0.0.1 --port 8080 --reload
 ```
 
@@ -67,11 +67,12 @@ npm run dev
 | `APP_PASSWORD` | 是 | 登录 SwitchBoard 使用的密码。 |
 | `CODEX_HOME` | 否 | Codex home 目录。在类似 Docker 的环境中如果存在 `/host-codex` 则默认使用它，否则默认使用 `~/.codex`。启动时该目录必须存在。 |
 | `SWITCHBOARD_DB` | 否 | SQLite 数据库路径。如果 `/data` 存在则默认使用 `/data/switchboard.sqlite`；从 `backend/` 运行时默认使用 `backend/data/switchboard.sqlite`。 |
+| `SWITCHBOARD_AUTH_VAULT` | 否 | 保存账号 `auth.json` 文件的目录。默认放在 `SWITCHBOARD_DB` 旁边的 `auth-vault`，例如 Docker 中的 `/data/auth-vault`。 |
 | `SWITCHBOARD_STATIC_DIR` | 否 | 后端要托管的已构建前端目录，通常是 `frontend/dist`。 |
 | `SWITCHBOARD_COOKIE_SECURE` | 否 | 控制会话 Cookie 的 `Secure` 标记。本地 HTTP 开发默认是 `false`；部署在 HTTPS 后面时设为 `true`。 |
 | `CHATGPT_BACKEND_BASE` | 否 | 扫描账号限制时使用的 ChatGPT 后端基础地址，默认是 `https://chatgpt.com/backend-api`。 |
 
-本地开发时，`/tmp/switchboard-dev.sqlite` 是一个方便丢弃的数据库路径。
+本地开发时，`./data/switchboard-dev.sqlite` 是一个方便丢弃的数据库路径。
 
 如果 `CODEX_HOME` 不存在，或者指向的是文件而不是目录，SwitchBoard 会在启动时快速失败并给出明确错误。
 
@@ -82,7 +83,7 @@ npm run dev
 ```bash
 uv run pylint --rcfile=.pylintrc .
 uv run pytest
-APP_PASSWORD=switchboard CODEX_HOME="$HOME/.codex" SWITCHBOARD_DB=/tmp/switchboard-dev.sqlite uv run uvicorn main:app --host 127.0.0.1 --port 8080 --reload
+APP_PASSWORD=switchboard CODEX_HOME="$HOME/.codex" SWITCHBOARD_DB=./data/switchboard-dev.sqlite uv run uvicorn main:app --host 127.0.0.1 --port 8080 --reload
 ```
 
 在 `frontend/` 目录运行前端命令：
@@ -113,7 +114,7 @@ npm run build
 cd ../backend
 APP_PASSWORD=switchboard \
 CODEX_HOME="$HOME/.codex" \
-SWITCHBOARD_DB=/tmp/switchboard-dev.sqlite \
+SWITCHBOARD_DB=./data/switchboard-dev.sqlite \
 SWITCHBOARD_STATIC_DIR="$PWD/../frontend/dist" \
 uv run uvicorn main:app --host 127.0.0.1 --port 8080
 ```
@@ -145,9 +146,9 @@ docker compose up --build
 
 除非你设置了不同的 `PORT`，否则打开 `http://127.0.0.1:8080`。
 
-Codex 目录会以可读写方式挂载到 `/host-codex`，这样账号切换才能更新 `auth.json`。SwitchBoard 的 SQLite 数据会存储在 `switchboard_data` volume 中。
+Codex 目录会以可读写方式挂载到 `/host-codex`，这样账号切换才能更新 `auth.json`。SwitchBoard 的 SQLite 数据和私有 auth vault 会存储在 `switchboard_data` volume 中。
 
-容器进程可能以 root 运行，但 SwitchBoard 替换 `CODEX_HOME/auth.json` 时会保留原文件的 owner 和 group。在挂载的 Codex 目录下新建 SwitchBoard 账号保险库目录时，也会先继承挂载目录 owner 再写入凭据。如果你把挂载改成只读，Docker 模式就只能查看账号、会话和用量。
+容器进程可能以 root 运行，但 SwitchBoard 替换 `CODEX_HOME/auth.json` 时会保留原文件的 owner 和 group。已保存账号凭据默认会写到 `CODEX_HOME` 之外的 `SWITCHBOARD_AUTH_VAULT`，并使用私有目录和文件权限。如果你把 Codex 挂载改成只读，Docker 模式就只能查看账号、会话和用量。
 
 ## 仓库结构
 
@@ -175,6 +176,7 @@ frontend/
 
 - SwitchBoard 会从 `CODEX_HOME` 读取 `auth.json` 和本地 Codex 会话/状态文件。
 - ChatGPT Token 不会存储在 SwitchBoard 的 SQLite 数据库中。
+- 已保存账号凭据会以私有 `auth.json` 文件形式放在 `SWITCHBOARD_AUTH_VAULT`，默认不再放在 `CODEX_HOME` 下。
 - 切换账号会重写本地 Codex 的 `auth.json`；需要重启 Codex 才会生效。
 - Docker 中切换账号会保留现有 `auth.json` 的 owner/group，并以 `0600` 权限写入。
 - 隐藏账号和自定义名称都是 SwitchBoard 本地元数据。

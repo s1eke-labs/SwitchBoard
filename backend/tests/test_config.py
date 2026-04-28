@@ -29,6 +29,18 @@ def test_get_settings_parses_cookie_secure_env(monkeypatch, tmp_path) -> None:
     settings = get_settings()
 
     assert settings.cookie_secure is True
+    assert settings.auth_vault_dir == tmp_path / "auth-vault"
+
+
+def test_get_settings_parses_auth_vault_env(monkeypatch, tmp_path) -> None:
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("SWITCHBOARD_AUTH_VAULT", str(tmp_path / "custom-vault"))
+
+    settings = get_settings()
+
+    assert settings.auth_vault_dir == tmp_path / "custom-vault"
 
 
 def test_get_settings_rejects_invalid_cookie_secure_env(monkeypatch, tmp_path) -> None:

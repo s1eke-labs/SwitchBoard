@@ -381,11 +381,22 @@ def _auth_tokens(auth: dict[str, Any]) -> tuple[str, str]:
 def _account_vault_dir(settings: Settings, account_id: str) -> Path:
     if not account_id or "/" in account_id or "\\" in account_id or account_id in {".", ".."}:
         raise ValueError("Invalid account_id")
+    vault_root = settings.auth_vault_dir or settings.db_path.parent / "auth-vault"
+    return vault_root / account_id
+
+
+def _legacy_account_vault_dir(settings: Settings, account_id: str) -> Path:
+    if not account_id or "/" in account_id or "\\" in account_id or account_id in {".", ".."}:
+        raise ValueError("Invalid account_id")
     return settings.codex_home / "switchboard" / "accounts" / account_id
 
 
 def account_auth_path(settings: Settings, account_id: str) -> Path:
     return _account_vault_dir(settings, account_id) / "auth.json"
+
+
+def _legacy_account_auth_path(settings: Settings, account_id: str) -> Path:
+    return _legacy_account_vault_dir(settings, account_id) / "auth.json"
 
 
 def _can_chown() -> bool:
@@ -419,9 +430,11 @@ def _ensure_private_parent(path: Path) -> os.stat_result | None:
     owner_stat = owner_source.stat() if owner_source.exists() else None
     missing = _missing_parents(path.parent)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if owner_stat and _can_chown():
-        for parent in reversed(missing):
+    can_chown = bool(owner_stat and _can_chown())
+    for parent in reversed(missing):
+        if can_chown:
             os.chown(parent, owner_stat.st_uid, owner_stat.st_gid)
+        os.chmod(parent, 0o700)
     os.chmod(path.parent, 0o700)
     return owner_stat
 
@@ -444,8 +457,22 @@ def save_account_auth(settings: Settings, account_id: str, auth: dict[str, Any])
     _write_private_json(account_auth_path(settings, account_id), auth)
 
 
-def switch_account_auth(settings: Settings, account_id: str) -> None:
+def _migrated_account_auth_path(settings: Settings, account_id: str) -> Path:
     stored_path = account_auth_path(settings, account_id)
+    if stored_path.exists():
+        return stored_path
+    legacy_path = _legacy_account_auth_path(settings, account_id)
+    if legacy_path.exists():
+        auth = read_json(legacy_path)
+        stored_account_id, _ = _auth_tokens(auth)
+        if stored_account_id != account_id:
+            return legacy_path
+        _write_private_json(stored_path, auth)
+    return stored_path
+
+
+def switch_account_auth(settings: Settings, account_id: str) -> None:
+    stored_path = _migrated_account_auth_path(settings, account_id)
     if not stored_path.exists():
         raise KeyError(account_id)
     auth = read_json(stored_path)

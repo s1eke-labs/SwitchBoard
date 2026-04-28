@@ -14,6 +14,7 @@ from accounts import (
     scan_current_account,
     set_account_custom_name,
     switch_account,
+    switch_account_auth,
 )
 from codex_files import current_auth_path, read_json
 from config import Settings
@@ -77,24 +78,31 @@ def test_write_private_json_preserves_existing_owner_when_running_as_root(
 def test_write_private_json_gives_new_account_vault_paths_host_owner_when_running_as_root(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    codex_home = tmp_path / "codex"
-    path = codex_home / "switchboard" / "accounts" / "acct-one" / "auth.json"
-    codex_home.mkdir()
-    host_stat = codex_home.stat()
+    path = tmp_path / "auth-vault" / "acct-one" / "auth.json"
+    host_stat = tmp_path.stat()
     chown_calls: list[tuple[Path, int, int]] = []
+    chmod_calls: list[tuple[Path, int]] = []
 
     monkeypatch.setattr("accounts.os.geteuid", lambda: 0)
     monkeypatch.setattr("accounts.os.chown", lambda path, uid, gid: chown_calls.append((Path(path), uid, gid)))
+    monkeypatch.setattr("accounts.os.chmod", lambda path, mode: chmod_calls.append((Path(path), mode)))
 
     _write_private_json(path, {"tokens": {"account_id": "acct-one", "access_token": "access"}})
 
     assert chown_calls == [
-        (codex_home / "switchboard", host_stat.st_uid, host_stat.st_gid),
-        (codex_home / "switchboard" / "accounts", host_stat.st_uid, host_stat.st_gid),
-        (codex_home / "switchboard" / "accounts" / "acct-one", host_stat.st_uid, host_stat.st_gid),
+        (tmp_path / "auth-vault", host_stat.st_uid, host_stat.st_gid),
+        (tmp_path / "auth-vault" / "acct-one", host_stat.st_uid, host_stat.st_gid),
         (path.with_name(".auth.json.tmp"), host_stat.st_uid, host_stat.st_gid),
     ]
+    assert (tmp_path / "auth-vault", 0o700) in chmod_calls
+    assert (tmp_path / "auth-vault" / "acct-one", 0o700) in chmod_calls
     assert read_json(path)["tokens"]["account_id"] == "acct-one"
+
+
+def test_account_auth_path_defaults_to_switchboard_auth_vault(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+
+    assert account_auth_path(settings, "acct-one") == tmp_path / "auth-vault" / "acct-one" / "auth.json"
 
 
 @pytest.mark.asyncio
@@ -486,6 +494,23 @@ async def test_switch_account_replaces_current_auth_and_scans(monkeypatch: pytes
     assert result.status == "ok"
     assert result.account.account_id == "acct-one"
     assert read_json(current_auth_path(settings.codex_home))["tokens"]["account_id"] == "acct-one"
+
+
+def test_switch_account_migrates_legacy_codex_home_vault(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    legacy_path = settings.codex_home / "switchboard" / "accounts" / "acct-legacy" / "auth.json"
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text(
+        json.dumps({"tokens": {"account_id": "acct-legacy", "access_token": "access"}}),
+        encoding="utf-8",
+    )
+
+    switch_account_auth(settings, "acct-legacy")
+
+    assert legacy_path.exists()
+    assert account_auth_path(settings, "acct-legacy").exists()
+    assert read_json(account_auth_path(settings, "acct-legacy"))["tokens"]["account_id"] == "acct-legacy"
+    assert read_json(current_auth_path(settings.codex_home))["tokens"]["account_id"] == "acct-legacy"
 
 
 @pytest.mark.asyncio
