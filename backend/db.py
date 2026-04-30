@@ -106,6 +106,41 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     status TEXT NOT NULL,
     error TEXT
 );
+
+CREATE TABLE IF NOT EXISTS image_jobs (
+    id TEXT PRIMARY KEY,
+    prompt TEXT NOT NULL,
+    model TEXT,
+    size TEXT NOT NULL,
+    quality TEXT NOT NULL,
+    response_format TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    result_json TEXT,
+    error_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_image_jobs_status_created
+    ON image_jobs(status, created_at, id);
+
+CREATE INDEX IF NOT EXISTS idx_image_jobs_created
+    ON image_jobs(created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS image_job_references (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    original_file_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    file_name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(job_id) REFERENCES image_jobs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_image_job_references_job_position
+    ON image_job_references(job_id, position);
 """
 
 

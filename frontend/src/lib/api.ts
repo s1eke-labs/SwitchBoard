@@ -228,6 +228,22 @@ export type ImageGenerationRequest = {
   size?: "auto" | "1024x1024" | "1024x1536" | "1536x1024";
   quality?: "auto" | "low" | "medium" | "high";
   response_format?: "b64_json" | "url";
+  reference_images?: ImageReferenceInput[];
+};
+
+export type ImageReferenceInput = {
+  file_name: string;
+  mime_type: string;
+  b64_json: string;
+};
+
+export type ImageReferenceData = {
+  id: string;
+  file_name: string;
+  file_url: string;
+  original_file_name: string;
+  mime_type: string;
+  size_bytes: number;
 };
 
 export type ImageGenerationResponse = {
@@ -252,6 +268,7 @@ export type ImageGenerationJob = {
   created_at: number;
   updated_at: number;
   position: number | null;
+  references: ImageReferenceData[];
   result: ImageGenerationResponse | null;
   error: IssueDetail | null;
 };

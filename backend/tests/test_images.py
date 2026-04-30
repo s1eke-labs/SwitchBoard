@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import importlib
 import json
 from pathlib import Path
@@ -10,8 +11,20 @@ import pytest
 from fastapi.testclient import TestClient
 
 from config import Settings
-from images import ImageGenerationError, ImageGenerationQueue, ImageGenerationRequest, ImageGenerationResponse, ImageData, generate_image
+from images import (
+    ImageData,
+    ImageGenerationError,
+    ImageGenerationQueue,
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+    ImageReferenceInput,
+    build_upstream_payload,
+    generate_image,
+)
 from issues import issue_detail
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\nreference"
+PNG_B64 = "iVBORw0KGgpyZWZlcmVuY2U="
 
 
 def _settings(tmp_path, **overrides) -> Settings:
@@ -215,6 +228,32 @@ async def test_generate_image_can_return_data_url(tmp_path) -> None:
     assert result.data[0].url == result.data[0].file_url
 
 
+def test_build_upstream_payload_adds_reference_images_without_forcing_generate(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    payload = build_upstream_payload(
+        settings,
+        ImageGenerationRequest(
+            prompt="poster",
+            reference_images=[
+                ImageReferenceInput(file_name="ref.png", mime_type="image/png", b64_json=PNG_B64),
+                ImageReferenceInput(file_name="ref-data-url.png", mime_type="image/png", b64_json=f"data:image/png;base64,{PNG_B64}"),
+            ],
+        ),
+    )
+
+    content = payload["input"][0]["content"]
+    assert content == [
+        {"type": "input_text", "text": "poster"},
+        {"type": "input_image", "image_url": f"data:image/png;base64,{PNG_B64}"},
+        {"type": "input_image", "image_url": f"data:image/png;base64,{PNG_B64}"},
+    ]
+    tool = payload["tools"][0]
+    assert tool["type"] == "image_generation"
+    assert tool["model"] == "gpt-image-2"
+    assert "action" not in tool
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("payload", "code"),
@@ -222,6 +261,40 @@ async def test_generate_image_can_return_data_url(tmp_path) -> None:
         (ImageGenerationRequest(prompt=" "), "IMAGE_PROMPT_REQUIRED"),
         (ImageGenerationRequest(prompt="x", size="2048x2048"), "IMAGE_INVALID_SIZE"),
         (ImageGenerationRequest(prompt="x", quality="ultra"), "IMAGE_INVALID_QUALITY"),
+        (
+            ImageGenerationRequest(
+                prompt="x",
+                reference_images=[ImageReferenceInput(file_name=f"{index}.png", mime_type="image/png", b64_json=PNG_B64) for index in range(5)],
+            ),
+            "IMAGE_REFERENCE_TOO_MANY",
+        ),
+        (
+            ImageGenerationRequest(
+                prompt="x",
+                reference_images=[ImageReferenceInput(file_name="bad.png", mime_type="image/png", b64_json="not-base64")],
+            ),
+            "IMAGE_REFERENCE_INVALID",
+        ),
+        (
+            ImageGenerationRequest(
+                prompt="x",
+                reference_images=[ImageReferenceInput(file_name="bad.txt", mime_type="text/plain", b64_json=PNG_B64)],
+            ),
+            "IMAGE_REFERENCE_UNSUPPORTED_TYPE",
+        ),
+        (
+            ImageGenerationRequest(
+                prompt="x",
+                reference_images=[
+                    ImageReferenceInput(
+                        file_name="huge.png",
+                        mime_type="image/png",
+                        b64_json=base64.b64encode(b"\x89PNG\r\n\x1a\n" + (b"a" * (11 * 1024 * 1024))).decode("ascii"),
+                    )
+                ],
+            ),
+            "IMAGE_REFERENCE_TOO_LARGE",
+        ),
     ],
 )
 async def test_generate_image_validates_payload(tmp_path, payload: ImageGenerationRequest, code: str) -> None:
@@ -450,6 +523,8 @@ async def test_image_generation_queue_runs_jobs_sequentially(tmp_path) -> None:
     assert second_done.status == "succeeded"
     assert second_done.result is not None
     assert second_done.result.data[0].file_name == "second.png"
+    recent = await queue.list_recent()
+    assert recent[0].id == second.id
     await queue.close()
 
 
@@ -475,6 +550,46 @@ async def test_image_generation_queue_records_errors(tmp_path) -> None:
     assert failed.error is not None
     assert failed.error.code == "IMAGE_UPSTREAM_ERROR"
     await queue.close()
+
+
+@pytest.mark.asyncio
+async def test_image_generation_queue_persists_jobs_and_references(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    captured: list[ImageGenerationRequest] = []
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        captured.append(payload)
+        return ImageGenerationResponse(
+            created=1776000000,
+            model="gpt-image-2",
+            data=[ImageData(b64_json="aGVsbG8=", file_name="image.png")],
+        )
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    job = await queue.enqueue(
+        ImageGenerationRequest(
+            prompt="with ref",
+            reference_images=[ImageReferenceInput(file_name="ref.png", mime_type="image/png", b64_json=PNG_B64)],
+        )
+    )
+
+    for _ in range(20):
+        done = await queue.get(job.id)
+        if done is not None and done.status == "succeeded":
+            break
+        await asyncio.sleep(0.01)
+    await queue.close()
+
+    restored = ImageGenerationQueue(settings, generator=generator)
+    restored_job = await restored.get(job.id)
+
+    assert captured[0].reference_images[0].b64_json == PNG_B64
+    assert restored_job is not None
+    assert restored_job.status == "succeeded"
+    assert restored_job.references[0].original_file_name == "ref.png"
+    assert restored_job.references[0].file_url == f"/api/images/files/{restored_job.references[0].file_name}"
+    assert (settings.db_path.parent / "images" / restored_job.references[0].file_name).read_bytes() == PNG_BYTES
+    await restored.close()
 
 
 def test_image_api_requires_auth_and_reports_missing_auth(monkeypatch, tmp_path) -> None:

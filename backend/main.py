@@ -122,6 +122,7 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         usage_task = asyncio.create_task(usage_aggregation_loop())
         account_task = asyncio.create_task(account_refresh_loop())
+        await image_queue.start()
         app.state.usage_aggregation_task = usage_task
         app.state.account_refresh_task = account_task
         try:

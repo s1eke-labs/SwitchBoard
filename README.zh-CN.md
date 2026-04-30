@@ -15,7 +15,7 @@ SwitchBoard 是一个小型全栈应用，适合在本地使用 Codex、并希�
 - 导出和导入本地账号展示状态，方便在不同安装之间迁移 SwitchBoard 设置。
 - 浏览 Codex 会话，按文本搜索，并查看会话事件。
 - 查看请求日志、Token 用量、缓存用量和预估成本。
-- 通过受登录保护的本地 WebUI 提交图片生成队列，并代理到 OpenAI Images 兼容上游。
+- 通过受登录保护的本地 WebUI 提交文生图和参考图生成队列，并代理到 OpenAI Images 兼容上游。
 - 界面会根据浏览器语言默认显示英文或简体中文，并可在登录页和应用头部手动切换。
 - 支持后端/前端分离开发、本地类生产运行，以及 Docker Compose 运行。
 
@@ -84,7 +84,9 @@ npm run dev
 
 如果 `CODEX_HOME` 不存在，或者指向的是文件而不是目录，SwitchBoard 会在启动时快速失败并给出明确错误。
 
-作图页会由后端读取当前 `CODEX_HOME/auth.json` 中的 ChatGPT access token，并直连 Responses 上游。页面会先把请求提交到后端进程内 FIFO 队列，再轮询任务状态，因此浏览器不用一直挂在漫长的上游请求上。只要 SwitchBoard 页面仍然打开，任务完成或失败后都会弹出应用内通知。
+作图页会由后端读取当前 `CODEX_HOME/auth.json` 中的 ChatGPT access token，并直连 Responses 上游。页面会先把请求提交到持久化 FIFO 队列，再轮询任务状态，因此浏览器不用一直挂在漫长的上游请求上。只要 SwitchBoard 页面仍然打开，任务完成或失败后都会弹出应用内通知。
+
+图片任务最多可以包含 4 张参考图。每张参考图必须是 PNG、JPEG 或 WebP，且不超过 10 MB。参考图会随任务保存，重启 SwitchBoard 后仍可在任务历史里回看。
 
 浏览器使用的队列接口是：
 
@@ -102,8 +104,7 @@ POST /api/images/generations
 
 登录后从应用头部进入“作图”页面即可。不需要配置图片专用上游密钥，也不会把 token 返回给前端。
 
-生成的图片会保存在后端的 `SWITCHBOARD_IMAGE_OUTPUT_DIR` 下，并通过需要登录的 `/api/images/files/{filename}` 地址返回给前端预览。
-队列任务状态保存在后端进程内存中；重启 SwitchBoard 会清空排队状态，但不会删除已经保存到磁盘的图片文件。
+生成图片和已保存参考图都会保存在后端的 `SWITCHBOARD_IMAGE_OUTPUT_DIR` 下，并通过需要登录的 `/api/images/files/{filename}` 地址返回给前端预览。队列任务状态、参考图元数据、结果和错误会写入 SQLite。如果 SwitchBoard 在任务运行中重启，该任务会恢复为排队状态。
 
 ## 开发命令
 
@@ -212,7 +213,8 @@ frontend/
 - 隐藏账号和自定义名称都是 SwitchBoard 本地元数据。
 - 配置导出只包含 SwitchBoard 本地账号展示状态，绝不会包含凭据。
 - 图片生成只在内存中读取当前 `CODEX_HOME/auth.json` 的 access token；token 不会写入 SQLite，也不会返回给前端。
-- 图片 debug 日志不会打印 access token 或 Authorization header 的真实值。
+- 参考图会作为任务历史的私有文件保存，但浏览器只会把它们发送给已登录的 SwitchBoard 后端。
+- 图片 debug 日志不会打印 access token、Authorization header 的真实值或图片 base64 内容。
 - 不要提交 `.env`、SQLite 数据库或本地 Codex 凭据。
 - 用量成本估算使用本地价格表匹配已知模型名；未知模型的成本会保持为 null。
 

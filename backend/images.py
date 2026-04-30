@@ -8,18 +8,17 @@ import logging
 import os
 import time
 import uuid
-from collections import deque
-from dataclasses import dataclass
 from pathlib import Path
 from contextlib import suppress
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from codex_files import auth_tokens, current_auth_path, read_json
 from config import Settings
+from db import connect, init_db
 from issues import IssueDetail, issue_detail
 
 logger = logging.getLogger(__name__)
@@ -34,7 +33,25 @@ ImageJobStatus = Literal["queued", "running", "succeeded", "failed"]
 ALLOWED_IMAGE_SIZES = {"auto", "1024x1024", "1024x1536", "1536x1024"}
 ALLOWED_IMAGE_QUALITIES = {"auto", "low", "medium", "high"}
 ALLOWED_IMAGE_RESPONSE_FORMATS = {"b64_json", "url"}
+MAX_REFERENCE_IMAGES = 4
+MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024
+ALLOWED_REFERENCE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 IMAGE_GENERATION_INSTRUCTIONS = "Use the image_generation tool to create an image from the user's prompt."
+
+
+class ImageReferenceInput(BaseModel):
+    file_name: str
+    mime_type: str
+    b64_json: str
+
+
+class ImageReferenceData(BaseModel):
+    id: str
+    file_name: str
+    file_url: str
+    original_file_name: str
+    mime_type: str
+    size_bytes: int
 
 
 class ImageGenerationRequest(BaseModel):
@@ -43,6 +60,7 @@ class ImageGenerationRequest(BaseModel):
     size: str = "1024x1024"
     quality: str = "high"
     response_format: str = "b64_json"
+    reference_images: list[ImageReferenceInput] = Field(default_factory=list)
 
 
 class ImageData(BaseModel):
@@ -67,6 +85,7 @@ class ImageGenerationJobResponse(BaseModel):
     created_at: int
     updated_at: int
     position: int | None = None
+    references: list[ImageReferenceData] = Field(default_factory=list)
     result: ImageGenerationResponse | None = None
     error: IssueDetail | None = None
 
@@ -82,6 +101,65 @@ def _image_error(status_code: int, code: str, message: str) -> ImageGenerationEr
     return ImageGenerationError(status_code, issue_detail(code, message))
 
 
+def _base64_from_data_url(value: str) -> str | None:
+    prefix, separator, data = value.partition(",")
+    if separator and prefix.startswith("data:image/") and ";base64" in prefix:
+        return data
+    return None
+
+
+def _normalized_base64(value: str) -> str:
+    return _base64_from_data_url(value) or value
+
+
+def _detect_reference_mime(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _extension_from_mime(mime_type: str) -> str:
+    return {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/webp": "webp",
+    }.get(mime_type, "png")
+
+
+def _safe_original_file_name(value: str) -> str:
+    name = Path(value).name.strip()
+    return name or "reference-image"
+
+
+def _decode_reference_image(reference: ImageReferenceInput) -> tuple[str, bytes]:
+    if reference.mime_type not in ALLOWED_REFERENCE_MIME_TYPES:
+        raise _image_error(400, "IMAGE_REFERENCE_UNSUPPORTED_TYPE", "Reference image type is not supported")
+    try:
+        data = base64.b64decode(_normalized_base64(reference.b64_json), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise _image_error(400, "IMAGE_REFERENCE_INVALID", "Reference image data is invalid") from exc
+    if len(data) > MAX_REFERENCE_IMAGE_BYTES:
+        raise _image_error(400, "IMAGE_REFERENCE_TOO_LARGE", "Reference image is too large")
+    detected_mime = _detect_reference_mime(data)
+    if detected_mime is None or detected_mime != reference.mime_type:
+        raise _image_error(400, "IMAGE_REFERENCE_UNSUPPORTED_TYPE", "Reference image type is not supported")
+    return detected_mime, data
+
+
+def _validated_reference_images(payload: ImageGenerationRequest) -> list[tuple[ImageReferenceInput, str, bytes]]:
+    if len(payload.reference_images) > MAX_REFERENCE_IMAGES:
+        raise _image_error(400, "IMAGE_REFERENCE_TOO_MANY", "Too many reference images")
+    return [
+        (reference, mime_type, data)
+        for reference in payload.reference_images
+        for mime_type, data in [_decode_reference_image(reference)]
+    ]
+
+
 def _validate_payload(settings: Settings, payload: ImageGenerationRequest) -> None:
     prompt = payload.prompt.strip()
     if not prompt:
@@ -94,6 +172,7 @@ def _validate_payload(settings: Settings, payload: ImageGenerationRequest) -> No
         raise _image_error(400, "IMAGE_INVALID_QUALITY", "Invalid image quality")
     if payload.response_format not in ALLOWED_IMAGE_RESPONSE_FORMATS:
         raise _image_error(400, "IMAGE_INVALID_RESPONSE_FORMAT", "Invalid image response format")
+    _validated_reference_images(payload)
 
 
 def _responses_url(settings: Settings) -> str:
@@ -107,33 +186,53 @@ def _image_tool_model(settings: Settings, payload: ImageGenerationRequest) -> st
 
 
 def build_upstream_payload(settings: Settings, payload: ImageGenerationRequest) -> dict[str, object]:
+    content: list[dict[str, object]] = [
+        {
+            "type": "input_text",
+            "text": payload.prompt.strip(),
+        }
+    ]
+    for reference in payload.reference_images:
+        content.append(
+            {
+                "type": "input_image",
+                "image_url": f"data:{reference.mime_type};base64,{_normalized_base64(reference.b64_json)}",
+            }
+        )
+    tool: dict[str, object] = {
+        "type": "image_generation",
+        "model": _image_tool_model(settings, payload),
+        "size": payload.size,
+        "quality": payload.quality,
+    }
+    if not payload.reference_images:
+        tool["action"] = "generate"
     return {
         "model": settings.image_responses_model,
         "instructions": IMAGE_GENERATION_INSTRUCTIONS,
         "input": [
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": payload.prompt.strip(),
-                    }
-                ],
+                "content": content,
             }
         ],
-        "tools": [
-            {
-                "type": "image_generation",
-                "action": "generate",
-                "model": _image_tool_model(settings, payload),
-                "size": payload.size,
-                "quality": payload.quality,
-            }
-        ],
+        "tools": [tool],
         "tool_choice": {"type": "image_generation"},
         "stream": True,
         "store": False,
     }
+
+
+def _value_for_debug(value: object) -> object:
+    if isinstance(value, dict):
+        if value.get("type") == "input_image" and "image_url" in value:
+            return {**value, "image_url": "[image data redacted]"}
+        if _is_image_generation_item(value) and "result" in value:
+            return {**value, "result": "[image data redacted]"}
+        return {key: _value_for_debug(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_value_for_debug(item) for item in value]
+    return value
 
 
 def _redact_sensitive(value: str, secrets: tuple[str | None, ...]) -> str:
@@ -203,13 +302,6 @@ def _current_auth_tokens(settings: Settings) -> tuple[str, str]:
     except (OSError, ValueError) as exc:
         raise _auth_error_from_message(str(exc)) from exc
     return account_id, access_token
-
-
-def _base64_from_data_url(value: str) -> str | None:
-    prefix, separator, data = value.partition(",")
-    if separator and prefix.startswith("data:image/") and ";base64" in prefix:
-        return data
-    return None
 
 
 def _data_url_from_base64(value: str, output_format: object) -> str:
@@ -345,7 +437,13 @@ def _payloads_from_text(text: str, settings: Settings, access_token: str) -> lis
             return
         event_count += 1
         payloads.append(parsed)
-        _debug_log(settings, "sse event #%s type=%s payload=%s", event_count, _payload_type(parsed), _json_for_debug(parsed, access_token))
+        _debug_log(
+            settings,
+            "sse event #%s type=%s payload=%s",
+            event_count,
+            _payload_type(parsed),
+            _json_for_debug(_value_for_debug(parsed), access_token),
+        )
 
     for raw_line in text.splitlines():
         line = raw_line.rstrip("\r")
@@ -377,7 +475,12 @@ async def _payloads_from_streaming_response(response: httpx.Response, settings: 
             if payload is None:
                 _debug_log(settings, "sse line data=%s", _redact_sensitive(line[5:].lstrip(), (access_token,)))
             else:
-                _debug_log(settings, "sse line type=%s payload=%s", _payload_type(payload), _json_for_debug(payload, access_token))
+                _debug_log(
+                    settings,
+                    "sse line type=%s payload=%s",
+                    _payload_type(payload),
+                    _json_for_debug(_value_for_debug(payload), access_token),
+                )
     return _payloads_from_text("\n".join(chunks), settings, access_token)
 
 
@@ -429,15 +532,41 @@ def image_file_path(settings: Settings, filename: str) -> Path:
     return path
 
 
-@dataclass
-class _ImageGenerationJob:
-    id: str
-    payload: ImageGenerationRequest
-    status: ImageJobStatus
-    created_at: int
-    updated_at: int
-    result: ImageGenerationResponse | None = None
-    error: IssueDetail | None = None
+def _reference_from_row(row) -> ImageReferenceData:
+    file_name = str(row["file_name"])
+    return ImageReferenceData(
+        id=str(row["id"]),
+        file_name=file_name,
+        file_url=f"/api/images/files/{file_name}",
+        original_file_name=str(row["original_file_name"]),
+        mime_type=str(row["mime_type"]),
+        size_bytes=int(row["size_bytes"]),
+    )
+
+
+def _save_reference_file(
+    settings: Settings,
+    job_id: str,
+    index: int,
+    reference: ImageReferenceInput,
+    mime_type: str,
+    data: bytes,
+    created_at: int,
+) -> ImageReferenceData:
+    reference_id = uuid.uuid4().hex
+    extension = _extension_from_mime(mime_type)
+    filename = f"{created_at}-{job_id}-reference-{index + 1}-{reference_id}.{extension}"
+    path = _image_output_dir(settings) / filename
+    path.write_bytes(data)
+    os.chmod(path, 0o600)
+    return ImageReferenceData(
+        id=reference_id,
+        file_name=filename,
+        file_url=f"/api/images/files/{filename}",
+        original_file_name=_safe_original_file_name(reference.file_name),
+        mime_type=mime_type,
+        size_bytes=len(data),
+    )
 
 
 ImageGenerator = Callable[[Settings, ImageGenerationRequest], Awaitable[ImageGenerationResponse]]
@@ -447,38 +576,86 @@ class ImageGenerationQueue:
     def __init__(self, settings: Settings, generator: ImageGenerator | None = None) -> None:
         self._settings = settings
         self._generator = generator or generate_image
-        self._jobs: dict[str, _ImageGenerationJob] = {}
-        self._pending: deque[str] = deque()
         self._lock = asyncio.Lock()
         self._worker_task: asyncio.Task[None] | None = None
+        init_db(settings.db_path)
+        self._reset_running_jobs()
 
     async def enqueue(self, payload: ImageGenerationRequest) -> ImageGenerationJobResponse:
         _validate_payload(self._settings, payload)
+        references = _validated_reference_images(payload)
         now = int(time.time())
-        job = _ImageGenerationJob(
-            id=uuid.uuid4().hex,
-            payload=payload,
-            status="queued",
-            created_at=now,
-            updated_at=now,
-        )
+        job_id = uuid.uuid4().hex
         async with self._lock:
-            self._jobs[job.id] = job
-            self._pending.append(job.id)
+            saved_references = [
+                _save_reference_file(self._settings, job_id, index, reference, mime_type, data, now)
+                for index, (reference, mime_type, data) in enumerate(references)
+            ]
+            with connect(self._settings.db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO image_jobs (
+                        id, prompt, model, size, quality, response_format, status, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)
+                    """,
+                    (
+                        job_id,
+                        payload.prompt.strip(),
+                        payload.model,
+                        payload.size,
+                        payload.quality,
+                        payload.response_format,
+                        now,
+                        now,
+                    ),
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO image_job_references (
+                        id, job_id, position, original_file_name, mime_type, size_bytes, file_name, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            reference.id,
+                            job_id,
+                            index,
+                            reference.original_file_name,
+                            reference.mime_type,
+                            reference.size_bytes,
+                            reference.file_name,
+                            now,
+                        )
+                        for index, reference in enumerate(saved_references)
+                    ],
+                )
             self._ensure_worker_locked()
-            return self._response_for_job_locked(job)
+            job = self._job_response_from_db(job_id)
+            if job is None:
+                raise _image_error(500, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
+            return job
 
     async def get(self, job_id: str) -> ImageGenerationJobResponse | None:
         async with self._lock:
-            job = self._jobs.get(job_id)
-            if job is None:
-                return None
-            return self._response_for_job_locked(job)
+            return self._job_response_from_db(job_id)
 
     async def list_recent(self, limit: int = 20) -> list[ImageGenerationJobResponse]:
         async with self._lock:
-            jobs = sorted(self._jobs.values(), key=lambda item: item.created_at, reverse=True)
-            return [self._response_for_job_locked(job) for job in jobs[:limit]]
+            with connect(self._settings.db_path) as conn:
+                job_ids = [
+                    str(row["id"])
+                    for row in conn.execute(
+                        """
+                        SELECT id FROM image_jobs
+                        ORDER BY created_at DESC, rowid DESC
+                        LIMIT ?
+                        """,
+                        (limit,),
+                    )
+                ]
+            return [job for job_id in job_ids if (job := self._job_response_from_db(job_id)) is not None]
 
     async def close(self) -> None:
         task = self._worker_task
@@ -488,52 +665,168 @@ class ImageGenerationQueue:
         with suppress(asyncio.CancelledError):
             await task
 
+    async def start(self) -> None:
+        async with self._lock:
+            self._ensure_worker_locked()
+
     def _ensure_worker_locked(self) -> None:
         if self._worker_task is None or self._worker_task.done():
             self._worker_task = asyncio.create_task(self._run())
 
-    def _response_for_job_locked(self, job: _ImageGenerationJob) -> ImageGenerationJobResponse:
+    def _reset_running_jobs(self) -> None:
+        now = int(time.time())
+        with connect(self._settings.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE image_jobs
+                SET status = 'queued', updated_at = ?
+                WHERE status = 'running'
+                """,
+                (now,),
+            )
+
+    def _job_response_from_db(self, job_id: str) -> ImageGenerationJobResponse | None:
+        with connect(self._settings.db_path) as conn:
+            job = conn.execute("SELECT * FROM image_jobs WHERE id = ?", (job_id,)).fetchone()
+            if job is None:
+                return None
+            reference_rows = list(
+                conn.execute(
+                    """
+                    SELECT * FROM image_job_references
+                    WHERE job_id = ?
+                    ORDER BY position ASC
+                    """,
+                    (job_id,),
+                )
+            )
+            queued_rows = list(
+                conn.execute(
+                    """
+                    SELECT id FROM image_jobs
+                    WHERE status = 'queued'
+                    ORDER BY created_at ASC, rowid ASC
+                    """
+                )
+            )
         position = None
-        if job.status == "queued":
+        if job["status"] == "queued":
+            queued_ids = [str(row["id"]) for row in queued_rows]
             with suppress(ValueError):
-                position = list(self._pending).index(job.id) + 1
+                position = queued_ids.index(job_id) + 1
+        result = ImageGenerationResponse.model_validate_json(job["result_json"]) if job["result_json"] else None
+        error = IssueDetail.model_validate_json(job["error_json"]) if job["error_json"] else None
         return ImageGenerationJobResponse(
-            id=job.id,
-            prompt=job.payload.prompt.strip(),
-            status=job.status,
-            created_at=job.created_at,
-            updated_at=job.updated_at,
+            id=str(job["id"]),
+            prompt=str(job["prompt"]),
+            status=job["status"],
+            created_at=int(job["created_at"]),
+            updated_at=int(job["updated_at"]),
             position=position,
-            result=job.result,
-            error=job.error,
+            references=[_reference_from_row(row) for row in reference_rows],
+            result=result,
+            error=error,
         )
+
+    def _payload_from_job_id(self, job_id: str) -> ImageGenerationRequest:
+        with connect(self._settings.db_path) as conn:
+            job = conn.execute("SELECT * FROM image_jobs WHERE id = ?", (job_id,)).fetchone()
+            reference_rows = list(
+                conn.execute(
+                    """
+                    SELECT * FROM image_job_references
+                    WHERE job_id = ?
+                    ORDER BY position ASC
+                    """,
+                    (job_id,),
+                )
+            )
+        if job is None:
+            raise _image_error(404, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
+        references = []
+        for row in reference_rows:
+            path = image_file_path(self._settings, str(row["file_name"]))
+            references.append(
+                ImageReferenceInput(
+                    file_name=str(row["original_file_name"]),
+                    mime_type=str(row["mime_type"]),
+                    b64_json=base64.b64encode(path.read_bytes()).decode("ascii"),
+                )
+            )
+        return ImageGenerationRequest(
+            prompt=str(job["prompt"]),
+            model=str(job["model"]) if job["model"] else None,
+            size=str(job["size"]),
+            quality=str(job["quality"]),
+            response_format=str(job["response_format"]),
+            reference_images=references,
+        )
+
+    def _claim_next_job(self) -> str | None:
+        now = int(time.time())
+        with connect(self._settings.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT id FROM image_jobs
+                WHERE status = 'queued'
+                ORDER BY created_at ASC, rowid ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            if row is None:
+                return None
+            job_id = str(row["id"])
+            conn.execute(
+                """
+                UPDATE image_jobs
+                SET status = 'running', updated_at = ?
+                WHERE id = ?
+                """,
+                (now, job_id),
+            )
+            return job_id
+
+    def _finish_job(self, job_id: str, result: ImageGenerationResponse) -> None:
+        with connect(self._settings.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE image_jobs
+                SET status = 'succeeded', result_json = ?, error_json = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (result.model_dump_json(), int(time.time()), job_id),
+            )
+
+    def _fail_job(self, job_id: str, detail: IssueDetail) -> None:
+        with connect(self._settings.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE image_jobs
+                SET status = 'failed', error_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (detail.model_dump_json(), int(time.time()), job_id),
+            )
 
     async def _run(self) -> None:
         while True:
             async with self._lock:
-                if not self._pending:
+                job_id = self._claim_next_job()
+                if job_id is None:
                     return
-                job = self._jobs[self._pending.popleft()]
-                job.status = "running"
-                job.updated_at = int(time.time())
+                payload = self._payload_from_job_id(job_id)
             try:
-                result = await self._generator(self._settings, job.payload)
+                result = await self._generator(self._settings, payload)
             except ImageGenerationError as exc:
                 async with self._lock:
-                    job.status = "failed"
-                    job.error = exc.detail
-                    job.updated_at = int(time.time())
+                    self._fail_job(job_id, exc.detail)
             except Exception:
                 logger.exception("Queued image generation failed")
                 async with self._lock:
-                    job.status = "failed"
-                    job.error = issue_detail("IMAGE_UPSTREAM_ERROR", "Image generation failed")
-                    job.updated_at = int(time.time())
+                    self._fail_job(job_id, issue_detail("IMAGE_UPSTREAM_ERROR", "Image generation failed"))
             else:
                 async with self._lock:
-                    job.status = "succeeded"
-                    job.result = result
-                    job.updated_at = int(time.time())
+                    self._finish_job(job_id, result)
 
 
 async def generate_image(
@@ -560,7 +853,7 @@ async def generate_image(
         "request headers=%s",
         _json_for_debug({**headers, "Authorization": "Bearer [redacted]", "Chatgpt-Account-Id": account_id}),
     )
-    _debug_log(settings, "request payload=%s", _json_for_debug(upstream_payload))
+    _debug_log(settings, "request payload=%s", _json_for_debug(_value_for_debug(upstream_payload)))
 
     timeout = httpx.Timeout(settings.image_timeout_seconds, connect=min(10.0, settings.image_timeout_seconds))
     try:

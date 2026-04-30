@@ -15,7 +15,7 @@ SwitchBoard is a small full-stack app for people who use Codex locally and want 
 - Export and import local account display state for moving SwitchBoard setup between machines.
 - Browse Codex sessions, search by text, and inspect session events.
 - Review request logs, token usage, cache usage, and estimated costs.
-- Queue image generation jobs from a protected local WebUI and proxy them to an OpenAI Images-compatible upstream.
+- Queue text-to-image and reference-image generation jobs from a protected local WebUI and proxy them to an OpenAI Images-compatible upstream.
 - Default the interface to English or Simplified Chinese based on browser language, with manual switching available on the login page and app header.
 - Run as separate backend/frontend dev servers, a production-style local app, or Docker Compose.
 
@@ -84,7 +84,9 @@ For local development, `./data/switchboard-dev.sqlite` is a convenient disposabl
 
 If `CODEX_HOME` is missing or points to a file instead of a directory, SwitchBoard fails fast during startup with a clear error.
 
-The Images page uses the current `CODEX_HOME/auth.json` ChatGPT access token and calls the Responses upstream directly from the backend. The page submits jobs to an in-process FIFO queue, then polls for completion so the browser is not held open on the long upstream request. Completed and failed jobs trigger in-app toast notifications while SwitchBoard remains open.
+The Images page uses the current `CODEX_HOME/auth.json` ChatGPT access token and calls the Responses upstream directly from the backend. The page submits jobs to a persisted FIFO queue, then polls for completion so the browser is not held open on the long upstream request. Completed and failed jobs trigger in-app toast notifications while SwitchBoard remains open.
+
+Image jobs can include up to 4 reference images. Each reference must be PNG, JPEG, or WebP and no larger than 10 MB. References are saved alongside the job so task history can be reopened after restarting SwitchBoard.
 
 The browser-facing queue endpoints are:
 
@@ -102,8 +104,7 @@ POST /api/images/generations
 
 Open the Images page from the app header after signing in. No image-specific upstream key is stored or sent to the browser.
 
-Generated images are saved on the backend under `SWITCHBOARD_IMAGE_OUTPUT_DIR` and served back through authenticated `/api/images/files/{filename}` URLs.
-Queue job status is kept in backend process memory; restarting SwitchBoard clears queued job state but does not delete image files that were already saved.
+Generated images and saved reference images are stored on the backend under `SWITCHBOARD_IMAGE_OUTPUT_DIR` and served back through authenticated `/api/images/files/{filename}` URLs. Queue job status, reference metadata, results, and errors are stored in SQLite. If SwitchBoard restarts while a job is running, that job is restored to queued state.
 
 ## Development Commands
 
@@ -212,7 +213,8 @@ frontend/
 - Hidden accounts and custom names are SwitchBoard-local metadata.
 - Config export includes only SwitchBoard-local account display state and never includes credentials.
 - Image generation reads the current `CODEX_HOME/auth.json` access token only in memory; tokens are never stored in SQLite or returned to the frontend.
-- Image debug logging never prints the access token or Authorization header value.
+- Reference images are stored as private files for job history, but the browser sends them only to the authenticated SwitchBoard backend.
+- Image debug logging never prints the access token, Authorization header value, or image base64 payloads.
 - Do not commit `.env`, SQLite databases, or local Codex credentials.
 - Usage cost estimates use a local pricing table for known model names; unknown model costs remain null.
 
