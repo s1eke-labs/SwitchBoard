@@ -184,6 +184,8 @@ export type UsageRequestLogDTO = {
   id: string;
   thread_id: string;
   event_index: number;
+  account_id: string | null;
+  account_display_name: string | null;
   occurred_at: number;
   billing_model: string | null;
   input_tokens: number;
@@ -217,6 +219,7 @@ export type UsageRequestLogsResponse = {
 export type UsageRequestLogsParams = {
   from?: number;
   to?: number;
+  account_id?: string;
   cursor?: string | null;
   page?: number;
   limit?: number;
@@ -444,10 +447,11 @@ export const api = {
   sessionUserIndex: (threadId: string) =>
     request<SessionUserIndexResponse>(`/api/sessions/${threadId}/user-index`),
   usageAggregates: () => request<UsageAggregatesResponse>("/api/usage/aggregates"),
-  usageRequestLogs: ({ from, to, cursor = null, page, limit = 50 }: UsageRequestLogsParams = {}) => {
+  usageRequestLogs: ({ from, to, account_id, cursor = null, page, limit = 50 }: UsageRequestLogsParams = {}) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (from !== undefined) params.set("from", String(from));
     if (to !== undefined) params.set("to", String(to));
+    if (account_id) params.set("account_id", account_id);
     if (cursor) params.set("cursor", cursor);
     if (page !== undefined) params.set("page", String(page));
     return request<UsageRequestLogsResponse>(`/api/usage/request-logs?${params.toString()}`);

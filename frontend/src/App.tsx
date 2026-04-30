@@ -96,7 +96,7 @@ export default function App() {
         </div>
       ) : route.page === "requestLogs" ? (
         <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-hidden px-4 py-6">
-          <RequestLogsPage />
+          <RequestLogsPage accounts={accounts.data ?? []} />
         </div>
       ) : route.page === "images" ? (
         <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-auto px-4 py-6">

@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel
 
+from account_usage import observe_account_usage_conn
 from codex_files import auth_tokens, current_account_id, current_auth_path, read_json
 from config import Settings
 from db import connect, now_ts
@@ -535,6 +536,7 @@ async def scan_current_account(settings: Settings) -> ScanResult:
 
     auth = read_json(auth_path)
     account_id, access_token = auth_tokens(auth)
+    observed_at = now_ts()
     tokens = auth["tokens"]
     save_account_auth(settings, account_id, auth)
 
@@ -571,6 +573,7 @@ async def scan_current_account(settings: Settings) -> ScanResult:
             plan_type,
             last_error,
         )
+        observe_account_usage_conn(conn, account_id, observed_at)
         if rate_limits:
             primary = rate_limits.get("primary") or {}
             secondary = rate_limits.get("secondary") or {}

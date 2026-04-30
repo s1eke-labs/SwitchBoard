@@ -8,7 +8,7 @@ import pytest
 
 import usage
 from config import Settings
-from db import init_db
+from db import connect, init_db
 from sessions import get_session_detail, get_session_event, list_session_events, list_session_user_index, list_sessions
 from usage import get_usage_events, get_usage_request_logs
 
@@ -537,6 +537,102 @@ def test_usage_request_logs_unknown_model_has_zero_cost(tmp_path: Path) -> None:
     assert logs.summary.total_cost_usd == 0.0
     assert logs.summary.cost_known is True
     assert logs.summary.unknown_cost_events == 0
+
+
+def test_usage_events_migration_keeps_existing_events_unassigned(tmp_path: Path) -> None:
+    db_path = tmp_path / "switchboard.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE usage_events (
+            thread_id TEXT NOT NULL,
+            event_index INTEGER NOT NULL,
+            occurred_at INTEGER NOT NULL,
+            model TEXT,
+            input_tokens INTEGER NOT NULL,
+            cache_hit_tokens INTEGER NOT NULL,
+            cache_creation_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            reasoning_output_tokens INTEGER NOT NULL,
+            total_tokens INTEGER NOT NULL,
+            cost_usd REAL,
+            cost_known INTEGER NOT NULL,
+            PRIMARY KEY(thread_id, event_index)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO usage_events(
+            thread_id, event_index, occurred_at, model, input_tokens, cache_hit_tokens,
+            cache_creation_tokens, output_tokens, reasoning_output_tokens, total_tokens, cost_usd, cost_known
+        )
+        VALUES ('thread-old', 1, 1777075320, 'gpt-5.5', 100, 0, 100, 10, 0, 110, 0.01, 1)
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(db_path)
+
+    with sqlite3.connect(db_path) as migrated:
+        migrated.row_factory = sqlite3.Row
+        columns = {row["name"] for row in migrated.execute("PRAGMA table_info(usage_events)")}
+        row = migrated.execute("SELECT account_id FROM usage_events WHERE thread_id = 'thread-old'").fetchone()
+        interval_table = migrated.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'account_usage_intervals'"
+        ).fetchone()
+
+    assert "account_id" in columns
+    assert row["account_id"] is None
+    assert interval_table is not None
+
+
+def test_usage_request_logs_attribute_events_and_filter_by_account(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    rollout = settings.codex_home / "rollout.jsonl"
+    _write_rollout(rollout)
+    _append_usage_row(rollout, "2026-04-25T00:03:00Z", 2000)
+    _append_usage_row(rollout, "2026-04-25T00:04:00Z", 3000)
+    _create_state(settings, rollout)
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            "INSERT INTO accounts(account_id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("acct-one", "Ada", 1777075200, 1777075200),
+        )
+        conn.execute(
+            "INSERT INTO accounts(account_id, display_name, custom_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            ("acct-two", "Grace", "Team Grace", 1777075200, 1777075200),
+        )
+        conn.execute(
+            """
+            INSERT INTO account_usage_intervals(account_id, started_at, ended_at, created_at, updated_at)
+            VALUES
+                ('acct-one', 1777075200, 1777075380, 1777075200, 1777075380),
+                ('acct-two', 1777075380, 1777075420, 1777075380, 1777075420)
+            """
+        )
+
+    all_logs = get_usage_request_logs(settings, "1777075200", "1777161600")
+    acct_one = get_usage_request_logs(settings, "1777075200", "1777161600", account_id="acct-one")
+    acct_two = get_usage_request_logs(settings, "1777075200", "1777161600", account_id="acct-two")
+    unassigned = get_usage_request_logs(settings, "1777075200", "1777161600", account_id="__unassigned__")
+
+    assert all_logs.total_count == 3
+    assert acct_one.total_count == 1
+    assert acct_one.summary.request_count == 1
+    assert acct_one.summary.input_tokens == 1000
+    assert acct_one.items[0].account_id == "acct-one"
+    assert acct_one.items[0].account_display_name == "Ada"
+    assert acct_two.total_count == 1
+    assert acct_two.summary.input_tokens == 2000
+    assert acct_two.items[0].account_id == "acct-two"
+    assert acct_two.items[0].account_display_name == "Team Grace"
+    assert unassigned.total_count == 1
+    assert unassigned.summary.input_tokens == 3000
+    assert unassigned.items[0].account_id is None
+    assert unassigned.items[0].account_display_name is None
 
 
 def test_usage_aggregates_are_precomputed_for_all_ranges(monkeypatch, tmp_path: Path) -> None:

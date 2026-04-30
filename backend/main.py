@@ -281,9 +281,18 @@ def create_app() -> FastAPI:
         limit: int = 50,
         cursor: str | None = None,
         page: int = 1,
+        account_id: str | None = None,
     ) -> UsageRequestLogsResponse:
         try:
-            return get_usage_request_logs(settings, from_value=from_, to_value=to, limit=limit, cursor=cursor, page=page)
+            return get_usage_request_logs(
+                settings,
+                from_value=from_,
+                to_value=to,
+                limit=limit,
+                cursor=cursor,
+                page=page,
+                account_id=account_id,
+            )
         except ValueError as exc:
             raise http_error_from_detail(status.HTTP_400_BAD_REQUEST, usage_issue_from_message(str(exc))) from exc
 

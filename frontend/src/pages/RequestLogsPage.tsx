@@ -1,7 +1,7 @@
 import { ReactNode, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ChevronLeft, ChevronRight, Database, DollarSign, Layers3, Loader2, ReceiptText } from "lucide-react";
-import { api, UsageRequestLogDTO, UsageRequestLogsResponse } from "@/lib/api";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Database, DollarSign, Layers3, Loader2, ReceiptText, UserRound } from "lucide-react";
+import { AccountDTO, api, UsageRequestLogDTO, UsageRequestLogsResponse } from "@/lib/api";
 import { getCurrentLocale, translate, useI18n } from "@/i18n";
 import { formatAppError } from "@/lib/errors";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
@@ -10,8 +10,11 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 const REQUEST_LOG_PAGE_SIZE = 30;
+const ALL_ACCOUNTS_FILTER = "__all__";
+const UNASSIGNED_ACCOUNT_FILTER = "__unassigned__";
 
 type RangeKey = "24h" | "7d" | "30d";
+type AccountFilterValue = typeof ALL_ACCOUNTS_FILTER | typeof UNASSIGNED_ACCOUNT_FILTER | string;
 
 const ranges: Record<RangeKey, { label: string; seconds: number }> = {
   "24h": { label: "24h", seconds: 60 * 60 * 24 },
@@ -59,6 +62,79 @@ function RangeButton({
     >
       {label}
     </button>
+  );
+}
+
+function AccountFilter({
+  accounts,
+  value,
+  disabled,
+  onChange,
+}: {
+  accounts: AccountDTO[];
+  value: AccountFilterValue;
+  disabled: boolean;
+  onChange: (value: AccountFilterValue) => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const selectedAccount = accounts.find((account) => account.account_id === value);
+  const label =
+    value === ALL_ACCOUNTS_FILTER
+      ? t("requestLogs.allAccounts")
+      : value === UNASSIGNED_ACCOUNT_FILTER
+        ? t("requestLogs.unassigned")
+        : selectedAccount?.display_name ?? t("common.unknown");
+  const options = [
+    { value: ALL_ACCOUNTS_FILTER, label: t("requestLogs.allAccounts") },
+    { value: UNASSIGNED_ACCOUNT_FILTER, label: t("requestLogs.unassigned") },
+    ...accounts.map((account) => ({ value: account.account_id, label: account.display_name })),
+  ];
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="inline-flex h-9 min-w-48 max-w-64 items-center justify-between gap-2 rounded-md border bg-white px-3 text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+        onClick={() => setOpen((value) => !value)}
+        disabled={disabled}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+      >
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <UserRound size={15} className="shrink-0 text-muted-foreground" />
+          <span className="truncate">{label}</span>
+        </span>
+        <ChevronDown size={15} className="shrink-0 text-muted-foreground" />
+      </button>
+      {open ? (
+        <div className="absolute right-0 top-11 z-20 max-h-72 w-64 overflow-auto rounded-lg border bg-white p-2 shadow-soft">
+          <div className="space-y-1" role="listbox" aria-label={t("requestLogs.accountFilter")}>
+            {options.map((option) => {
+              const active = option.value === value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={cn(
+                    "flex h-8 w-full items-center rounded-md px-2 text-left text-sm font-semibold transition-colors hover:bg-muted",
+                    active ? "bg-foreground text-white hover:bg-foreground" : "text-foreground",
+                  )}
+                  onClick={() => {
+                    setOpen(false);
+                    onChange(option.value);
+                  }}
+                  role="option"
+                  aria-selected={active}
+                >
+                  <span className="truncate">{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -208,6 +284,11 @@ function RequestLogRow({ log }: { log: UsageRequestLogDTO }) {
         {formatTime(log.occurred_at)}
       </td>
       <td className="px-4 py-3 align-top">
+        <Badge className="max-w-full truncate" tone={log.account_id ? "blue" : "neutral"}>
+          {log.account_display_name ?? translate("requestLogs.unassigned")}
+        </Badge>
+      </td>
+      <td className="px-4 py-3 align-top">
         <Badge className="max-w-full truncate" tone="neutral">
           {log.billing_model ?? translate("common.unknown")}
         </Badge>
@@ -234,9 +315,10 @@ function RequestLogRow({ log }: { log: UsageRequestLogDTO }) {
   );
 }
 
-export function RequestLogsPage() {
+export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
   const { t } = useI18n();
   const [range, setRange] = useState<RangeKey>("24h");
+  const [accountFilter, setAccountFilter] = useState<AccountFilterValue>(ALL_ACCOUNTS_FILTER);
   const [windowEnd, setWindowEnd] = useState(() => nowSeconds());
   const [page, setPage] = useState(1);
   const windowBounds = useMemo(
@@ -247,11 +329,12 @@ export function RequestLogsPage() {
     [range, windowEnd],
   );
   const requestLogs = useQuery({
-    queryKey: ["usage-request-logs", range, windowEnd, page],
+    queryKey: ["usage-request-logs", range, windowEnd, accountFilter, page],
     queryFn: () =>
       api.usageRequestLogs({
         from: windowBounds.from,
         to: windowBounds.to,
+        account_id: accountFilter === ALL_ACCOUNTS_FILTER ? undefined : accountFilter,
         page,
         limit: REQUEST_LOG_PAGE_SIZE,
       }),
@@ -271,6 +354,11 @@ export function RequestLogsPage() {
     setPage(targetPage);
   }
 
+  function selectAccountFilter(value: AccountFilterValue) {
+    setAccountFilter(value);
+    setPage(1);
+  }
+
   return (
     <section className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 px-1">
@@ -278,10 +366,13 @@ export function RequestLogsPage() {
           <ReceiptText size={20} strokeWidth={1.8} />
           <h2 className="text-2xl font-bold leading-tight">{t("requestLogs.title")}</h2>
         </div>
-        <div className="inline-flex rounded-md border bg-white p-1">
-          {(Object.keys(ranges) as RangeKey[]).map((key) => (
-            <RangeButton key={key} active={range === key} label={ranges[key].label} onClick={() => selectRange(key)} />
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <AccountFilter accounts={accounts} value={accountFilter} disabled={requestLogs.isFetching} onChange={selectAccountFilter} />
+          <div className="inline-flex rounded-md border bg-white p-1">
+            {(Object.keys(ranges) as RangeKey[]).map((key) => (
+              <RangeButton key={key} active={range === key} label={ranges[key].label} onClick={() => selectRange(key)} />
+            ))}
+          </div>
         </div>
       </div>
       <RequestLogSummaryCards data={requestLogs.data} />
@@ -309,9 +400,10 @@ export function RequestLogsPage() {
             </div>
           ) : logs.length ? (
             <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full min-w-[860px] table-fixed border-collapse text-sm">
+              <table className="w-full min-w-[1000px] table-fixed border-collapse text-sm">
                 <colgroup>
                   <col className="w-[170px]" />
+                  <col className="w-[180px]" />
                   <col className="w-[210px]" />
                   <col className="w-[155px]" />
                   <col className="w-[155px]" />
@@ -320,6 +412,7 @@ export function RequestLogsPage() {
                 <thead className="sticky top-0 z-10 border-b bg-white text-xs font-bold uppercase text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 text-left">{t("requestLogs.time")}</th>
+                    <th className="px-4 py-3 text-left">{t("requestLogs.account")}</th>
                     <th className="px-4 py-3 text-left">{t("requestLogs.billingModel")}</th>
                     <th className="px-4 py-3 text-right">{t("usage.input")}</th>
                     <th className="px-4 py-3 text-right">{t("usage.output")}</th>

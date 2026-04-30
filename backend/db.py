@@ -44,6 +44,7 @@ CREATE INDEX IF NOT EXISTS idx_rate_limit_snapshots_account_scanned
 CREATE TABLE IF NOT EXISTS usage_events (
     thread_id TEXT NOT NULL,
     event_index INTEGER NOT NULL,
+    account_id TEXT,
     occurred_at INTEGER NOT NULL,
     model TEXT,
     input_tokens INTEGER NOT NULL,
@@ -59,6 +60,21 @@ CREATE TABLE IF NOT EXISTS usage_events (
 
 CREATE INDEX IF NOT EXISTS idx_usage_events_occurred_at
     ON usage_events(occurred_at);
+
+CREATE TABLE IF NOT EXISTS account_usage_intervals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_usage_intervals_open
+    ON account_usage_intervals(ended_at, started_at);
+
+CREATE INDEX IF NOT EXISTS idx_account_usage_intervals_account_range
+    ON account_usage_intervals(account_id, started_at, ended_at);
 
 CREATE TABLE IF NOT EXISTS usage_source_scans (
     path TEXT PRIMARY KEY,
@@ -162,6 +178,18 @@ def _migrate_accounts(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE accounts DROP COLUMN workspace_name")
 
 
+def _migrate_usage_events(conn: sqlite3.Connection) -> None:
+    columns = _columns(conn, "usage_events")
+    if "account_id" not in columns:
+        conn.execute("ALTER TABLE usage_events ADD COLUMN account_id TEXT")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_usage_events_account_occurred
+            ON usage_events(account_id, occurred_at)
+        """
+    )
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
@@ -174,6 +202,7 @@ def init_db(db_path: Path) -> None:
     with connect(db_path) as conn:
         conn.executescript(SCHEMA)
         _migrate_accounts(conn)
+        _migrate_usage_events(conn)
 
 
 def now_ts() -> int:

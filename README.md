@@ -14,7 +14,7 @@ SwitchBoard is a small full-stack app for people who use Codex locally and want 
 - Rename or hide accounts inside SwitchBoard without changing Codex credentials.
 - Export and import local account display state for moving SwitchBoard setup between machines.
 - Browse Codex sessions, search by text, and inspect session events.
-- Review request logs, token usage, cache usage, and estimated costs.
+- Review request logs, token usage, cache usage, estimated costs, and account attribution filters.
 - Queue text-to-image and reference-image generation jobs from a protected local WebUI and proxy them to an OpenAI Images-compatible upstream.
 - Default the interface to English or Simplified Chinese based on browser language, with manual switching available on the login page and app header.
 - Run as separate backend/frontend dev servers, a production-style local app, or Docker Compose.
@@ -202,6 +202,12 @@ frontend/
   src/components/ui/ UI primitives
   dist/              Built frontend output
 ```
+
+## Request Log Attribution
+
+SwitchBoard records which Codex account is active when it observes the current `auth.json`, such as during account scans, account switching, and usage-log synchronization. Request logs can be filtered by account on the Request Logs page, and the summary cards on that page only count the selected account or unassigned bucket.
+
+Existing usage events that were collected before account attribution was available remain unassigned. SwitchBoard does not guess historical ownership, and it does not store ChatGPT tokens in SQLite to support attribution.
 
 ## Security Notes
 
