@@ -53,6 +53,8 @@ const issueTranslationKeys: Partial<Record<string, TranslationKey>> = {
   IMAGE_UPSTREAM_ERROR: "errors.imageUpstreamError",
   IMAGE_JOB_NOT_FOUND: "errors.imageJobNotFound",
   IMAGE_CONVERSATION_NOT_FOUND: "errors.imageConversationNotFound",
+  IMAGE_CONVERSATION_ACTIVE_JOBS: "errors.imageConversationActiveJobs",
+  IMAGE_CONVERSATION_INVALID_PAGE: "errors.imageConversationInvalidPage",
   IMAGE_INVALID_REQUEST: "errors.imageInvalidRequest",
 };
 

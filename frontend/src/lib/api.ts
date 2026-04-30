@@ -290,6 +290,11 @@ export type ImageConversation = {
   job_count: number;
 };
 
+export type ImageConversationListResponse = {
+  items: ImageConversation[];
+  total_count: number;
+};
+
 const REQUEST_TIMEOUT_MS = 10_000;
 const IMAGE_REQUEST_TIMEOUT_MS = 300_000;
 
@@ -490,7 +495,12 @@ export const api = {
     request<ImageConversation>("/api/images/conversations", {
       method: "POST",
     }),
-  imageConversations: (limit = 50) => request<ImageConversation[]>(`/api/images/conversations?limit=${limit}`),
+  imageConversations: ({ page = 1, limit = 50 }: { page?: number; limit?: number } = {}) =>
+    request<ImageConversationListResponse>(`/api/images/conversations?page=${page}&limit=${limit}`),
   imageConversationJobs: (conversationId: string, limit = 100) =>
     request<ImageGenerationJob[]>(`/api/images/conversations/${conversationId}/jobs?limit=${limit}`),
+  deleteImageConversation: (conversationId: string) =>
+    request<{ ok: boolean }>(`/api/images/conversations/${conversationId}`, {
+      method: "DELETE",
+    }),
 };

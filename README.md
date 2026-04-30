@@ -86,18 +86,19 @@ If `CODEX_HOME` is missing or points to a file instead of a directory, SwitchBoa
 
 The Images page uses the current `CODEX_HOME/auth.json` ChatGPT access token and calls the Responses upstream directly from the backend. The page submits jobs to a persisted FIFO queue, then polls for completion so the browser is not held open on the long upstream request. Completed and failed jobs trigger in-app toast notifications while SwitchBoard remains open.
 
-Image jobs are grouped into persistent image sessions. The Images page shows a session list, lets you create a new session, and renders the selected session as a chat-like stream of compact image thumbnails. Click a thumbnail to open the full preview with its prompt, revised prompt, references, and download action. Existing image jobs from older SwitchBoard databases are migrated into an "Image history" session.
+Image jobs are grouped into persistent image sessions. The Images page shows a paginated session list, lets you create or permanently delete sessions, and renders the selected session as a chat-like stream of compact image thumbnails. Click a thumbnail to open the full preview with its prompt, revised prompt, references, and download action. Existing image jobs from older SwitchBoard databases are migrated into an "Image history" session. Sessions with queued or running jobs cannot be deleted until those jobs finish.
 
 Within one image session, successful jobs are chained through the upstream Responses `previous_response_id` value so follow-up prompts can continue from the prior image context. To support that upstream state, image generation requests now use `store: true`; response IDs are stored locally in SQLite, while ChatGPT access tokens are still never stored. Prompt Caching is automatic on the upstream side and may help repeated long shared prefixes, but short prompts or changed prefixes should not be expected to produce cache hits.
 
-Image jobs can include up to 4 reference images. Each reference must be PNG, JPEG, or WebP and no larger than 10 MB. References are saved alongside the job so task history can be reopened after restarting SwitchBoard.
+Image jobs can include up to 4 reference images. Use the plus button above the prompt to upload references in the same fixed-height prompt composer; thumbnail slots stay reserved, and clicking a pending thumbnail opens a local preview before submission. Each reference must be PNG, JPEG, or WebP and no larger than 10 MB. References are saved alongside the job so task history can be reopened after restarting SwitchBoard.
 
 The browser-facing queue endpoints are:
 
 ```text
 POST /api/images/conversations
-GET /api/images/conversations
+GET /api/images/conversations?page=1&limit=3
 GET /api/images/conversations/{conversation_id}/jobs
+DELETE /api/images/conversations/{conversation_id}
 POST /api/images/jobs
 GET /api/images/jobs
 GET /api/images/jobs/{job_id}
@@ -111,7 +112,7 @@ POST /api/images/generations
 
 Open the Images page from the app header after signing in. No image-specific upstream key is stored or sent to the browser.
 
-Generated images and saved reference images are stored on the backend under `SWITCHBOARD_IMAGE_OUTPUT_DIR` and served back through authenticated `/api/images/files/{filename}` URLs. Image session metadata, queue job status, reference metadata, upstream response IDs, results, and errors are stored in SQLite. If SwitchBoard restarts while a job is running, that job is restored to queued state.
+Generated images and saved reference images are stored on the backend under `SWITCHBOARD_IMAGE_OUTPUT_DIR` and served back through authenticated `/api/images/files/{filename}` URLs. Image session metadata, queue job status, reference metadata, upstream response IDs, results, and errors are stored in SQLite. Deleting an image session removes its SQLite history plus referenced generated and reference image files. If SwitchBoard restarts while a job is running, that job is restored to queued state.
 
 ## Development Commands
 

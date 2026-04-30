@@ -86,18 +86,19 @@ npm run dev
 
 作图页会由后端读取当前 `CODEX_HOME/auth.json` 中的 ChatGPT access token，并直连 Responses 上游。页面会先把请求提交到持久化 FIFO 队列，再轮询任务状态，因此浏览器不用一直挂在漫长的上游请求上。只要 SwitchBoard 页面仍然打开，任务完成或失败后都会弹出应用内通知。
 
-图片任务会归档到持久化作图会话。作图页左侧可以新建和切换会话，右侧会把当前会话渲染成类似聊天窗口的小图流；点击小图后，会展开原图预览，并显示提示词、修订提示词、参考图和下载操作。旧版本数据库里的图片任务会自动迁移到一个 “Image history” 历史会话。
+图片任务会归档到持久化作图会话。作图页左侧会分页展示会话，可以新建、切换和永久删除会话，右侧会把当前会话渲染成类似聊天窗口的小图流；点击小图后，会展开原图预览，并显示提示词、修订提示词、参考图和下载操作。旧版本数据库里的图片任务会自动迁移到一个 “Image history” 历史会话。包含排队中或生成中任务的会话暂时不能删除，需要等任务结束后再删。
 
 同一个作图会话内，成功任务会通过上游 Responses 的 `previous_response_id` 串起来，让后续提示词可以继承上一张图的上下文。为支持这个上游状态，图片生成请求现在会使用 `store: true`；SwitchBoard 只在 SQLite 中保存 response id，不会保存 ChatGPT access token。Prompt Caching 由上游自动处理，长且重复的相同前缀可能受益，但短提示词或前缀变化时不能保证命中缓存。
 
-图片任务最多可以包含 4 张参考图。每张参考图必须是 PNG、JPEG 或 WebP，且不超过 10 MB。参考图会随任务保存，重启 SwitchBoard 后仍可在任务历史里回看。
+图片任务最多可以包含 4 张参考图。使用提示词上方的加号按钮上传参考图，参考图会和提示词放在同一个固定高度输入区；缩略图槽位会提前预留，提交前点击缩略图可以本地放大预览。每张参考图必须是 PNG、JPEG 或 WebP，且不超过 10 MB。参考图会随任务保存，重启 SwitchBoard 后仍可在任务历史里回看。
 
 浏览器使用的队列接口是：
 
 ```text
 POST /api/images/conversations
-GET /api/images/conversations
+GET /api/images/conversations?page=1&limit=3
 GET /api/images/conversations/{conversation_id}/jobs
+DELETE /api/images/conversations/{conversation_id}
 POST /api/images/jobs
 GET /api/images/jobs
 GET /api/images/jobs/{job_id}
@@ -111,7 +112,7 @@ POST /api/images/generations
 
 登录后从应用头部进入“作图”页面即可。不需要配置图片专用上游密钥，也不会把 token 返回给前端。
 
-生成图片和已保存参考图都会保存在后端的 `SWITCHBOARD_IMAGE_OUTPUT_DIR` 下，并通过需要登录的 `/api/images/files/{filename}` 地址返回给前端预览。作图会话元数据、队列任务状态、参考图元数据、上游 response id、结果和错误会写入 SQLite。如果 SwitchBoard 在任务运行中重启，该任务会恢复为排队状态。
+生成图片和已保存参考图都会保存在后端的 `SWITCHBOARD_IMAGE_OUTPUT_DIR` 下，并通过需要登录的 `/api/images/files/{filename}` 地址返回给前端预览。作图会话元数据、队列任务状态、参考图元数据、上游 response id、结果和错误会写入 SQLite。删除作图会话会同时删除 SQLite 历史以及该会话引用的生成图和参考图文件。如果 SwitchBoard 在任务运行中重启，该任务会恢复为排队状态。
 
 ## 开发命令
 

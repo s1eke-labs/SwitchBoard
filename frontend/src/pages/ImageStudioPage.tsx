@@ -2,13 +2,16 @@ import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Download,
   ImageIcon,
   Loader2,
   MessageSquare,
   Plus,
-  Upload,
+  Trash2,
   X,
   XCircle,
   WandSparkles,
@@ -27,6 +30,7 @@ const QUALITY_OPTIONS = ["auto", "low", "medium", "high"] as const;
 const MAX_REFERENCE_IMAGES = 4;
 const MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024;
 const REFERENCE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const CONVERSATION_PAGE_SIZE = 3;
 
 type ImageSize = (typeof SIZE_OPTIONS)[number];
 type ImageQuality = (typeof QUALITY_OPTIONS)[number];
@@ -99,28 +103,6 @@ function fileToReference(file: File): Promise<PendingReferenceImage> {
   });
 }
 
-function OptionButton({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`h-8 rounded-md px-2.5 text-sm font-semibold transition-colors ${
-        active ? "bg-foreground text-white" : "bg-white text-muted-foreground hover:bg-muted hover:text-foreground"
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
-
 function JobStatusIcon({ job }: { job: ImageGenerationJob }) {
   if (job.status === "succeeded") return <CheckCircle2 size={15} className="text-emerald-600" />;
   if (job.status === "failed") return <XCircle size={15} className="text-destructive" />;
@@ -132,27 +114,195 @@ function ConversationButton({
   conversation,
   active,
   onClick,
+  onDelete,
+  deleting,
+  deleteLabel,
 }: {
   conversation: ImageConversation;
   active: boolean;
   onClick: () => void;
+  onDelete: () => void;
+  deleting: boolean;
+  deleteLabel: string;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
+    <div
+      className={`h-full min-h-0 w-full overflow-hidden rounded-md border px-3 py-2 text-left transition-colors ${
         active ? "border-primary bg-primary/5" : "bg-white hover:bg-muted"
       }`}
     >
-      <span className="flex items-center gap-2">
-        <MessageSquare size={15} className={active ? "text-primary" : "text-muted-foreground"} />
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{conversation.title}</span>
-      </span>
-      <span className="mt-1 block truncate pl-6 text-xs text-muted-foreground">
-        {formatConversationTime(conversation.updated_at)} · {conversation.job_count}
-      </span>
-    </button>
+      <div className="flex items-start gap-2">
+        <button type="button" onClick={onClick} className="min-w-0 flex-1 text-left">
+          <span className="flex items-center gap-2">
+            <MessageSquare size={15} className={active ? "text-primary" : "text-muted-foreground"} />
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold">{conversation.title}</span>
+          </span>
+          <span className="mt-1 block truncate pl-6 text-xs text-muted-foreground">
+            {formatConversationTime(conversation.updated_at)} · {conversation.job_count}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={deleting}
+          aria-label={deleteLabel}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-60"
+        >
+          {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SelectMenu<T extends string>({
+  label,
+  value,
+  options,
+  formatOption,
+  open,
+  placement = "down",
+  onOpenChange,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: readonly T[];
+  formatOption: (value: T) => string;
+  open: boolean;
+  placement?: "up" | "down";
+  onOpenChange: (open: boolean) => void;
+  onChange: (value: T) => void;
+}) {
+  const menuPosition = placement === "up" ? "bottom-10" : "top-10";
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        className="flex h-9 w-full items-center justify-between gap-2 rounded-md border bg-white px-3 text-left text-sm font-semibold transition-colors hover:bg-muted"
+      >
+        <span className="truncate">
+          <span className="text-muted-foreground">{label}</span>
+          <span className="mx-1">·</span>
+          {formatOption(value)}
+        </span>
+        <ChevronDown size={15} className={`shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open ? (
+        <div className={`absolute left-0 right-0 ${menuPosition} z-20 overflow-hidden rounded-md border bg-white shadow-lg`}>
+          {options.map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => {
+                onChange(option);
+                onOpenChange(false);
+              }}
+              className={`flex h-9 w-full items-center px-3 text-left text-sm transition-colors hover:bg-muted ${
+                option === value ? "font-semibold text-primary" : "text-foreground"
+              }`}
+            >
+              {formatOption(option)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PageSelector({
+  page,
+  totalPages,
+  disabled,
+  jumping,
+  onSelect,
+}: {
+  page: number;
+  totalPages: number;
+  disabled: boolean;
+  jumping: boolean;
+  onSelect: (page: number) => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const pageCount = Math.max(1, totalPages);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="h-8 min-w-24 rounded-md px-2 text-center text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+        onClick={() => setOpen((value) => !value)}
+        disabled={disabled || pageCount <= 1}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+      >
+        {jumping ? t("common.loadingEllipsis") : t("common.pageLabel", { page: Math.min(page, pageCount), total: pageCount })}
+      </button>
+      {open ? (
+        <div className="absolute bottom-10 left-1/2 z-30 max-h-48 w-52 -translate-x-1/2 overflow-auto rounded-md border bg-white p-2 shadow-soft">
+          <div className="grid grid-cols-4 gap-1" role="listbox" aria-label={t("common.selectPage")}>
+            {Array.from({ length: pageCount }, (_, index) => {
+              const pageNumber = index + 1;
+              const active = pageNumber === page;
+              return (
+                <button
+                  key={pageNumber}
+                  type="button"
+                  className={`h-8 rounded-md text-sm font-semibold transition-colors hover:bg-muted ${
+                    active ? "bg-foreground text-white hover:bg-foreground" : "text-foreground"
+                  }`}
+                  onClick={() => {
+                    setOpen(false);
+                    onSelect(pageNumber);
+                  }}
+                  role="option"
+                  aria-selected={active}
+                >
+                  {pageNumber}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function EmptyConversationSlot() {
+  return <div className="h-full min-h-0 rounded-md border border-dashed bg-white/60" aria-hidden="true" />;
+}
+
+function ReferencePreviewModal({
+  reference,
+  onClose,
+}: {
+  reference: PendingReferenceImage;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-6">
+      <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-md bg-background shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+          <div className="truncate text-sm font-semibold">{t("images.references")}</div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t("images.closePreview")}
+            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="flex min-h-[320px] items-center justify-center bg-muted p-4">
+          <img src={reference.previewUrl} alt={reference.fileName} className="max-h-[78vh] max-w-full rounded-md object-contain" />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -273,19 +423,31 @@ export function ImageStudioPage() {
   const referenceImagesRef = useRef<PendingReferenceImage[]>([]);
   const [prompt, setPrompt] = useState("");
   const [size, setSize] = useState<ImageSize>("1024x1024");
-  const [quality, setQuality] = useState<ImageQuality>("high");
+  const [quality, setQuality] = useState<ImageQuality>("auto");
+  const [sizeOpen, setSizeOpen] = useState(false);
+  const [qualityOpen, setQualityOpen] = useState(false);
   const [referenceImages, setReferenceImages] = useState<PendingReferenceImage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [conversationPage, setConversationPage] = useState(1);
+  const [previewReferenceId, setPreviewReferenceId] = useState<string | null>(null);
   const trimmedPrompt = prompt.trim();
 
   const conversations = useQuery({
-    queryKey: ["imageConversations"],
-    queryFn: () => api.imageConversations(),
+    queryKey: ["imageConversations", conversationPage],
+    queryFn: () => api.imageConversations({ page: conversationPage, limit: CONVERSATION_PAGE_SIZE }),
+    placeholderData: (previousData) => previousData,
   });
+  const conversationItems = useMemo(() => conversations.data?.items ?? [], [conversations.data?.items]);
+  const conversationTotalPages = Math.max(1, Math.ceil((conversations.data?.total_count ?? 0) / CONVERSATION_PAGE_SIZE));
+  const emptyConversationSlots = Math.max(0, CONVERSATION_PAGE_SIZE - conversationItems.length);
   const activeConversation = useMemo(
-    () => conversations.data?.find((conversation) => conversation.id === activeConversationId) ?? null,
-    [activeConversationId, conversations.data],
+    () => conversationItems.find((conversation) => conversation.id === activeConversationId) ?? null,
+    [activeConversationId, conversationItems],
+  );
+  const previewReference = useMemo(
+    () => referenceImages.find((reference) => reference.id === previewReferenceId) ?? null,
+    [previewReferenceId, referenceImages],
   );
   const jobs = useQuery({
     queryKey: ["imageJobs", activeConversationId],
@@ -314,25 +476,29 @@ export function ImageStudioPage() {
   }, []);
 
   useEffect(() => {
-    const items = conversations.data ?? [];
-    if (items.length === 0) {
+    const totalPages = Math.max(1, Math.ceil((conversations.data?.total_count ?? 0) / CONVERSATION_PAGE_SIZE));
+    if (!conversations.isFetching && conversationPage > totalPages) {
+      setConversationPage(totalPages);
+    }
+  }, [conversationPage, conversations.data?.total_count, conversations.isFetching]);
+
+  useEffect(() => {
+    if (conversationItems.length === 0) {
       setActiveConversationId(null);
       return;
     }
-    if (!activeConversationId || !items.some((conversation) => conversation.id === activeConversationId)) {
-      setActiveConversationId(items[0].id);
+    if (!activeConversationId || !conversationItems.some((conversation) => conversation.id === activeConversationId)) {
+      setActiveConversationId(conversationItems[0].id);
     }
-  }, [activeConversationId, conversations.data]);
+  }, [activeConversationId, conversationItems]);
 
   const createConversation = useMutation({
     mutationFn: () => api.createImageConversation(),
     onSuccess: (conversation) => {
+      setConversationPage(1);
       setActiveConversationId(conversation.id);
       setSelectedJobId(null);
-      queryClient.setQueryData<ImageConversation[]>(["imageConversations"], (current) => [
-        conversation,
-        ...(current ?? []).filter((item) => item.id !== conversation.id),
-      ]);
+      queryClient.invalidateQueries({ queryKey: ["imageConversations"] });
     },
     onError: (error) => {
       toast.error(t("images.conversationCreateFailed"), {
@@ -362,6 +528,32 @@ export function ImageStudioPage() {
     },
     onError: (error) => {
       toast.error(t("images.generateFailed"), {
+        description: formatAppError(error),
+      });
+    },
+  });
+
+  const deleteConversation = useMutation({
+    mutationFn: (conversationId: string) => api.deleteImageConversation(conversationId),
+    onSuccess: (_result, conversationId) => {
+      const nextItems = conversationItems.filter((conversation) => conversation.id !== conversationId);
+      const nextTotalCount = Math.max(0, (conversations.data?.total_count ?? 0) - 1);
+      const nextTotalPages = Math.max(1, Math.ceil(nextTotalCount / CONVERSATION_PAGE_SIZE));
+      queryClient.removeQueries({ queryKey: ["imageJobs", conversationId] });
+      if (conversationPage > nextTotalPages) {
+        setConversationPage(nextTotalPages);
+      }
+      if (activeConversationId === conversationId) {
+        const nextConversation = conversationPage > nextTotalPages ? null : (nextItems[0] ?? null);
+        setActiveConversationId(nextConversation?.id ?? null);
+        setSelectedJobId(null);
+      }
+      queryClient.invalidateQueries({ queryKey: ["imageConversations"] });
+      queryClient.invalidateQueries({ queryKey: ["imageJobs"] });
+      toast.success(t("images.conversationDeleted"));
+    },
+    onError: (error) => {
+      toast.error(t("images.conversationDeleteFailed"), {
         description: formatAppError(error),
       });
     },
@@ -443,10 +635,21 @@ export function ImageStudioPage() {
     setSelectedJobId(null);
   }
 
+  function handleDeleteConversation(conversation: ImageConversation) {
+    if (!window.confirm(t("images.deleteConversationConfirm", { title: conversation.title }))) return;
+    deleteConversation.mutate(conversation.id);
+  }
+
+  function selectConversationPage(targetPage: number) {
+    if (targetPage === conversationPage || targetPage < 1 || targetPage > conversationTotalPages || conversations.isFetching) return;
+    setConversationPage(targetPage);
+    setSelectedJobId(null);
+  }
+
   return (
     <>
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
-        <Card className="min-h-0 overflow-hidden">
+      <div className="grid min-h-[760px] w-full flex-1 grid-cols-1 gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
+        <Card className="flex h-full min-h-0 flex-col overflow-hidden">
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -465,114 +668,170 @@ export function ImageStudioPage() {
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="flex max-h-[calc(100vh-9rem)] min-h-0 flex-col gap-5 overflow-auto">
-            <div className="space-y-2">
-              <div className="text-sm font-semibold">{t("images.conversations")}</div>
-              <div className="space-y-2">
+          <CardContent className="flex min-h-0 flex-1 flex-col p-0">
+            <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
+              <div className="mb-3 text-sm font-semibold">{t("images.conversations")}</div>
+              <div
+                className={`grid min-h-0 flex-1 gap-2 transition-opacity ${conversations.isFetching ? "opacity-70" : ""}`}
+                style={{ gridTemplateRows: `repeat(${CONVERSATION_PAGE_SIZE}, minmax(0, 1fr))` }}
+              >
                 {conversations.isPending ? (
-                  <div className="flex h-10 items-center text-sm text-muted-foreground">
+                  <div className="col-span-full row-span-3 flex items-center justify-center text-sm text-muted-foreground">
                     <Loader2 size={15} className="mr-2 animate-spin" />
                     {t("common.loading")}
                   </div>
-                ) : (conversations.data ?? []).length ? (
-                  (conversations.data ?? []).map((conversation) => (
-                    <ConversationButton
-                      key={conversation.id}
-                      conversation={conversation}
-                      active={conversation.id === activeConversationId}
-                      onClick={() => selectConversation(conversation.id)}
-                    />
-                  ))
+                ) : conversationItems.length ? (
+                  <>
+                    {conversationItems.map((conversation) => (
+                      <ConversationButton
+                        key={conversation.id}
+                        conversation={conversation}
+                        active={conversation.id === activeConversationId}
+                        onClick={() => selectConversation(conversation.id)}
+                        onDelete={() => handleDeleteConversation(conversation)}
+                        deleting={deleteConversation.isPending && deleteConversation.variables === conversation.id}
+                        deleteLabel={t("images.deleteConversation")}
+                      />
+                    ))}
+                    {Array.from({ length: emptyConversationSlots }, (_, index) => (
+                      <EmptyConversationSlot key={`empty-conversation-${index}`} />
+                    ))}
+                  </>
                 ) : (
-                  <div className="rounded-md border bg-white px-3 py-2 text-sm text-muted-foreground">
+                  <div className="col-span-full row-span-3 flex items-center justify-center rounded-md border border-dashed bg-white text-sm text-muted-foreground">
                     {t("images.noConversations")}
                   </div>
                 )}
               </div>
+              <div className="mt-3 flex items-center justify-center border-t pt-3">
+                <div className="inline-flex items-center gap-1 bg-white">
+                  <Button
+                    aria-label={t("common.previousPage")}
+                    title={t("common.previousPage")}
+                    variant="secondary"
+                    size="icon"
+                    className="h-8 w-8 rounded-md"
+                    onClick={() => selectConversationPage(Math.max(1, conversationPage - 1))}
+                    disabled={conversationPage === 1 || conversations.isFetching}
+                  >
+                    <ChevronLeft size={15} />
+                  </Button>
+                  <PageSelector
+                    page={conversationPage}
+                    totalPages={conversationTotalPages}
+                    disabled={conversations.isFetching}
+                    jumping={conversations.isFetching}
+                    onSelect={selectConversationPage}
+                  />
+                  <Button
+                    aria-label={t("common.nextPage")}
+                    title={t("common.nextPage")}
+                    variant="secondary"
+                    size="icon"
+                    className="h-8 w-8 rounded-md"
+                    onClick={() => selectConversationPage(Math.min(conversationTotalPages, conversationPage + 1))}
+                    disabled={conversationPage >= conversationTotalPages || conversations.isFetching}
+                  >
+                    <ChevronRight size={15} />
+                  </Button>
+                </div>
+              </div>
             </div>
 
-            <form className="space-y-5" onSubmit={handleSubmit}>
-              <label className="block space-y-2">
-                <span className="text-sm font-semibold">{t("images.prompt")}</span>
+            <form className="shrink-0 space-y-3 border-t p-4" onSubmit={handleSubmit}>
+              <div
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={handleReferenceDrop}
+                className="h-[250px] rounded-md border bg-white p-3 focus-within:ring-2 focus-within:ring-ring"
+              >
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold">{t("images.prompt")}</span>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    aria-label={t("images.addReference")}
+                    className="flex h-8 w-8 items-center justify-center rounded-md border bg-white text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  multiple
+                  className="hidden"
+                  onChange={handleReferenceChange}
+                />
+                <div className="mb-3 grid h-14 grid-cols-4 gap-2">
+                  {Array.from({ length: MAX_REFERENCE_IMAGES }, (_, index) => {
+                    const reference = referenceImages[index];
+                    return reference ? (
+                      <div key={reference.id} className="relative overflow-hidden rounded-md border bg-muted">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewReferenceId(reference.id)}
+                          className="h-full w-full"
+                        >
+                          <img src={reference.previewUrl} alt={reference.fileName} className="h-full w-full object-cover" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeReference(reference.id)}
+                          aria-label={t("images.referenceRemove")}
+                          className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded bg-white/90 text-foreground shadow-soft hover:bg-white"
+                        >
+                          <X size={11} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        key={`reference-slot-${index}`}
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        aria-label={t("images.addReference")}
+                        className="flex h-full items-center justify-center rounded-md border border-dashed bg-muted/40 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      >
+                        {index === 0 && referenceImages.length === 0 ? <Plus size={15} /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
                 <textarea
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
                   placeholder={t("images.promptPlaceholder")}
-                  className="min-h-32 w-full resize-y rounded-md border bg-white px-3 py-2 text-sm leading-6 outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  className="h-[142px] w-full resize-none border-0 bg-transparent p-0 text-sm leading-6 outline-none placeholder:text-muted-foreground"
                 />
-              </label>
-
-              <div className="space-y-2">
-                <span className="text-sm font-semibold">{t("images.size")}</span>
-                <div className="flex flex-wrap gap-1 rounded-lg border bg-muted p-1">
-                  {SIZE_OPTIONS.map((option) => (
-                    <OptionButton key={option} active={size === option} label={option} onClick={() => setSize(option)} />
-                  ))}
-                </div>
               </div>
 
-              <div className="space-y-2">
-                <span className="text-sm font-semibold">{t("images.quality")}</span>
-                <div className="flex flex-wrap gap-1 rounded-lg border bg-muted p-1">
-                  {QUALITY_OPTIONS.map((option) => (
-                    <OptionButton
-                      key={option}
-                      active={quality === option}
-                      label={t(`images.quality.${option}`)}
-                      onClick={() => setQuality(option)}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <span className="text-sm font-semibold">{t("images.references")}</span>
-                <div
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={handleReferenceDrop}
-                  className="rounded-md border border-dashed bg-white p-3"
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    multiple
-                    className="hidden"
-                    onChange={handleReferenceChange}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex min-h-20 w-full flex-col items-center justify-center rounded-md bg-muted px-3 py-4 text-center text-sm text-muted-foreground transition-colors hover:bg-muted/80"
-                  >
-                    <Upload size={20} className="mb-2" />
-                    <span className="font-semibold text-foreground">{t("images.referencesDrop")}</span>
-                    <span className="mt-1 text-xs">{t("images.referencesHint")}</span>
-                  </button>
-                  {referenceImages.length > 0 ? (
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      {referenceImages.map((reference) => (
-                        <div key={reference.id} className="overflow-hidden rounded-md border bg-white">
-                          <div className="relative aspect-square bg-muted">
-                            <img src={reference.previewUrl} alt={reference.fileName} className="h-full w-full object-cover" />
-                            <button
-                              type="button"
-                              onClick={() => removeReference(reference.id)}
-                              aria-label={t("images.referenceRemove")}
-                              className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-md bg-white/90 text-foreground shadow-soft hover:bg-white"
-                            >
-                              <X size={14} />
-                            </button>
-                          </div>
-                          <div className="space-y-0.5 px-2 py-1.5 text-xs">
-                            <div className="truncate font-semibold">{reference.fileName}</div>
-                            <div className="text-muted-foreground">{formatBytes(reference.sizeBytes)}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <SelectMenu
+                  label={t("images.size")}
+                  value={size}
+                  options={SIZE_OPTIONS}
+                  formatOption={(option) => option}
+                  open={sizeOpen}
+                  placement="up"
+                  onOpenChange={(open) => {
+                    setSizeOpen(open);
+                    if (open) setQualityOpen(false);
+                  }}
+                  onChange={setSize}
+                />
+                <SelectMenu
+                  label={t("images.quality")}
+                  value={quality}
+                  options={QUALITY_OPTIONS}
+                  formatOption={(option) => t(`images.quality.${option}`)}
+                  open={qualityOpen}
+                  placement="up"
+                  onOpenChange={(open) => {
+                    setQualityOpen(open);
+                    if (open) setSizeOpen(false);
+                  }}
+                  onChange={setQuality}
+                />
               </div>
 
               <Button
@@ -653,6 +912,7 @@ export function ImageStudioPage() {
       </div>
 
       {selectedJob ? <ImagePreviewModal job={selectedJob} onClose={() => setSelectedJobId(null)} /> : null}
+      {previewReference ? <ReferencePreviewModal reference={previewReference} onClose={() => setPreviewReferenceId(null)} /> : null}
     </>
   );
 }

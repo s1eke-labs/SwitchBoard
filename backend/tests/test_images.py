@@ -812,7 +812,14 @@ def test_image_conversation_api_requires_auth_and_lists_jobs(monkeypatch, tmp_pa
 
     listed = client.get("/api/images/conversations")
     assert listed.status_code == 200
-    assert listed.json()[0]["id"] == conversation["id"]
+    assert listed.json()["items"][0]["id"] == conversation["id"]
+    assert listed.json()["total_count"] == 1
+
+    bad_page = client.get("/api/images/conversations", params={"page": 0})
+    assert bad_page.status_code == 400
+    assert bad_page.json() == {
+        "detail": {"code": "IMAGE_CONVERSATION_INVALID_PAGE", "message": "Image conversation page is invalid"}
+    }
 
     jobs = client.get(f"/api/images/conversations/{conversation['id']}/jobs")
     assert jobs.status_code == 200
@@ -823,6 +830,168 @@ def test_image_conversation_api_requires_auth_and_lists_jobs(monkeypatch, tmp_pa
     assert missing.json() == {
         "detail": {"code": "IMAGE_CONVERSATION_NOT_FOUND", "message": "Image conversation not found"}
     }
+
+
+def test_image_conversation_api_paginates(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    (tmp_path / "codex").mkdir()
+
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+    client = TestClient(main.create_app())
+    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
+    settings = client.app.state.settings
+    with connect(settings.db_path) as conn:
+        for index in range(5):
+            conn.execute(
+                """
+                INSERT INTO image_conversations (id, title, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (f"conversation-{index}", f"Conversation {index}", index, index),
+            )
+
+    first_page = client.get("/api/images/conversations", params={"page": 1, "limit": 3})
+    second_page = client.get("/api/images/conversations", params={"page": 2, "limit": 3})
+
+    assert first_page.status_code == 200
+    assert first_page.json()["total_count"] == 5
+    assert [item["id"] for item in first_page.json()["items"]] == [
+        "conversation-4",
+        "conversation-3",
+        "conversation-2",
+    ]
+    assert second_page.status_code == 200
+    assert [item["id"] for item in second_page.json()["items"]] == [
+        "conversation-1",
+        "conversation-0",
+    ]
+
+
+def test_image_conversation_delete_api_removes_history_and_files(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    (tmp_path / "codex").mkdir()
+
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+    client = TestClient(main.create_app())
+
+    assert client.delete("/api/images/conversations/gone").status_code == 401
+    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
+    assert client.delete("/api/images/conversations/gone").status_code == 404
+
+    settings = client.app.state.settings
+    image_dir = tmp_path / "images"
+    image_dir.mkdir(exist_ok=True)
+    generated_path = image_dir / "generated.png"
+    reference_path = image_dir / "reference.png"
+    generated_path.write_bytes(b"generated")
+    reference_path.write_bytes(b"reference")
+    result = ImageGenerationResponse(
+        created=1776000000,
+        model="gpt-image-2",
+        data=[ImageData(file_name="generated.png", file_url="/api/images/files/generated.png")],
+    )
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO image_conversations (id, title, created_at, updated_at)
+            VALUES ('delete-me', 'Delete me', 1, 2)
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO image_jobs (
+                id, conversation_id, prompt, model, size, quality, response_format, status,
+                created_at, updated_at, result_json
+            )
+            VALUES (
+                'job-delete', 'delete-me', 'poster', NULL, '1024x1024', 'auto',
+                'b64_json', 'succeeded', 1, 2, ?
+            )
+            """,
+            (result.model_dump_json(),),
+        )
+        conn.execute(
+            """
+            INSERT INTO image_job_references (
+                id, job_id, position, original_file_name, mime_type, size_bytes, file_name, created_at
+            )
+            VALUES ('ref-delete', 'job-delete', 0, 'ref.png', 'image/png', 9, 'reference.png', 1)
+            """
+        )
+
+    response = client.delete("/api/images/conversations/delete-me")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert generated_path.exists() is False
+    assert reference_path.exists() is False
+    with connect(settings.db_path) as conn:
+        assert conn.execute("SELECT 1 FROM image_conversations WHERE id = 'delete-me'").fetchone() is None
+        assert conn.execute("SELECT 1 FROM image_jobs WHERE id = 'job-delete'").fetchone() is None
+        assert conn.execute("SELECT 1 FROM image_job_references WHERE id = 'ref-delete'").fetchone() is None
+    listed = client.get("/api/images/conversations", params={"page": 1, "limit": 3})
+    assert listed.status_code == 200
+    assert listed.json()["total_count"] == 0
+
+
+def test_image_conversation_delete_api_rejects_active_jobs(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    (tmp_path / "codex").mkdir()
+
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+    client = TestClient(main.create_app())
+    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
+    settings = client.app.state.settings
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO image_conversations (id, title, created_at, updated_at)
+            VALUES ('active-conversation', 'Active', 1, 2)
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO image_jobs (
+                id, conversation_id, prompt, model, size, quality, response_format, status,
+                created_at, updated_at
+            )
+            VALUES (
+                'active-job', 'active-conversation', 'poster', NULL, '1024x1024', 'auto',
+                'b64_json', 'queued', 1, 2
+            )
+            """
+        )
+
+    response = client.delete("/api/images/conversations/active-conversation")
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": {"code": "IMAGE_CONVERSATION_ACTIVE_JOBS", "message": "Image conversation has active jobs"}
+    }
+    with connect(settings.db_path) as conn:
+        assert conn.execute("SELECT 1 FROM image_conversations WHERE id = 'active-conversation'").fetchone() is not None
+        assert conn.execute("SELECT 1 FROM image_jobs WHERE id = 'active-job'").fetchone() is not None
 
 
 def test_image_file_api_requires_auth_and_serves_saved_file(monkeypatch, tmp_path) -> None:

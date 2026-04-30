@@ -106,6 +106,11 @@ class ImageConversationResponse(BaseModel):
     job_count: int = 0
 
 
+class ImageConversationListResponse(BaseModel):
+    items: list[ImageConversationResponse]
+    total_count: int
+
+
 class ImageGenerationError(Exception):
     def __init__(self, status_code: int, detail: IssueDetail) -> None:
         super().__init__(detail.message)
@@ -663,9 +668,13 @@ def get_image_conversation(settings: Settings, conversation_id: str) -> ImageCon
     return _conversation_from_row(row) if row else None
 
 
-def list_image_conversations(settings: Settings, limit: int = 50) -> list[ImageConversationResponse]:
+def list_image_conversations(settings: Settings, page: int = 1, limit: int = 50) -> ImageConversationListResponse:
+    if page < 1:
+        raise _image_error(400, "IMAGE_CONVERSATION_INVALID_PAGE", "Image conversation page is invalid")
     init_db(settings.db_path)
+    offset = (page - 1) * limit
     with connect(settings.db_path) as conn:
+        total_count = int(conn.execute("SELECT COUNT(*) AS count FROM image_conversations").fetchone()["count"])
         rows = list(
             conn.execute(
                 """
@@ -675,11 +684,36 @@ def list_image_conversations(settings: Settings, limit: int = 50) -> list[ImageC
                 GROUP BY image_conversations.id
                 ORDER BY image_conversations.updated_at DESC, image_conversations.created_at DESC
                 LIMIT ?
+                OFFSET ?
                 """,
-                (limit,),
+                (limit, offset),
             )
         )
-    return [_conversation_from_row(row) for row in rows]
+    return ImageConversationListResponse(
+        items=[_conversation_from_row(row) for row in rows],
+        total_count=total_count,
+    )
+
+
+def _file_names_from_generation_result(result_json: str | None) -> list[str]:
+    if not result_json:
+        return []
+    try:
+        result = ImageGenerationResponse.model_validate_json(result_json)
+    except ValueError:
+        return []
+    return [item.file_name for item in result.data if item.file_name]
+
+
+def _remove_image_files(settings: Settings, file_names: list[str]) -> None:
+    for file_name in sorted(set(file_names)):
+        try:
+            path = image_file_path(settings, file_name)
+        except ValueError:
+            logger.warning("Skipped invalid image file during deletion: %s", file_name)
+            continue
+        with suppress(FileNotFoundError):
+            path.unlink()
 
 
 class ImageGenerationQueue:
@@ -792,6 +826,10 @@ class ImageGenerationQueue:
                 ]
             return [job for job_id in job_ids if (job := self._job_response_from_db(job_id)) is not None]
 
+    async def delete_conversation(self, conversation_id: str) -> None:
+        async with self._lock:
+            self._delete_conversation_locked(conversation_id)
+
     async def close(self) -> None:
         task = self._worker_task
         if task is None or task.done():
@@ -824,6 +862,50 @@ class ImageGenerationQueue:
         with connect(self._settings.db_path) as conn:
             row = conn.execute("SELECT 1 FROM image_conversations WHERE id = ?", (conversation_id,)).fetchone()
         return row is not None
+
+    def _delete_conversation_locked(self, conversation_id: str) -> None:
+        file_names: list[str] = []
+        with connect(self._settings.db_path) as conn:
+            conversation = conn.execute("SELECT 1 FROM image_conversations WHERE id = ?", (conversation_id,)).fetchone()
+            if conversation is None:
+                raise _image_error(404, "IMAGE_CONVERSATION_NOT_FOUND", "Image conversation not found")
+            active = conn.execute(
+                """
+                SELECT 1 FROM image_jobs
+                WHERE conversation_id = ? AND status IN ('queued', 'running')
+                LIMIT 1
+                """,
+                (conversation_id,),
+            ).fetchone()
+            if active is not None:
+                raise _image_error(409, "IMAGE_CONVERSATION_ACTIVE_JOBS", "Image conversation has active jobs")
+            file_names.extend(
+                str(row["file_name"])
+                for row in conn.execute(
+                    """
+                    SELECT image_job_references.file_name
+                    FROM image_job_references
+                    JOIN image_jobs ON image_jobs.id = image_job_references.job_id
+                    WHERE image_jobs.conversation_id = ?
+                    """,
+                    (conversation_id,),
+                )
+            )
+            for row in conn.execute(
+                "SELECT result_json FROM image_jobs WHERE conversation_id = ?",
+                (conversation_id,),
+            ):
+                file_names.extend(_file_names_from_generation_result(row["result_json"]))
+            conn.execute(
+                """
+                DELETE FROM image_job_references
+                WHERE job_id IN (SELECT id FROM image_jobs WHERE conversation_id = ?)
+                """,
+                (conversation_id,),
+            )
+            conn.execute("DELETE FROM image_jobs WHERE conversation_id = ?", (conversation_id,))
+            conn.execute("DELETE FROM image_conversations WHERE id = ?", (conversation_id,))
+        _remove_image_files(self._settings, file_names)
 
     def _ensure_conversation_locked(self, conversation_id: str | None, prompt: str, now: int) -> str:
         if conversation_id:
