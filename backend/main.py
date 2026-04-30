@@ -17,13 +17,16 @@ from config import get_settings, validate_runtime_settings
 from config_transfer import ConfigExportDTO, ConfigImportSummary, export_config, import_config
 from db import init_db
 from images import (
+    ImageConversationResponse,
     ImageGenerationError,
     ImageGenerationJobResponse,
     ImageGenerationQueue,
     ImageGenerationRequest,
     ImageGenerationResponse,
+    create_image_conversation,
     generate_image,
     image_file_path,
+    list_image_conversations,
 )
 from issues import (
     account_auth_not_found_detail,
@@ -302,6 +305,33 @@ def create_app() -> FastAPI:
             return await generate_image(settings, payload)
         except ImageGenerationError as exc:
             logger.warning("Image generation failed: %s", exc.detail.message)
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
+    @app.post(
+        "/api/images/conversations",
+        response_model=ImageConversationResponse,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=authed,
+    )
+    def create_image_conversation_api() -> ImageConversationResponse:
+        try:
+            return create_image_conversation(settings)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
+    @app.get("/api/images/conversations", response_model=list[ImageConversationResponse], dependencies=authed)
+    def image_conversations(limit: int = 50) -> list[ImageConversationResponse]:
+        return list_image_conversations(settings, limit=max(1, min(limit, 100)))
+
+    @app.get(
+        "/api/images/conversations/{conversation_id}/jobs",
+        response_model=list[ImageGenerationJobResponse],
+        dependencies=authed,
+    )
+    async def image_conversation_jobs(conversation_id: str, limit: int = 100) -> list[ImageGenerationJobResponse]:
+        try:
+            return await image_queue.list_for_conversation(conversation_id, limit=max(1, min(limit, 200)))
+        except ImageGenerationError as exc:
             raise http_error_from_detail(exc.status_code, exc.detail) from exc
 
     @app.post("/api/images/jobs", response_model=ImageGenerationJobResponse, status_code=status.HTTP_202_ACCEPTED, dependencies=authed)

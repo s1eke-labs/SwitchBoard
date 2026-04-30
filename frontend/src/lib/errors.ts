@@ -52,6 +52,7 @@ const issueTranslationKeys: Partial<Record<string, TranslationKey>> = {
   IMAGE_UPSTREAM_TIMEOUT: "errors.imageUpstreamTimeout",
   IMAGE_UPSTREAM_ERROR: "errors.imageUpstreamError",
   IMAGE_JOB_NOT_FOUND: "errors.imageJobNotFound",
+  IMAGE_CONVERSATION_NOT_FOUND: "errors.imageConversationNotFound",
   IMAGE_INVALID_REQUEST: "errors.imageInvalidRequest",
 };
 

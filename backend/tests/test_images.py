@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from config import Settings
+from db import connect, init_db
 from images import (
     ImageData,
     ImageGenerationError,
@@ -74,6 +75,8 @@ async def test_generate_image_calls_responses_with_current_codex_token(tmp_path)
         captured["payload"] = json.loads(request.read())
         return _sse_response(
             {
+                "id": "resp_first",
+                "type": "response.completed",
                 "created": 1776000000,
                 "output": [
                     {
@@ -121,10 +124,11 @@ async def test_generate_image_calls_responses_with_current_codex_token(tmp_path)
         ],
         "tool_choice": {"type": "image_generation"},
         "stream": True,
-        "store": False,
+        "store": True,
     }
     assert result.created == 1776000000
     assert result.model == "gpt-image-2"
+    assert result.response_id == "resp_first"
     assert result.data[0].b64_json == "aGVsbG8="
     assert result.data[0].revised_prompt == "A calmer prompt"
     assert result.data[0].file_name
@@ -252,6 +256,19 @@ def test_build_upstream_payload_adds_reference_images_without_forcing_generate(t
     assert tool["type"] == "image_generation"
     assert tool["model"] == "gpt-image-2"
     assert "action" not in tool
+    assert payload["store"] is True
+
+
+def test_build_upstream_payload_adds_previous_response_id(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    payload = build_upstream_payload(
+        settings,
+        ImageGenerationRequest(prompt="make it realistic", previous_response_id="resp_previous"),
+    )
+
+    assert payload["previous_response_id"] == "resp_previous"
+    assert payload["store"] is True
 
 
 @pytest.mark.asyncio
@@ -592,6 +609,128 @@ async def test_image_generation_queue_persists_jobs_and_references(tmp_path) -> 
     await restored.close()
 
 
+def test_image_migration_moves_legacy_jobs_to_history_conversation(tmp_path) -> None:
+    db_path = tmp_path / "switchboard.sqlite"
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE image_jobs (
+                id TEXT PRIMARY KEY,
+                prompt TEXT NOT NULL,
+                model TEXT,
+                size TEXT NOT NULL,
+                quality TEXT NOT NULL,
+                response_format TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                result_json TEXT,
+                error_json TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO image_jobs (
+                id, prompt, model, size, quality, response_format, status, created_at, updated_at
+            )
+            VALUES ('old-job', 'legacy prompt', NULL, '1024x1024', 'high', 'b64_json', 'succeeded', 10, 20)
+            """
+        )
+
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        job = conn.execute("SELECT conversation_id FROM image_jobs WHERE id = 'old-job'").fetchone()
+        conversation = conn.execute("SELECT title FROM image_conversations WHERE id = ?", (job["conversation_id"],)).fetchone()
+
+    assert job["conversation_id"] == "legacy-image-history"
+    assert conversation["title"] == "Image history"
+
+
+@pytest.mark.asyncio
+async def test_image_generation_queue_chains_successful_responses_by_conversation(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    captured: list[ImageGenerationRequest] = []
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        captured.append(payload)
+        if payload.prompt == "failed edit":
+            raise ImageGenerationError(502, issue_detail("IMAGE_UPSTREAM_ERROR", "failed"))
+        return ImageGenerationResponse(
+            created=1776000000,
+            model="gpt-image-2",
+            data=[ImageData(b64_json="aGVsbG8=", file_name=f"{payload.prompt}.png")],
+            response_id=f"resp-{payload.prompt.replace(' ', '-')}",
+        )
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    first = await queue.enqueue(ImageGenerationRequest(prompt="base image"))
+    for _ in range(20):
+        first_done = await queue.get(first.id)
+        if first_done is not None and first_done.status == "succeeded":
+            break
+        await asyncio.sleep(0.01)
+
+    first_done = await queue.get(first.id)
+    assert first_done is not None
+    assert first_done.conversation_id is not None
+    assert first_done.upstream_response_id == "resp-base-image"
+
+    second = await queue.enqueue(ImageGenerationRequest(prompt="failed edit", conversation_id=first_done.conversation_id))
+    for _ in range(20):
+        second_failed = await queue.get(second.id)
+        if second_failed is not None and second_failed.status == "failed":
+            break
+        await asyncio.sleep(0.01)
+
+    third = await queue.enqueue(ImageGenerationRequest(prompt="final edit", conversation_id=first_done.conversation_id))
+    for _ in range(20):
+        third_done = await queue.get(third.id)
+        if third_done is not None and third_done.status == "succeeded":
+            break
+        await asyncio.sleep(0.01)
+
+    second_failed = await queue.get(second.id)
+    third_done = await queue.get(third.id)
+    assert second_failed is not None
+    assert second_failed.previous_response_id == "resp-base-image"
+    assert second_failed.upstream_response_id is None
+    assert third_done is not None
+    assert third_done.previous_response_id == "resp-base-image"
+    assert [payload.previous_response_id for payload in captured] == [None, "resp-base-image", "resp-base-image"]
+    await queue.close()
+
+
+@pytest.mark.asyncio
+async def test_image_generation_queue_lists_jobs_by_conversation(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        return ImageGenerationResponse(
+            created=1776000000,
+            model="gpt-image-2",
+            data=[ImageData(b64_json="aGVsbG8=", file_name=f"{payload.prompt}.png")],
+            response_id=f"resp-{payload.prompt}",
+        )
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    first = await queue.enqueue(ImageGenerationRequest(prompt="first"))
+    other = await queue.enqueue(ImageGenerationRequest(prompt="other", conversation_id=None))
+    for _ in range(20):
+        other_done = await queue.get(other.id)
+        if other_done is not None and other_done.status == "succeeded":
+            break
+        await asyncio.sleep(0.01)
+
+    first_done = await queue.get(first.id)
+    assert first_done is not None
+    jobs = await queue.list_for_conversation(first_done.conversation_id or "")
+
+    assert [job.id for job in jobs] == [first.id, other.id]
+    await queue.close()
+
+
 def test_image_api_requires_auth_and_reports_missing_auth(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
@@ -645,6 +784,44 @@ def test_image_job_api_requires_auth_and_validates_payload(monkeypatch, tmp_path
     assert response.status_code == 404
     assert response.json() == {
         "detail": {"code": "IMAGE_JOB_NOT_FOUND", "message": "Image generation job not found"}
+    }
+
+
+def test_image_conversation_api_requires_auth_and_lists_jobs(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    (tmp_path / "codex").mkdir()
+
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+    client = TestClient(main.create_app())
+
+    assert client.get("/api/images/conversations").status_code == 401
+    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
+
+    created = client.post("/api/images/conversations")
+    assert created.status_code == 201
+    conversation = created.json()
+    assert conversation["title"] == "New image session"
+    assert conversation["job_count"] == 0
+
+    listed = client.get("/api/images/conversations")
+    assert listed.status_code == 200
+    assert listed.json()[0]["id"] == conversation["id"]
+
+    jobs = client.get(f"/api/images/conversations/{conversation['id']}/jobs")
+    assert jobs.status_code == 200
+    assert jobs.json() == []
+
+    missing = client.get("/api/images/conversations/missing/jobs")
+    assert missing.status_code == 404
+    assert missing.json() == {
+        "detail": {"code": "IMAGE_CONVERSATION_NOT_FOUND", "message": "Image conversation not found"}
     }
 
 

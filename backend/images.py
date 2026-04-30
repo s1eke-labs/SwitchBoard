@@ -37,6 +37,8 @@ MAX_REFERENCE_IMAGES = 4
 MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024
 ALLOWED_REFERENCE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 IMAGE_GENERATION_INSTRUCTIONS = "Use the image_generation tool to create an image from the user's prompt."
+DEFAULT_IMAGE_CONVERSATION_ID = "default-image-conversation"
+DEFAULT_IMAGE_CONVERSATION_TITLE = "New image session"
 
 
 class ImageReferenceInput(BaseModel):
@@ -61,6 +63,8 @@ class ImageGenerationRequest(BaseModel):
     quality: str = "high"
     response_format: str = "b64_json"
     reference_images: list[ImageReferenceInput] = Field(default_factory=list)
+    conversation_id: str | None = None
+    previous_response_id: str | None = None
 
 
 class ImageData(BaseModel):
@@ -76,18 +80,30 @@ class ImageGenerationResponse(BaseModel):
     created: int
     model: str
     data: list[ImageData]
+    response_id: str | None = None
 
 
 class ImageGenerationJobResponse(BaseModel):
     id: str
+    conversation_id: str | None = None
     prompt: str
     status: ImageJobStatus
     created_at: int
     updated_at: int
+    previous_response_id: str | None = None
+    upstream_response_id: str | None = None
     position: int | None = None
     references: list[ImageReferenceData] = Field(default_factory=list)
     result: ImageGenerationResponse | None = None
     error: IssueDetail | None = None
+
+
+class ImageConversationResponse(BaseModel):
+    id: str
+    title: str
+    created_at: int
+    updated_at: int
+    job_count: int = 0
 
 
 class ImageGenerationError(Exception):
@@ -207,7 +223,7 @@ def build_upstream_payload(settings: Settings, payload: ImageGenerationRequest) 
     }
     if not payload.reference_images:
         tool["action"] = "generate"
-    return {
+    upstream_payload: dict[str, object] = {
         "model": settings.image_responses_model,
         "instructions": IMAGE_GENERATION_INSTRUCTIONS,
         "input": [
@@ -219,8 +235,11 @@ def build_upstream_payload(settings: Settings, payload: ImageGenerationRequest) 
         "tools": [tool],
         "tool_choice": {"type": "image_generation"},
         "stream": True,
-        "store": False,
+        "store": True,
     }
+    if payload.previous_response_id:
+        upstream_payload["previous_response_id"] = payload.previous_response_id
+    return upstream_payload
 
 
 def _value_for_debug(value: object) -> object:
@@ -493,6 +512,34 @@ def _created_from_payloads(payloads: list[object]) -> int:
     return int(time.time())
 
 
+def _response_id_from_payloads(payloads: list[object]) -> str | None:
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        response = payload.get("response")
+        if isinstance(response, dict):
+            response_id = response.get("id")
+            if isinstance(response_id, str) and response_id:
+                return response_id
+        payload_type = payload.get("type")
+        response_id = payload.get("id")
+        if isinstance(payload_type, str) and payload_type.startswith("response.") and isinstance(response_id, str) and response_id:
+            return response_id
+    for payload in payloads:
+        for item in _walk_values(payload):
+            response_id = item.get("id")
+            if isinstance(response_id, str) and response_id.startswith("resp_"):
+                return response_id
+    return None
+
+
+def _title_from_prompt(prompt: str) -> str:
+    title = " ".join(prompt.strip().split())
+    if not title:
+        return DEFAULT_IMAGE_CONVERSATION_TITLE
+    return title[:60]
+
+
 def _image_output_dir(settings: Settings) -> Path:
     output_dir = settings.image_output_dir or settings.db_path.parent / "images"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -572,6 +619,69 @@ def _save_reference_file(
 ImageGenerator = Callable[[Settings, ImageGenerationRequest], Awaitable[ImageGenerationResponse]]
 
 
+def _conversation_from_row(row) -> ImageConversationResponse:
+    return ImageConversationResponse(
+        id=str(row["id"]),
+        title=str(row["title"]),
+        created_at=int(row["created_at"]),
+        updated_at=int(row["updated_at"]),
+        job_count=int(row["job_count"] or 0),
+    )
+
+
+def create_image_conversation(settings: Settings, title: str | None = None) -> ImageConversationResponse:
+    init_db(settings.db_path)
+    now = int(time.time())
+    conversation_id = uuid.uuid4().hex
+    conversation_title = title.strip() if title and title.strip() else DEFAULT_IMAGE_CONVERSATION_TITLE
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO image_conversations (id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (conversation_id, conversation_title, now, now),
+        )
+    conversation = get_image_conversation(settings, conversation_id)
+    if conversation is None:
+        raise _image_error(500, "IMAGE_CONVERSATION_NOT_FOUND", "Image conversation not found")
+    return conversation
+
+
+def get_image_conversation(settings: Settings, conversation_id: str) -> ImageConversationResponse | None:
+    with connect(settings.db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT image_conversations.*, COUNT(image_jobs.id) AS job_count
+            FROM image_conversations
+            LEFT JOIN image_jobs ON image_jobs.conversation_id = image_conversations.id
+            WHERE image_conversations.id = ?
+            GROUP BY image_conversations.id
+            """,
+            (conversation_id,),
+        ).fetchone()
+    return _conversation_from_row(row) if row else None
+
+
+def list_image_conversations(settings: Settings, limit: int = 50) -> list[ImageConversationResponse]:
+    init_db(settings.db_path)
+    with connect(settings.db_path) as conn:
+        rows = list(
+            conn.execute(
+                """
+                SELECT image_conversations.*, COUNT(image_jobs.id) AS job_count
+                FROM image_conversations
+                LEFT JOIN image_jobs ON image_jobs.conversation_id = image_conversations.id
+                GROUP BY image_conversations.id
+                ORDER BY image_conversations.updated_at DESC, image_conversations.created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        )
+    return [_conversation_from_row(row) for row in rows]
+
+
 class ImageGenerationQueue:
     def __init__(self, settings: Settings, generator: ImageGenerator | None = None) -> None:
         self._settings = settings
@@ -587,6 +697,8 @@ class ImageGenerationQueue:
         now = int(time.time())
         job_id = uuid.uuid4().hex
         async with self._lock:
+            conversation_id = self._ensure_conversation_locked(payload.conversation_id, payload.prompt, now)
+            previous_response_id = payload.previous_response_id or self._latest_successful_response_id_locked(conversation_id)
             saved_references = [
                 _save_reference_file(self._settings, job_id, index, reference, mime_type, data, now)
                 for index, (reference, mime_type, data) in enumerate(references)
@@ -595,12 +707,14 @@ class ImageGenerationQueue:
                 conn.execute(
                     """
                     INSERT INTO image_jobs (
-                        id, prompt, model, size, quality, response_format, status, created_at, updated_at
+                        id, conversation_id, prompt, model, size, quality, response_format, status,
+                        created_at, updated_at, previous_response_id
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)
                     """,
                     (
                         job_id,
+                        conversation_id,
                         payload.prompt.strip(),
                         payload.model,
                         payload.size,
@@ -608,8 +722,10 @@ class ImageGenerationQueue:
                         payload.response_format,
                         now,
                         now,
+                        previous_response_id,
                     ),
                 )
+                self._refresh_conversation_title_locked(conn, conversation_id, payload.prompt, now)
                 conn.executemany(
                     """
                     INSERT INTO image_job_references (
@@ -657,6 +773,25 @@ class ImageGenerationQueue:
                 ]
             return [job for job_id in job_ids if (job := self._job_response_from_db(job_id)) is not None]
 
+    async def list_for_conversation(self, conversation_id: str, limit: int = 100) -> list[ImageGenerationJobResponse]:
+        async with self._lock:
+            if self._conversation_exists_locked(conversation_id) is False:
+                raise _image_error(404, "IMAGE_CONVERSATION_NOT_FOUND", "Image conversation not found")
+            with connect(self._settings.db_path) as conn:
+                job_ids = [
+                    str(row["id"])
+                    for row in conn.execute(
+                        """
+                        SELECT id FROM image_jobs
+                        WHERE conversation_id = ?
+                        ORDER BY created_at ASC, rowid ASC
+                        LIMIT ?
+                        """,
+                        (conversation_id, limit),
+                    )
+                ]
+            return [job for job_id in job_ids if (job := self._job_response_from_db(job_id)) is not None]
+
     async def close(self) -> None:
         task = self._worker_task
         if task is None or task.done():
@@ -684,6 +819,58 @@ class ImageGenerationQueue:
                 """,
                 (now,),
             )
+
+    def _conversation_exists_locked(self, conversation_id: str) -> bool:
+        with connect(self._settings.db_path) as conn:
+            row = conn.execute("SELECT 1 FROM image_conversations WHERE id = ?", (conversation_id,)).fetchone()
+        return row is not None
+
+    def _ensure_conversation_locked(self, conversation_id: str | None, prompt: str, now: int) -> str:
+        if conversation_id:
+            if not self._conversation_exists_locked(conversation_id):
+                raise _image_error(404, "IMAGE_CONVERSATION_NOT_FOUND", "Image conversation not found")
+            return conversation_id
+        with connect(self._settings.db_path) as conn:
+            row = conn.execute("SELECT id FROM image_conversations WHERE id = ?", (DEFAULT_IMAGE_CONVERSATION_ID,)).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO image_conversations (id, title, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (DEFAULT_IMAGE_CONVERSATION_ID, _title_from_prompt(prompt), now, now),
+                )
+        return DEFAULT_IMAGE_CONVERSATION_ID
+
+    def _latest_successful_response_id_locked(self, conversation_id: str) -> str | None:
+        with connect(self._settings.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT upstream_response_id FROM image_jobs
+                WHERE conversation_id = ? AND status = 'succeeded' AND upstream_response_id IS NOT NULL
+                ORDER BY updated_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (conversation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return str(row["upstream_response_id"])
+
+    def _refresh_conversation_title_locked(self, conn, conversation_id: str, prompt: str, now: int) -> None:
+        title = _title_from_prompt(prompt)
+        conn.execute(
+            """
+            UPDATE image_conversations
+            SET title = CASE
+                    WHEN title = ? THEN ?
+                    ELSE title
+                END,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (DEFAULT_IMAGE_CONVERSATION_TITLE, title, now, conversation_id),
+        )
 
     def _job_response_from_db(self, job_id: str) -> ImageGenerationJobResponse | None:
         with connect(self._settings.db_path) as conn:
@@ -718,10 +905,13 @@ class ImageGenerationQueue:
         error = IssueDetail.model_validate_json(job["error_json"]) if job["error_json"] else None
         return ImageGenerationJobResponse(
             id=str(job["id"]),
+            conversation_id=str(job["conversation_id"]) if job["conversation_id"] else None,
             prompt=str(job["prompt"]),
             status=job["status"],
             created_at=int(job["created_at"]),
             updated_at=int(job["updated_at"]),
+            previous_response_id=str(job["previous_response_id"]) if job["previous_response_id"] else None,
+            upstream_response_id=str(job["upstream_response_id"]) if job["upstream_response_id"] else None,
             position=position,
             references=[_reference_from_row(row) for row in reference_rows],
             result=result,
@@ -760,6 +950,8 @@ class ImageGenerationQueue:
             quality=str(job["quality"]),
             response_format=str(job["response_format"]),
             reference_images=references,
+            conversation_id=str(job["conversation_id"]) if job["conversation_id"] else None,
+            previous_response_id=str(job["previous_response_id"]) if job["previous_response_id"] else None,
         )
 
     def _claim_next_job(self) -> str | None:
@@ -787,14 +979,24 @@ class ImageGenerationQueue:
             return job_id
 
     def _finish_job(self, job_id: str, result: ImageGenerationResponse) -> None:
+        now = int(time.time())
         with connect(self._settings.db_path) as conn:
             conn.execute(
                 """
                 UPDATE image_jobs
-                SET status = 'succeeded', result_json = ?, error_json = NULL, updated_at = ?
+                SET status = 'succeeded', result_json = ?, error_json = NULL,
+                    upstream_response_id = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (result.model_dump_json(), int(time.time()), job_id),
+                (result.model_dump_json(), result.response_id, now, job_id),
+            )
+            conn.execute(
+                """
+                UPDATE image_conversations
+                SET updated_at = ?
+                WHERE id = (SELECT conversation_id FROM image_jobs WHERE id = ?)
+                """,
+                (now, job_id),
             )
 
     def _fail_job(self, job_id: str, detail: IssueDetail) -> None:
@@ -898,4 +1100,5 @@ async def generate_image(
         created=created,
         model=_image_tool_model(settings, payload),
         data=saved_data,
+        response_id=_response_id_from_payloads(response_payloads),
     )

@@ -232,6 +232,8 @@ export type ImageGenerationRequest = {
   quality?: "auto" | "low" | "medium" | "high";
   response_format?: "b64_json" | "url";
   reference_images?: ImageReferenceInput[];
+  conversation_id?: string | null;
+  previous_response_id?: string | null;
 };
 
 export type ImageReferenceInput = {
@@ -252,6 +254,7 @@ export type ImageReferenceData = {
 export type ImageGenerationResponse = {
   created: number;
   model: string;
+  response_id: string | null;
   data: Array<{
     b64_json: string | null;
     url: string | null;
@@ -266,14 +269,25 @@ export type ImageGenerationJobStatus = "queued" | "running" | "succeeded" | "fai
 
 export type ImageGenerationJob = {
   id: string;
+  conversation_id: string | null;
   prompt: string;
   status: ImageGenerationJobStatus;
   created_at: number;
   updated_at: number;
+  previous_response_id: string | null;
+  upstream_response_id: string | null;
   position: number | null;
   references: ImageReferenceData[];
   result: ImageGenerationResponse | null;
   error: IssueDetail | null;
+};
+
+export type ImageConversation = {
+  id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  job_count: number;
 };
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -472,4 +486,11 @@ export const api = {
     }),
   imageJobs: (limit = 20) => request<ImageGenerationJob[]>(`/api/images/jobs?limit=${limit}`),
   imageJob: (jobId: string) => request<ImageGenerationJob>(`/api/images/jobs/${jobId}`),
+  createImageConversation: () =>
+    request<ImageConversation>("/api/images/conversations", {
+      method: "POST",
+    }),
+  imageConversations: (limit = 50) => request<ImageConversation[]>(`/api/images/conversations?limit=${limit}`),
+  imageConversationJobs: (conversationId: string, limit = 100) =>
+    request<ImageGenerationJob[]>(`/api/images/conversations/${conversationId}/jobs?limit=${limit}`),
 };
