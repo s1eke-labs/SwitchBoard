@@ -15,6 +15,7 @@ SwitchBoard 是一个小型全栈应用，适合在本地使用 Codex、并希�
 - 导出和导入本地账号展示状态，方便在不同安装之间迁移 SwitchBoard 设置。
 - 浏览 Codex 会话，按文本搜索，并查看会话事件。
 - 查看请求日志、Token 用量、缓存用量和预估成本。
+- 通过受登录保护的本地 WebUI 提交图片生成队列，并代理到 OpenAI Images 兼容上游。
 - 界面会根据浏览器语言默认显示英文或简体中文，并可在登录页和应用头部手动切换。
 - 支持后端/前端分离开发、本地类生产运行，以及 Docker Compose 运行。
 
@@ -71,10 +72,38 @@ npm run dev
 | `SWITCHBOARD_STATIC_DIR` | 否 | 后端要托管的已构建前端目录，通常是 `frontend/dist`。 |
 | `SWITCHBOARD_COOKIE_SECURE` | 否 | 控制会话 Cookie 的 `Secure` 标记。本地 HTTP 开发默认是 `false`；部署在 HTTPS 后面时设为 `true`。 |
 | `CHATGPT_BACKEND_BASE` | 否 | 扫描账号限制时使用的 ChatGPT 后端基础地址，默认是 `https://chatgpt.com/backend-api`。 |
+| `SWITCHBOARD_IMAGE_MODEL` | 否 | 默认图片模型，默认是 `gpt-image-2`。 |
+| `SWITCHBOARD_IMAGE_RESPONSES_MODEL` | 否 | 调用图片生成工具时使用的 Responses API 主模型，默认是 `gpt-5.4-mini`。 |
+| `SWITCHBOARD_IMAGE_RESPONSES_PATH` | 否 | 图片 Responses 调用追加到 `CHATGPT_BACKEND_BASE` 后的路径，默认是 `/codex/responses`。也可以填写完整 URL。 |
+| `SWITCHBOARD_IMAGE_TIMEOUT_SECONDS` | 否 | 图片生成超时时间，默认是 `300`。 |
+| `SWITCHBOARD_IMAGE_MAX_PROMPT_CHARS` | 否 | 后端允许的最大提示词长度，默认是 `4000`。 |
+| `SWITCHBOARD_IMAGE_OUTPUT_DIR` | 否 | 生成图片保存目录。默认是 `SWITCHBOARD_DB` 旁边的 `images` 目录。 |
+| `SWITCHBOARD_IMAGE_DEBUG` | 否 | 输出图片请求/响应调试日志，默认是 `false`；access token 仍不会写入日志。 |
 
 本地开发时，`./data/switchboard-dev.sqlite` 是一个方便丢弃的数据库路径。
 
 如果 `CODEX_HOME` 不存在，或者指向的是文件而不是目录，SwitchBoard 会在启动时快速失败并给出明确错误。
+
+作图页会由后端读取当前 `CODEX_HOME/auth.json` 中的 ChatGPT access token，并直连 Responses 上游。页面会先把请求提交到后端进程内 FIFO 队列，再轮询任务状态，因此浏览器不用一直挂在漫长的上游请求上。只要 SwitchBoard 页面仍然打开，任务完成或失败后都会弹出应用内通知。
+
+浏览器使用的队列接口是：
+
+```text
+POST /api/images/jobs
+GET /api/images/jobs
+GET /api/images/jobs/{job_id}
+```
+
+如果需要直接同步调用，原来的生成接口仍然可用：
+
+```text
+POST /api/images/generations
+```
+
+登录后从应用头部进入“作图”页面即可。不需要配置图片专用上游密钥，也不会把 token 返回给前端。
+
+生成的图片会保存在后端的 `SWITCHBOARD_IMAGE_OUTPUT_DIR` 下，并通过需要登录的 `/api/images/files/{filename}` 地址返回给前端预览。
+队列任务状态保存在后端进程内存中；重启 SwitchBoard 会清空排队状态，但不会删除已经保存到磁盘的图片文件。
 
 ## 开发命令
 
@@ -156,6 +185,7 @@ Codex 目录会以可读写方式挂载到 `/host-codex`，这样账号切换才
 backend/
   main.py            FastAPI 应用和 API 路由
   accounts.py        Codex 账号扫描与切换
+  images.py          图片生成 API 代理
   sessions.py        Codex 会话读取
   usage.py           用量聚合和请求日志
   db.py              SQLite 初始化和辅助函数
@@ -165,7 +195,7 @@ backend/
 frontend/
   src/App.tsx        React 主应用
   src/app/           应用外壳和路由
-  src/pages/         仪表盘、会话和请求日志页面
+  src/pages/         仪表盘、会话、请求日志和作图页面
   src/features/      账号、会话和用量 UI
   src/lib/           共享客户端辅助函数
   src/components/ui/ UI 基础组件
@@ -181,6 +211,8 @@ frontend/
 - Docker 中切换账号会保留现有 `auth.json` 的 owner/group，并以 `0600` 权限写入。
 - 隐藏账号和自定义名称都是 SwitchBoard 本地元数据。
 - 配置导出只包含 SwitchBoard 本地账号展示状态，绝不会包含凭据。
+- 图片生成只在内存中读取当前 `CODEX_HOME/auth.json` 的 access token；token 不会写入 SQLite，也不会返回给前端。
+- 图片 debug 日志不会打印 access token 或 Authorization header 的真实值。
 - 不要提交 `.env`、SQLite 数据库或本地 Codex 凭据。
 - 用量成本估算使用本地价格表匹配已知模型名；未知模型的成本会保持为 null。
 

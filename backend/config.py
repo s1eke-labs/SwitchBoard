@@ -38,6 +38,10 @@ def _default_auth_vault_dir(db_path: Path) -> Path:
     return db_path.parent / "auth-vault"
 
 
+def _default_image_output_dir(db_path: Path) -> Path:
+    return db_path.parent / "images"
+
+
 def _parse_bool_env(name: str, default: bool) -> bool:
     raw_value = os.getenv(name)
     if raw_value is None:
@@ -61,6 +65,13 @@ class Settings:
     cookie_name: str = "switchboard_session"
     cookie_max_age_seconds: int = 60 * 60 * 24 * 7
     cookie_secure: bool = False
+    image_model: str = "gpt-image-2"
+    image_responses_model: str = "gpt-5.4-mini"
+    image_responses_path: str = "/codex/responses"
+    image_timeout_seconds: float = 300.0
+    image_max_prompt_chars: int = 4000
+    image_output_dir: Path | None = None
+    image_debug: bool = False
 
 
 def validate_runtime_settings(settings: Settings) -> None:
@@ -68,6 +79,32 @@ def validate_runtime_settings(settings: Settings) -> None:
         raise RuntimeError(f"CODEX_HOME does not exist: {settings.codex_home}")
     if not settings.codex_home.is_dir():
         raise RuntimeError(f"CODEX_HOME is not a directory: {settings.codex_home}")
+
+
+def _parse_float_env(name: str, default: float) -> float:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a number.") from exc
+    if value <= 0:
+        raise RuntimeError(f"{name} must be greater than 0.")
+    return value
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer.") from exc
+    if value <= 0:
+        raise RuntimeError(f"{name} must be greater than 0.")
+    return value
 
 
 @lru_cache
@@ -80,6 +117,10 @@ def get_settings() -> Settings:
     static_dir_raw = os.getenv("SWITCHBOARD_STATIC_DIR")
     db_path = Path(os.getenv("SWITCHBOARD_DB", str(_default_db_path()))).expanduser()
     auth_vault_raw = os.getenv("SWITCHBOARD_AUTH_VAULT")
+    image_output_raw = os.getenv("SWITCHBOARD_IMAGE_OUTPUT_DIR")
+    image_responses_path = os.getenv("SWITCHBOARD_IMAGE_RESPONSES_PATH", "/codex/responses").strip()
+    if not image_responses_path.startswith("/") and not image_responses_path.startswith(("http://", "https://")):
+        image_responses_path = f"/{image_responses_path}"
     return Settings(
         app_password=password,
         codex_home=Path(os.getenv("CODEX_HOME", str(_default_codex_home()))).expanduser(),
@@ -90,4 +131,11 @@ def get_settings() -> Settings:
         static_dir=Path(static_dir_raw).expanduser() if static_dir_raw else None,
         auth_vault_dir=Path(auth_vault_raw).expanduser() if auth_vault_raw else _default_auth_vault_dir(db_path),
         cookie_secure=_parse_bool_env("SWITCHBOARD_COOKIE_SECURE", default=False),
+        image_model=os.getenv("SWITCHBOARD_IMAGE_MODEL", "gpt-image-2"),
+        image_responses_model=os.getenv("SWITCHBOARD_IMAGE_RESPONSES_MODEL", "gpt-5.4-mini"),
+        image_responses_path=image_responses_path,
+        image_timeout_seconds=_parse_float_env("SWITCHBOARD_IMAGE_TIMEOUT_SECONDS", 300.0),
+        image_max_prompt_chars=_parse_int_env("SWITCHBOARD_IMAGE_MAX_PROMPT_CHARS", 4000),
+        image_output_dir=Path(image_output_raw).expanduser() if image_output_raw else _default_image_output_dir(db_path),
+        image_debug=_parse_bool_env("SWITCHBOARD_IMAGE_DEBUG", default=False),
     )

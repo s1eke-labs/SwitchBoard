@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Activity, BarChart3, LogOut, ReceiptText, UserRound } from "lucide-react";
+import { Activity, BarChart3, Image, LogOut, ReceiptText, UserRound } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
@@ -73,6 +73,10 @@ export function AppShell({
               <NavButton active={route.page === "requestLogs"} onClick={() => onNavigate("/request-logs")}>
                 <ReceiptText size={16} />
                 {t("nav.requestLogs")}
+              </NavButton>
+              <NavButton active={route.page === "images"} onClick={() => onNavigate("/images")}>
+                <Image size={16} />
+                {t("nav.images")}
               </NavButton>
             </div>
           </div>

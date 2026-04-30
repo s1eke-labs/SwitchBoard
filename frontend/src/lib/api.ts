@@ -222,7 +222,42 @@ export type UsageRequestLogsParams = {
   limit?: number;
 };
 
+export type ImageGenerationRequest = {
+  prompt: string;
+  model?: string;
+  size?: "auto" | "1024x1024" | "1024x1536" | "1536x1024";
+  quality?: "auto" | "low" | "medium" | "high";
+  response_format?: "b64_json" | "url";
+};
+
+export type ImageGenerationResponse = {
+  created: number;
+  model: string;
+  data: Array<{
+    b64_json: string | null;
+    url: string | null;
+    revised_prompt: string | null;
+    file_name: string | null;
+    file_url: string | null;
+    saved_path: string | null;
+  }>;
+};
+
+export type ImageGenerationJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export type ImageGenerationJob = {
+  id: string;
+  prompt: string;
+  status: ImageGenerationJobStatus;
+  created_at: number;
+  updated_at: number;
+  position: number | null;
+  result: ImageGenerationResponse | null;
+  error: IssueDetail | null;
+};
+
 const REQUEST_TIMEOUT_MS = 10_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 300_000;
 
 export class ApiError extends Error {
   status: number;
@@ -292,14 +327,19 @@ function parseErrorDetail(payload: unknown, statusText: string) {
   };
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function request<T>(
+  url: string,
+  init?: RequestInit,
+  options: { timeoutMs?: number } = {},
+): Promise<T> {
   const controller = new AbortController();
   let timedOut = false;
   const handleAbort = () => controller.abort();
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const timeoutId = window.setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, REQUEST_TIMEOUT_MS);
+  }, timeoutMs);
 
   if (init?.signal) {
     if (init.signal.aborted) {
@@ -332,7 +372,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   } catch (error) {
     if (timedOut) {
       throw new ApiError({
-        message: `Request timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds`,
+        message: `Request timed out after ${timeoutMs / 1000} seconds`,
         status: 408,
         code: "CLIENT_REQUEST_TIMEOUT",
       });
@@ -395,4 +435,20 @@ export const api = {
     if (page !== undefined) params.set("page", String(page));
     return request<UsageRequestLogsResponse>(`/api/usage/request-logs?${params.toString()}`);
   },
+  generateImage: (payload: ImageGenerationRequest) =>
+    request<ImageGenerationResponse>(
+      "/api/images/generations",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      { timeoutMs: IMAGE_REQUEST_TIMEOUT_MS },
+    ),
+  createImageJob: (payload: ImageGenerationRequest) =>
+    request<ImageGenerationJob>("/api/images/jobs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  imageJobs: (limit = 20) => request<ImageGenerationJob[]>(`/api/images/jobs?limit=${limit}`),
+  imageJob: (jobId: string) => request<ImageGenerationJob>(`/api/images/jobs/${jobId}`),
 };

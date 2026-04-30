@@ -3,7 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 export type AppRoute =
   | { page: "dashboard" }
   | { page: "sessions"; threadId: string | null }
-  | { page: "requestLogs" };
+  | { page: "requestLogs" }
+  | { page: "images" };
 
 export function parseRoute(pathname = window.location.pathname): AppRoute {
   const segments = pathname.split("/").filter(Boolean);
@@ -13,6 +14,9 @@ export function parseRoute(pathname = window.location.pathname): AppRoute {
   }
   if (segments[0] === "request-logs") {
     return { page: "requestLogs" };
+  }
+  if (segments[0] === "images") {
+    return { page: "images" };
   }
   return { page: "dashboard" };
 }

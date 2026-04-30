@@ -35,6 +35,20 @@ const issueTranslationKeys: Partial<Record<string, TranslationKey>> = {
   USAGE_INVALID_CURSOR: "errors.usageInvalidCursor",
   USAGE_INVALID_PAGE: "errors.usageInvalidPage",
   USAGE_INVALID_REQUEST: "errors.usageInvalidRequest",
+  IMAGE_PROMPT_REQUIRED: "errors.imagePromptRequired",
+  IMAGE_PROMPT_TOO_LONG: "errors.imagePromptTooLong",
+  IMAGE_INVALID_SIZE: "errors.imageInvalidSize",
+  IMAGE_INVALID_QUALITY: "errors.imageInvalidQuality",
+  IMAGE_INVALID_RESPONSE_FORMAT: "errors.imageInvalidResponseFormat",
+  IMAGE_AUTH_NOT_FOUND: "errors.imageAuthNotFound",
+  IMAGE_AUTH_TOKENS_MISSING: "errors.imageAuthTokensMissing",
+  IMAGE_AUTH_ACCOUNT_ID_MISSING: "errors.imageAuthAccountIdMissing",
+  IMAGE_AUTH_ACCESS_TOKEN_MISSING: "errors.imageAuthAccessTokenMissing",
+  IMAGE_AUTH_INVALID: "errors.imageAuthInvalid",
+  IMAGE_UPSTREAM_TIMEOUT: "errors.imageUpstreamTimeout",
+  IMAGE_UPSTREAM_ERROR: "errors.imageUpstreamError",
+  IMAGE_JOB_NOT_FOUND: "errors.imageJobNotFound",
+  IMAGE_INVALID_REQUEST: "errors.imageInvalidRequest",
 };
 
 export function formatIssueMessage(issue: IssueDetail | null | undefined): string | null {

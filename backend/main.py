@@ -16,6 +16,15 @@ from accounts import AccountDTO, ScanResult, hide_account, list_accounts, scan_c
 from config import get_settings, validate_runtime_settings
 from config_transfer import ConfigExportDTO, ConfigImportSummary, export_config, import_config
 from db import init_db
+from images import (
+    ImageGenerationError,
+    ImageGenerationJobResponse,
+    ImageGenerationQueue,
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+    generate_image,
+    image_file_path,
+)
 from issues import (
     account_auth_not_found_detail,
     account_issue_from_message,
@@ -94,6 +103,7 @@ def create_app() -> FastAPI:
     init_db(settings.db_path)
     ensure_auth_vault_key(settings)
     account_scan_lock = asyncio.Lock()
+    image_queue = ImageGenerationQueue(settings)
 
     async def usage_aggregation_loop() -> None:
         while True:
@@ -117,6 +127,7 @@ def create_app() -> FastAPI:
         try:
             yield
         finally:
+            await image_queue.close()
             usage_task.cancel()
             account_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -126,6 +137,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="SwitchBoard", version=__version__, lifespan=lifespan)
     app.state.settings = settings
+    app.state.image_queue = image_queue
 
     @app.get("/api/health")
     def health() -> dict[str, bool]:
@@ -273,6 +285,42 @@ def create_app() -> FastAPI:
             return get_usage_request_logs(settings, from_value=from_, to_value=to, limit=limit, cursor=cursor, page=page)
         except ValueError as exc:
             raise http_error_from_detail(status.HTTP_400_BAD_REQUEST, usage_issue_from_message(str(exc))) from exc
+
+    @app.post("/api/images/generations", response_model=ImageGenerationResponse, dependencies=authed)
+    async def image_generations(payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        try:
+            return await generate_image(settings, payload)
+        except ImageGenerationError as exc:
+            logger.warning("Image generation failed: %s", exc.detail.message)
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
+    @app.post("/api/images/jobs", response_model=ImageGenerationJobResponse, status_code=status.HTTP_202_ACCEPTED, dependencies=authed)
+    async def create_image_job(payload: ImageGenerationRequest) -> ImageGenerationJobResponse:
+        try:
+            return await image_queue.enqueue(payload)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
+    @app.get("/api/images/jobs", response_model=list[ImageGenerationJobResponse], dependencies=authed)
+    async def image_jobs(limit: int = 20) -> list[ImageGenerationJobResponse]:
+        return await image_queue.list_recent(limit=max(1, min(limit, 50)))
+
+    @app.get("/api/images/jobs/{job_id}", response_model=ImageGenerationJobResponse, dependencies=authed)
+    async def image_job(job_id: str) -> ImageGenerationJobResponse:
+        job = await image_queue.get(job_id)
+        if job is None:
+            raise http_error(status.HTTP_404_NOT_FOUND, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
+        return job
+
+    @app.get("/api/images/files/{filename}", dependencies=authed)
+    def image_file(filename: str) -> FileResponse:
+        try:
+            path = image_file_path(settings, filename)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_FILE_INVALID", "Invalid image filename") from exc
+        if not path.exists() or not path.is_file():
+            raise http_error(status.HTTP_404_NOT_FOUND, "IMAGE_FILE_NOT_FOUND", "Image file not found")
+        return FileResponse(path)
 
     static_dir = settings.static_dir
     if static_dir and static_dir.exists():

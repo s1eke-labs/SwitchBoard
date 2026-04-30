@@ -15,6 +15,7 @@ SwitchBoard is a small full-stack app for people who use Codex locally and want 
 - Export and import local account display state for moving SwitchBoard setup between machines.
 - Browse Codex sessions, search by text, and inspect session events.
 - Review request logs, token usage, cache usage, and estimated costs.
+- Queue image generation jobs from a protected local WebUI and proxy them to an OpenAI Images-compatible upstream.
 - Default the interface to English or Simplified Chinese based on browser language, with manual switching available on the login page and app header.
 - Run as separate backend/frontend dev servers, a production-style local app, or Docker Compose.
 
@@ -71,10 +72,38 @@ The backend reads configuration from environment variables. It also loads a `.en
 | `SWITCHBOARD_STATIC_DIR` | No | Built frontend directory served by the backend, usually `frontend/dist`. |
 | `SWITCHBOARD_COOKIE_SECURE` | No | Controls the session cookie `Secure` flag. Defaults to `false` for local HTTP development; set it to `true` behind HTTPS. |
 | `CHATGPT_BACKEND_BASE` | No | ChatGPT backend base URL used when scanning account limits. Defaults to `https://chatgpt.com/backend-api`. |
+| `SWITCHBOARD_IMAGE_MODEL` | No | Default image model. Defaults to `gpt-image-2`. |
+| `SWITCHBOARD_IMAGE_RESPONSES_MODEL` | No | Responses API host model used to invoke the image generation tool. Defaults to `gpt-5.4-mini`. |
+| `SWITCHBOARD_IMAGE_RESPONSES_PATH` | No | Path appended to `CHATGPT_BACKEND_BASE` for image Responses calls. Defaults to `/codex/responses`. Full URLs are also accepted. |
+| `SWITCHBOARD_IMAGE_TIMEOUT_SECONDS` | No | Image generation timeout. Defaults to `300`. |
+| `SWITCHBOARD_IMAGE_MAX_PROMPT_CHARS` | No | Maximum prompt length accepted by the backend. Defaults to `4000`. |
+| `SWITCHBOARD_IMAGE_OUTPUT_DIR` | No | Directory where generated images are saved. Defaults to an `images` directory next to `SWITCHBOARD_DB`. |
+| `SWITCHBOARD_IMAGE_DEBUG` | No | Logs image request/response debugging details. Defaults to `false`; access tokens are still not logged. |
 
 For local development, `./data/switchboard-dev.sqlite` is a convenient disposable database path.
 
 If `CODEX_HOME` is missing or points to a file instead of a directory, SwitchBoard fails fast during startup with a clear error.
+
+The Images page uses the current `CODEX_HOME/auth.json` ChatGPT access token and calls the Responses upstream directly from the backend. The page submits jobs to an in-process FIFO queue, then polls for completion so the browser is not held open on the long upstream request. Completed and failed jobs trigger in-app toast notifications while SwitchBoard remains open.
+
+The browser-facing queue endpoints are:
+
+```text
+POST /api/images/jobs
+GET /api/images/jobs
+GET /api/images/jobs/{job_id}
+```
+
+For direct synchronous integrations, the original generation endpoint remains available:
+
+```text
+POST /api/images/generations
+```
+
+Open the Images page from the app header after signing in. No image-specific upstream key is stored or sent to the browser.
+
+Generated images are saved on the backend under `SWITCHBOARD_IMAGE_OUTPUT_DIR` and served back through authenticated `/api/images/files/{filename}` URLs.
+Queue job status is kept in backend process memory; restarting SwitchBoard clears queued job state but does not delete image files that were already saved.
 
 ## Development Commands
 
@@ -156,6 +185,7 @@ The container process may run as root, but SwitchBoard preserves the existing ow
 backend/
   main.py            FastAPI app and API routes
   accounts.py        Codex account scanning and switching
+  images.py          Image generation API proxy
   sessions.py        Codex session reading
   usage.py           Usage aggregation and request logs
   db.py              SQLite setup and helpers
@@ -165,7 +195,7 @@ backend/
 frontend/
   src/App.tsx        Main React app
   src/app/           App shell and routing
-  src/pages/         Dashboard, sessions, and request log pages
+  src/pages/         Dashboard, sessions, request log, and image pages
   src/features/      Account, session, and usage UI
   src/lib/           Shared client helpers
   src/components/ui/ UI primitives
@@ -181,6 +211,8 @@ frontend/
 - Docker account switching preserves the existing `auth.json` owner/group and writes the file with `0600` permissions.
 - Hidden accounts and custom names are SwitchBoard-local metadata.
 - Config export includes only SwitchBoard-local account display state and never includes credentials.
+- Image generation reads the current `CODEX_HOME/auth.json` access token only in memory; tokens are never stored in SQLite or returned to the frontend.
+- Image debug logging never prints the access token or Authorization header value.
 - Do not commit `.env`, SQLite databases, or local Codex credentials.
 - Usage cost estimates use a local pricing table for known model names; unknown model costs remain null.
 
