@@ -295,15 +295,12 @@ function RequestLogRow({ log }: { log: UsageRequestLogDTO }) {
       </td>
       <td className="px-4 py-3 align-top text-right tabular-nums">
         <div className="font-semibold text-foreground">{formatNumber(log.input_tokens)}</div>
-        <div className="mt-1 text-xs text-muted-foreground">
-          {translate("requestLogs.cacheWithCount", { count: formatNumber(log.cache_hit_tokens) })}
-        </div>
+      </td>
+      <td className="px-4 py-3 align-top text-right tabular-nums">
+        <div className="font-semibold text-foreground">{formatNumber(log.cache_hit_tokens)}</div>
       </td>
       <td className="px-4 py-3 align-top text-right tabular-nums">
         <div className="font-semibold text-foreground">{formatNumber(log.output_tokens)}</div>
-        <div className="mt-1 text-xs text-muted-foreground">
-          {translate("requestLogs.reasoningWithCount", { count: formatNumber(log.reasoning_output_tokens) })}
-        </div>
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-right align-top tabular-nums">
         <div className="font-semibold text-foreground">{formatUsd(log.total_cost_usd, log.cost_known)}</div>
@@ -400,13 +397,14 @@ export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
             </div>
           ) : logs.length ? (
             <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full min-w-[1000px] table-fixed border-collapse text-sm">
+              <table className="w-full min-w-[1080px] table-fixed border-collapse text-sm">
                 <colgroup>
                   <col className="w-[170px]" />
                   <col className="w-[180px]" />
                   <col className="w-[210px]" />
-                  <col className="w-[155px]" />
-                  <col className="w-[155px]" />
+                  <col className="w-[130px]" />
+                  <col className="w-[150px]" />
+                  <col className="w-[120px]" />
                   <col className="w-[170px]" />
                 </colgroup>
                 <thead className="sticky top-0 z-10 border-b bg-white text-xs font-bold uppercase text-muted-foreground">
@@ -415,6 +413,7 @@ export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
                     <th className="px-4 py-3 text-left">{t("requestLogs.account")}</th>
                     <th className="px-4 py-3 text-left">{t("requestLogs.billingModel")}</th>
                     <th className="px-4 py-3 text-right">{t("usage.input")}</th>
+                    <th className="px-4 py-3 text-right">{t("usage.cacheHit")}</th>
                     <th className="px-4 py-3 text-right">{t("usage.output")}</th>
                     <th className="px-4 py-3 text-right">{t("requestLogs.totalCostColumn")}</th>
                   </tr>
