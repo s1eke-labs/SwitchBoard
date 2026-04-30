@@ -88,7 +88,7 @@ The Images page uses the current `CODEX_HOME/auth.json` ChatGPT access token and
 
 Image jobs are grouped into persistent image sessions. The Images page shows a paginated session list, lets you create or permanently delete sessions, and renders the selected session as a chat-like stream of compact image thumbnails. Click a thumbnail to open the full preview with its prompt, revised prompt, references, and download action. Existing image jobs from older SwitchBoard databases are migrated into an "Image history" session. Sessions with queued or running jobs cannot be deleted until those jobs finish.
 
-Within one image session, successful jobs are chained through the upstream Responses `previous_response_id` value so follow-up prompts can continue from the prior image context. To support that upstream state, image generation requests now use `store: true`; response IDs are stored locally in SQLite, while ChatGPT access tokens are still never stored. Prompt Caching is automatic on the upstream side and may help repeated long shared prefixes, but short prompts or changed prefixes should not be expected to produce cache hits.
+Image sessions are SwitchBoard-local history groups. Image generation requests use `store: false` for upstream compatibility and privacy, so queued jobs are not automatically chained through upstream `previous_response_id`; follow-up prompts should include the needed context or reference images. If an upstream response ID is returned, SwitchBoard may keep it as local job metadata, while ChatGPT access tokens are still never stored.
 
 Image jobs can include up to 4 reference images. Use the plus button above the prompt to upload references in the same fixed-height prompt composer; thumbnail slots stay reserved, and clicking a pending thumbnail opens a local preview before submission. Each reference must be PNG, JPEG, or WebP and no larger than 10 MB. References are saved alongside the job so task history can be reopened after restarting SwitchBoard.
 
@@ -96,7 +96,7 @@ The browser-facing queue endpoints are:
 
 ```text
 POST /api/images/conversations
-GET /api/images/conversations?page=1&limit=3
+GET /api/images/conversations?page=1&limit=4
 GET /api/images/conversations/{conversation_id}/jobs
 DELETE /api/images/conversations/{conversation_id}
 POST /api/images/jobs
@@ -112,7 +112,7 @@ POST /api/images/generations
 
 Open the Images page from the app header after signing in. No image-specific upstream key is stored or sent to the browser.
 
-Generated images and saved reference images are stored on the backend under `SWITCHBOARD_IMAGE_OUTPUT_DIR` and served back through authenticated `/api/images/files/{filename}` URLs. Image session metadata, queue job status, reference metadata, upstream response IDs, results, and errors are stored in SQLite. Deleting an image session removes its SQLite history plus referenced generated and reference image files. If SwitchBoard restarts while a job is running, that job is restored to queued state.
+Generated images and saved reference images are stored on the backend under `SWITCHBOARD_IMAGE_OUTPUT_DIR` and served back through authenticated `/api/images/files/{filename}` URLs. Image session metadata, queue job status, reference metadata, returned upstream response IDs, results, and errors are stored in SQLite. Deleting an image session removes its SQLite history plus referenced generated and reference image files. If SwitchBoard restarts while a job is running, that job is restored to queued state.
 
 ## Development Commands
 
@@ -227,7 +227,7 @@ Existing usage events that were collected before account attribution was availab
 - Hidden accounts and custom names are SwitchBoard-local metadata.
 - Config export includes only SwitchBoard-local account display state and never includes credentials.
 - Image generation reads the current `CODEX_HOME/auth.json` access token only in memory; tokens are never stored in SQLite or returned to the frontend.
-- Image sessions use upstream `previous_response_id` chaining and send image generation requests with `store: true`, so response objects may be retained by the upstream Responses service according to its retention policy.
+- Image generation sends upstream requests with `store: false`; image sessions are local history groups and do not automatically retain upstream response state for follow-up prompts.
 - Reference images are stored as private files for job history, but the browser sends them only to the authenticated SwitchBoard backend.
 - Image debug logging never prints the access token, Authorization header value, or image base64 payloads.
 - Do not commit `.env`, SQLite databases, or local Codex credentials.

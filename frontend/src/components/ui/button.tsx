@@ -1,37 +1,50 @@
 import * as React from "react";
-import { cva, type VariantProps } from "class-variance-authority";
+import { Button as HeroButton, type ButtonProps as HeroButtonProps } from "@heroui/react";
 import { cn } from "@/lib/utils";
 
-const buttonVariants = cva(
-  "inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
-  {
-    variants: {
-      variant: {
-        default: "bg-primary text-primary-foreground hover:bg-blue-700",
-        secondary: "border bg-white text-foreground hover:bg-muted",
-        ghost: "text-foreground hover:bg-muted",
-        destructive: "bg-destructive text-destructive-foreground hover:bg-orange-700",
-      },
-      size: {
-        default: "h-9 px-3",
-        sm: "h-8 px-2 text-xs",
-        icon: "h-9 w-9 px-0",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-      size: "default",
-    },
-  },
-);
+type ButtonVariant = "default" | "secondary" | "ghost" | "destructive";
+type ButtonSize = "default" | "sm" | "icon";
 
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {}
+  extends Omit<HeroButtonProps, "variant" | "size" | "isIconOnly" | "isDisabled"> {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  disabled?: boolean;
+  isDisabled?: boolean;
+  title?: string;
+}
+
+const variantMap: Record<ButtonVariant, HeroButtonProps["variant"]> = {
+  default: "primary",
+  secondary: "outline",
+  ghost: "ghost",
+  destructive: "danger",
+};
+
+const sizeMap: Record<ButtonSize, HeroButtonProps["size"]> = {
+  default: "md",
+  sm: "sm",
+  icon: "md",
+};
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, ...props }, ref) => (
-    <button className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
-  ),
+  ({ className, variant = "default", size = "default", disabled, isDisabled, ...props }, ref) => {
+    return (
+      <HeroButton
+        ref={ref}
+        className={cn(
+          "rounded-md font-semibold",
+          size === "sm" && "text-xs",
+          size === "icon" && "h-9 w-9 px-0",
+          className,
+        )}
+        isDisabled={isDisabled ?? disabled}
+        isIconOnly={size === "icon"}
+        size={sizeMap[size]}
+        variant={variantMap[variant]}
+        {...props}
+      />
+    );
+  },
 );
 Button.displayName = "Button";

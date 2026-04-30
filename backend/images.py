@@ -240,7 +240,7 @@ def build_upstream_payload(settings: Settings, payload: ImageGenerationRequest) 
         "tools": [tool],
         "tool_choice": {"type": "image_generation"},
         "stream": True,
-        "store": True,
+        "store": False,
     }
     if payload.previous_response_id:
         upstream_payload["previous_response_id"] = payload.previous_response_id
@@ -732,7 +732,7 @@ class ImageGenerationQueue:
         job_id = uuid.uuid4().hex
         async with self._lock:
             conversation_id = self._ensure_conversation_locked(payload.conversation_id, payload.prompt, now)
-            previous_response_id = payload.previous_response_id or self._latest_successful_response_id_locked(conversation_id)
+            previous_response_id = payload.previous_response_id
             saved_references = [
                 _save_reference_file(self._settings, job_id, index, reference, mime_type, data, now)
                 for index, (reference, mime_type, data) in enumerate(references)

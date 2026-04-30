@@ -124,7 +124,7 @@ async def test_generate_image_calls_responses_with_current_codex_token(tmp_path)
         ],
         "tool_choice": {"type": "image_generation"},
         "stream": True,
-        "store": True,
+        "store": False,
     }
     assert result.created == 1776000000
     assert result.model == "gpt-image-2"
@@ -256,7 +256,7 @@ def test_build_upstream_payload_adds_reference_images_without_forcing_generate(t
     assert tool["type"] == "image_generation"
     assert tool["model"] == "gpt-image-2"
     assert "action" not in tool
-    assert payload["store"] is True
+    assert payload["store"] is False
 
 
 def test_build_upstream_payload_adds_previous_response_id(tmp_path) -> None:
@@ -268,7 +268,7 @@ def test_build_upstream_payload_adds_previous_response_id(tmp_path) -> None:
     )
 
     assert payload["previous_response_id"] == "resp_previous"
-    assert payload["store"] is True
+    assert payload["store"] is False
 
 
 @pytest.mark.asyncio
@@ -649,7 +649,7 @@ def test_image_migration_moves_legacy_jobs_to_history_conversation(tmp_path) -> 
 
 
 @pytest.mark.asyncio
-async def test_image_generation_queue_chains_successful_responses_by_conversation(tmp_path) -> None:
+async def test_image_generation_queue_keeps_sessions_without_auto_chaining_responses(tmp_path) -> None:
     settings = _settings(tmp_path)
     captured: list[ImageGenerationRequest] = []
 
@@ -694,11 +694,11 @@ async def test_image_generation_queue_chains_successful_responses_by_conversatio
     second_failed = await queue.get(second.id)
     third_done = await queue.get(third.id)
     assert second_failed is not None
-    assert second_failed.previous_response_id == "resp-base-image"
+    assert second_failed.previous_response_id is None
     assert second_failed.upstream_response_id is None
     assert third_done is not None
-    assert third_done.previous_response_id == "resp-base-image"
-    assert [payload.previous_response_id for payload in captured] == [None, "resp-base-image", "resp-base-image"]
+    assert third_done.previous_response_id is None
+    assert [payload.previous_response_id for payload in captured] == [None, None, None]
     await queue.close()
 
 

@@ -1,5 +1,6 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertDialog, Modal } from "@heroui/react";
 import {
   CheckCircle2,
   ChevronDown,
@@ -30,7 +31,7 @@ const QUALITY_OPTIONS = ["auto", "low", "medium", "high"] as const;
 const MAX_REFERENCE_IMAGES = 4;
 const MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024;
 const REFERENCE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
-const CONVERSATION_PAGE_SIZE = 3;
+const CONVERSATION_PAGE_SIZE = 4;
 
 type ImageSize = (typeof SIZE_OPTIONS)[number];
 type ImageQuality = (typeof QUALITY_OPTIONS)[number];
@@ -74,6 +75,13 @@ function formatConversationTime(value: number) {
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value * 1000));
+}
+
+function formatJobTime(value: number) {
+  return new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value * 1000));
@@ -127,17 +135,17 @@ function ConversationButton({
 }) {
   return (
     <div
-      className={`h-full min-h-0 w-full overflow-hidden rounded-md border px-3 py-2 text-left transition-colors ${
+      className={`min-h-[72px] w-full shrink-0 overflow-hidden rounded-md border px-2.5 py-2 text-left transition-colors ${
         active ? "border-primary bg-primary/5" : "bg-white hover:bg-muted"
       }`}
     >
-      <div className="flex items-start gap-2">
+      <div className="flex items-center gap-2">
         <button type="button" onClick={onClick} className="min-w-0 flex-1 text-left">
           <span className="flex items-center gap-2">
-            <MessageSquare size={15} className={active ? "text-primary" : "text-muted-foreground"} />
+            <MessageSquare size={14} className={active ? "text-primary" : "text-muted-foreground"} />
             <span className="min-w-0 flex-1 truncate text-sm font-semibold">{conversation.title}</span>
           </span>
-          <span className="mt-1 block truncate pl-6 text-xs text-muted-foreground">
+          <span className="mt-0.5 block truncate pl-6 text-xs text-muted-foreground">
             {formatConversationTime(conversation.updated_at)} · {conversation.job_count}
           </span>
         </button>
@@ -146,7 +154,7 @@ function ConversationButton({
           onClick={onDelete}
           disabled={deleting}
           aria-label={deleteLabel}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-60"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-60"
         >
           {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
         </button>
@@ -230,16 +238,17 @@ function PageSelector({
   const pageCount = Math.max(1, totalPages);
 
   return (
-    <div className="relative">
+    <div className={`relative ${jumping ? "opacity-70" : ""}`} aria-busy={jumping}>
       <button
         type="button"
-        className="h-8 min-w-24 rounded-md px-2 text-center text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+        className="flex h-8 min-w-28 items-center justify-center gap-1 rounded-md px-2 text-center text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
         onClick={() => setOpen((value) => !value)}
         disabled={disabled || pageCount <= 1}
         aria-expanded={open}
         aria-haspopup="listbox"
       >
-        {jumping ? t("common.loadingEllipsis") : t("common.pageLabel", { page: Math.min(page, pageCount), total: pageCount })}
+        <span>{jumping ? t("common.loadingEllipsis") : t("common.pageLabel", { page: Math.min(page, pageCount), total: pageCount })}</span>
+        <ChevronDown size={14} className={`shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open ? (
         <div className="absolute bottom-10 left-1/2 z-30 max-h-48 w-52 -translate-x-1/2 overflow-auto rounded-md border bg-white p-2 shadow-soft">
@@ -273,7 +282,7 @@ function PageSelector({
 }
 
 function EmptyConversationSlot() {
-  return <div className="h-full min-h-0 rounded-md border border-dashed bg-white/60" aria-hidden="true" />;
+  return <div className="min-h-[72px] shrink-0 rounded-md border border-dashed bg-white/60" aria-hidden="true" />;
 }
 
 function ReferencePreviewModal({
@@ -285,24 +294,23 @@ function ReferencePreviewModal({
 }) {
   const { t } = useI18n();
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-6">
-      <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-md bg-background shadow-2xl">
-        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-          <div className="truncate text-sm font-semibold">{t("images.references")}</div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t("images.closePreview")}
-            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        <div className="flex min-h-[320px] items-center justify-center bg-muted p-4">
-          <img src={reference.previewUrl} alt={reference.fileName} className="max-h-[78vh] max-w-full rounded-md object-contain" />
-        </div>
-      </div>
-    </div>
+    <Modal isOpen onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Modal.Backdrop variant="opaque">
+        <Modal.Container placement="center" size="cover" className="p-3 sm:p-6">
+          <Modal.Dialog className="max-h-[92vh] max-w-3xl overflow-hidden rounded-md bg-background p-0">
+            <Modal.Header className="flex-row items-center justify-between gap-3 border-b px-4 py-3">
+              <Modal.Heading className="truncate text-sm font-semibold">{t("images.references")}</Modal.Heading>
+              <Button type="button" variant="ghost" size="icon" aria-label={t("images.closePreview")} onClick={onClose}>
+                <X size={18} />
+              </Button>
+            </Modal.Header>
+            <Modal.Body className="flex min-h-[320px] items-center justify-center bg-muted p-4">
+              <img src={reference.previewUrl} alt={reference.fileName} className="max-h-[78vh] max-w-full rounded-md object-contain" />
+            </Modal.Body>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal>
   );
 }
 
@@ -329,54 +337,51 @@ function ImagePreviewModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-6">
-      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-md bg-background shadow-2xl">
-        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <JobStatusIcon job={job} />
-            <span className="truncate text-sm font-semibold">{t(STATUS_LABEL_KEYS[job.status])}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" disabled={!downloadSrc} onClick={handleDownload}>
-              <Download size={15} />
-              {t("images.download")}
-            </Button>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label={t("images.closePreview")}
-              className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <X size={18} />
-            </button>
-          </div>
-        </div>
-        <div className="grid min-h-0 flex-1 gap-0 overflow-auto lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="flex min-h-[360px] items-center justify-center bg-muted p-4">
-            {sources.length ? (
-              <div className="grid max-h-full w-full grid-cols-1 gap-3 sm:grid-cols-2">
-                {sources.map((src) => (
-                  <img
-                    key={src}
-                    src={src}
-                    alt={revisedPrompt || t("images.preview")}
-                    className="max-h-[72vh] w-full rounded-md object-contain"
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="flex items-center text-sm text-muted-foreground">
+    <Modal isOpen onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Modal.Backdrop variant="opaque">
+        <Modal.Container placement="center" size="cover" className="p-3 sm:p-6">
+          <Modal.Dialog className="max-h-[92vh] max-w-5xl overflow-hidden rounded-md bg-background p-0">
+            <Modal.Header className="flex-row items-center justify-between gap-3 border-b px-4 py-3">
+              <Modal.Heading className="flex min-w-0 items-center gap-2">
                 <JobStatusIcon job={job} />
-                <span className="ml-2">{t(STATUS_LABEL_KEYS[job.status])}</span>
+                <span className="truncate text-sm font-semibold">{t(STATUS_LABEL_KEYS[job.status])}</span>
+              </Modal.Heading>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="sm" disabled={!downloadSrc} onClick={handleDownload}>
+                  <Download size={15} />
+                  {t("images.download")}
+                </Button>
+                <Button type="button" variant="ghost" size="icon" aria-label={t("images.closePreview")} onClick={onClose}>
+                  <X size={18} />
+                </Button>
               </div>
-            )}
-          </div>
-          <div className="space-y-4 overflow-auto border-t p-4 lg:border-l lg:border-t-0">
-            <div>
-              <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">{t("images.prompt")}</div>
-              <p className="whitespace-pre-wrap text-sm leading-6">{job.prompt}</p>
-            </div>
-            {revisedPrompt ? (
+            </Modal.Header>
+            <Modal.Body className="grid min-h-0 flex-1 gap-0 overflow-auto p-0 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="flex min-h-[360px] items-center justify-center bg-muted p-4">
+                {sources.length ? (
+                  <div className="grid max-h-full w-full grid-cols-1 gap-3 sm:grid-cols-2">
+                    {sources.map((src) => (
+                      <img
+                        key={src}
+                        src={src}
+                        alt={revisedPrompt || t("images.preview")}
+                        className="max-h-[72vh] w-full rounded-md object-contain"
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex items-center text-sm text-muted-foreground">
+                    <JobStatusIcon job={job} />
+                    <span className="ml-2">{t(STATUS_LABEL_KEYS[job.status])}</span>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-4 overflow-auto border-t p-4 lg:border-l lg:border-t-0">
+                <div>
+                  <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">{t("images.prompt")}</div>
+                  <p className="whitespace-pre-wrap text-sm leading-6">{job.prompt}</p>
+                </div>
+                {revisedPrompt ? (
               <div>
                 <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
                   {t("images.revisedPrompt")}
@@ -409,7 +414,146 @@ function ImagePreviewModal({
                 {job.error.message}
               </div>
             ) : null}
+              </div>
+            </Modal.Body>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal>
+  );
+}
+
+function ImageSessionWorkbench({
+  jobs,
+  focusedJob,
+  onFocusJob,
+  onOpenPreview,
+}: {
+  jobs: ImageGenerationJob[];
+  focusedJob: ImageGenerationJob;
+  onFocusJob: (jobId: string) => void;
+  onOpenPreview: (jobId: string) => void;
+}) {
+  const { t } = useI18n();
+  const sources = imageSources(focusedJob.result);
+  const statusLabel = t(STATUS_LABEL_KEYS[focusedJob.status]);
+  const revisedPrompt = focusedJob.result?.data.find((item) => item.revised_prompt)?.revised_prompt;
+  const imageGridClass = sources.length <= 1 ? "grid-cols-1" : "grid-cols-2";
+
+  return (
+    <div className="grid min-h-[456px] flex-1 grid-rows-[minmax(0,1fr)_104px] gap-3">
+      <div className="grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <button
+          type="button"
+          onClick={() => onOpenPreview(focusedJob.id)}
+          aria-label={`${t("images.preview")} · ${statusLabel}`}
+          className="flex min-h-0 items-center justify-center overflow-hidden rounded-md bg-muted/40 p-2 text-left transition-colors hover:bg-muted/60 focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          {sources.length ? (
+            <div className={`grid h-full min-h-0 w-full ${imageGridClass} gap-3`}>
+              {sources.slice(0, 4).map((src) => (
+                <img
+                  key={src}
+                  src={src}
+                  alt={revisedPrompt || t("images.preview")}
+                  className="h-full min-h-0 w-full rounded-md object-contain"
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="flex min-h-52 items-center justify-center rounded-md bg-muted px-6 text-sm text-muted-foreground">
+              <JobStatusIcon job={focusedJob} />
+              <span className="ml-2">{statusLabel}</span>
+            </div>
+          )}
+        </button>
+
+        <aside className="flex min-h-0 flex-col gap-3 overflow-hidden">
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span className="flex min-w-0 items-center gap-1">
+              <JobStatusIcon job={focusedJob} />
+              <span className="truncate">{statusLabel}</span>
+            </span>
+            <span className="shrink-0">
+              {focusedJob.position ? t("images.queuePosition", { position: focusedJob.position }) : formatJobTime(focusedJob.updated_at)}
+            </span>
           </div>
+
+          <div className="min-h-0 flex-1 space-y-3 overflow-hidden">
+            <div>
+              <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">{t("images.prompt")}</div>
+              <p className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-sm leading-6">
+                {focusedJob.prompt}
+              </p>
+            </div>
+            {revisedPrompt ? (
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">{t("images.revisedPrompt")}</div>
+                <p className="max-h-44 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-sm leading-6">
+                  {revisedPrompt}
+                </p>
+              </div>
+            ) : null}
+            {focusedJob.references.length ? (
+              <div>
+                <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">{t("images.references")}</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {focusedJob.references.map((reference) => (
+                    <div key={reference.id} className="overflow-hidden rounded-md border bg-white">
+                      <img
+                        src={reference.file_url}
+                        alt={reference.original_file_name}
+                        className="aspect-square w-full object-cover"
+                      />
+                      <div className="px-2 py-1.5 text-xs">
+                        <div className="truncate font-semibold">{reference.original_file_name}</div>
+                        <div className="text-muted-foreground">{formatBytes(reference.size_bytes)}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {focusedJob.error ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                {focusedJob.error.message}
+              </div>
+            ) : null}
+          </div>
+        </aside>
+      </div>
+
+      <div className="shrink-0 overflow-hidden rounded-md bg-muted/40 p-2">
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {jobs.map((job, index) => {
+            const thumbnail = imageSources(job.result)[0] ?? null;
+            const active = job.id === focusedJob.id;
+            return (
+              <button
+                key={job.id}
+                type="button"
+                onClick={() => onFocusJob(job.id)}
+                className={`group flex w-28 shrink-0 flex-col overflow-hidden rounded-md border bg-white text-left transition-colors ${
+                  active ? "border-primary ring-2 ring-primary/20" : "hover:border-primary/40"
+                }`}
+              >
+                <div className="flex h-20 items-center justify-center bg-muted">
+                  {thumbnail ? (
+                    <img src={thumbnail} alt={t("images.preview")} className="h-full w-full object-cover group-hover:opacity-95" />
+                  ) : (
+                    <JobStatusIcon job={job} />
+                  )}
+                </div>
+                <div className="min-w-0 px-2 py-1.5">
+                  <div className="flex items-center gap-1 text-[11px] leading-4 text-muted-foreground">
+                    <JobStatusIcon job={job} />
+                    <span className="truncate">{t(STATUS_LABEL_KEYS[job.status])}</span>
+                  </div>
+                  <div className="truncate text-xs font-semibold">{index + 1}</div>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -429,7 +573,9 @@ export function ImageStudioPage() {
   const [referenceImages, setReferenceImages] = useState<PendingReferenceImage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [focusedJobId, setFocusedJobId] = useState<string | null>(null);
   const [conversationPage, setConversationPage] = useState(1);
+  const [conversationToDelete, setConversationToDelete] = useState<ImageConversation | null>(null);
   const [previewReferenceId, setPreviewReferenceId] = useState<string | null>(null);
   const trimmedPrompt = prompt.trim();
 
@@ -458,9 +604,14 @@ export function ImageStudioPage() {
       return data?.some(isActiveJob) ? 3000 : false;
     },
   });
+  const jobItems = useMemo(() => jobs.data ?? [], [jobs.data]);
+  const focusedJob = useMemo(
+    () => jobItems.find((job) => job.id === focusedJobId) ?? jobItems[jobItems.length - 1] ?? null,
+    [focusedJobId, jobItems],
+  );
   const selectedJob = useMemo(
-    () => jobs.data?.find((job) => job.id === selectedJobId) ?? null,
-    [jobs.data, selectedJobId],
+    () => jobItems.find((job) => job.id === selectedJobId) ?? null,
+    [jobItems, selectedJobId],
   );
 
   useEffect(() => {
@@ -492,12 +643,23 @@ export function ImageStudioPage() {
     }
   }, [activeConversationId, conversationItems]);
 
+  useEffect(() => {
+    if (jobItems.length === 0) {
+      setFocusedJobId(null);
+      return;
+    }
+    if (!focusedJobId || !jobItems.some((job) => job.id === focusedJobId)) {
+      setFocusedJobId(jobItems[jobItems.length - 1].id);
+    }
+  }, [focusedJobId, jobItems]);
+
   const createConversation = useMutation({
     mutationFn: () => api.createImageConversation(),
     onSuccess: (conversation) => {
       setConversationPage(1);
       setActiveConversationId(conversation.id);
       setSelectedJobId(null);
+      setFocusedJobId(null);
       queryClient.invalidateQueries({ queryKey: ["imageConversations"] });
     },
     onError: (error) => {
@@ -513,6 +675,7 @@ export function ImageStudioPage() {
       const conversationId = job.conversation_id ?? activeConversationId;
       if (conversationId) {
         setActiveConversationId(conversationId);
+        setFocusedJobId(job.id);
         queryClient.setQueryData<ImageGenerationJob[]>(["imageJobs", conversationId], (current) => [
           ...((current ?? []).filter((item) => item.id !== job.id)),
           job,
@@ -547,9 +710,11 @@ export function ImageStudioPage() {
         const nextConversation = conversationPage > nextTotalPages ? null : (nextItems[0] ?? null);
         setActiveConversationId(nextConversation?.id ?? null);
         setSelectedJobId(null);
+        setFocusedJobId(null);
       }
       queryClient.invalidateQueries({ queryKey: ["imageConversations"] });
       queryClient.invalidateQueries({ queryKey: ["imageJobs"] });
+      setConversationToDelete(null);
       toast.success(t("images.conversationDeleted"));
     },
     onError: (error) => {
@@ -633,17 +798,23 @@ export function ImageStudioPage() {
   function selectConversation(conversationId: string) {
     setActiveConversationId(conversationId);
     setSelectedJobId(null);
+    setFocusedJobId(null);
   }
 
   function handleDeleteConversation(conversation: ImageConversation) {
-    if (!window.confirm(t("images.deleteConversationConfirm", { title: conversation.title }))) return;
-    deleteConversation.mutate(conversation.id);
+    setConversationToDelete(conversation);
+  }
+
+  function confirmDeleteConversation() {
+    if (!conversationToDelete || deleteConversation.isPending) return;
+    deleteConversation.mutate(conversationToDelete.id);
   }
 
   function selectConversationPage(targetPage: number) {
     if (targetPage === conversationPage || targetPage < 1 || targetPage > conversationTotalPages || conversations.isFetching) return;
     setConversationPage(targetPage);
     setSelectedJobId(null);
+    setFocusedJobId(null);
   }
 
   return (
@@ -672,11 +843,12 @@ export function ImageStudioPage() {
             <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
               <div className="mb-3 text-sm font-semibold">{t("images.conversations")}</div>
               <div
-                className={`grid min-h-0 flex-1 gap-2 transition-opacity ${conversations.isFetching ? "opacity-70" : ""}`}
-                style={{ gridTemplateRows: `repeat(${CONVERSATION_PAGE_SIZE}, minmax(0, 1fr))` }}
+                className={`flex min-h-0 flex-1 flex-col content-start gap-1.5 overflow-hidden transition-opacity ${
+                  conversations.isFetching ? "opacity-70" : ""
+                }`}
               >
                 {conversations.isPending ? (
-                  <div className="col-span-full row-span-3 flex items-center justify-center text-sm text-muted-foreground">
+                  <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">
                     <Loader2 size={15} className="mr-2 animate-spin" />
                     {t("common.loading")}
                   </div>
@@ -698,7 +870,7 @@ export function ImageStudioPage() {
                     ))}
                   </>
                 ) : (
-                  <div className="col-span-full row-span-3 flex items-center justify-center rounded-md border border-dashed bg-white text-sm text-muted-foreground">
+                  <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed bg-white text-sm text-muted-foreground">
                     {t("images.noConversations")}
                   </div>
                 )}
@@ -850,7 +1022,7 @@ export function ImageStudioPage() {
           </CardContent>
         </Card>
 
-        <Card className="min-h-[520px] overflow-hidden">
+        <Card className="flex min-h-[520px] flex-col overflow-hidden">
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2">
@@ -859,60 +1031,70 @@ export function ImageStudioPage() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="flex min-h-[456px] flex-col">
-            <div className="min-h-[456px] flex-1 overflow-auto rounded-md border bg-muted p-4">
-              {jobs.isPending && activeConversationId ? (
-                <div className="flex h-full min-h-[360px] items-center justify-center text-sm text-muted-foreground">
-                  <Loader2 size={18} className="mr-2 animate-spin" />
-                  {t("common.loading")}
-                </div>
-              ) : (jobs.data ?? []).length ? (
-                <div className="flex flex-col gap-4">
-                  {(jobs.data ?? []).map((job) => {
-                    const sources = imageSources(job.result);
-                    return (
-                      <button
-                        key={job.id}
-                        type="button"
-                        onClick={() => setSelectedJobId(job.id)}
-                        className="ml-auto max-w-[78%] rounded-md border bg-white p-2 text-left shadow-soft transition-transform hover:-translate-y-0.5 hover:border-primary/40"
-                      >
-                        {sources.length ? (
-                          <div className="grid grid-cols-2 gap-2">
-                            {sources.slice(0, 4).map((src) => (
-                              <img key={src} src={src} alt={t("images.preview")} className="h-28 w-full rounded object-cover" />
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="flex h-28 w-40 items-center justify-center rounded bg-muted text-sm text-muted-foreground">
-                            <JobStatusIcon job={job} />
-                            <span className="ml-2">{t(STATUS_LABEL_KEYS[job.status])}</span>
-                          </div>
-                        )}
-                        <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                          <span className="flex min-w-0 items-center gap-1">
-                            <JobStatusIcon job={job} />
-                            <span className="truncate">{t(STATUS_LABEL_KEYS[job.status])}</span>
-                          </span>
-                          {job.position ? <span>{t("images.queuePosition", { position: job.position })}</span> : null}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="flex h-full min-h-[360px] flex-col items-center justify-center text-sm text-muted-foreground">
-                  <ImageIcon size={32} className="mb-2" />
-                  {activeConversationId ? t("images.emptyConversation") : t("images.emptyPreview")}
-                </div>
-              )}
-            </div>
+          <CardContent className="flex min-h-[456px] flex-1 flex-col p-4">
+            {jobs.isPending && activeConversationId ? (
+              <div className="flex min-h-[456px] flex-1 items-center justify-center text-sm text-muted-foreground">
+                <Loader2 size={18} className="mr-2 animate-spin" />
+                {t("common.loading")}
+              </div>
+            ) : focusedJob ? (
+              <ImageSessionWorkbench
+                jobs={jobItems}
+                focusedJob={focusedJob}
+                onFocusJob={setFocusedJobId}
+                onOpenPreview={setSelectedJobId}
+              />
+            ) : (
+              <div className="flex min-h-[456px] flex-1 flex-col items-center justify-center text-sm text-muted-foreground">
+                <ImageIcon size={32} className="mb-2" />
+                {activeConversationId ? t("images.emptyConversation") : t("images.emptyPreview")}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
       {selectedJob ? <ImagePreviewModal job={selectedJob} onClose={() => setSelectedJobId(null)} /> : null}
       {previewReference ? <ReferencePreviewModal reference={previewReference} onClose={() => setPreviewReferenceId(null)} /> : null}
+      <AlertDialog
+        isOpen={Boolean(conversationToDelete)}
+        onOpenChange={(open) => {
+          if (!open && !deleteConversation.isPending) setConversationToDelete(null);
+        }}
+      >
+        <AlertDialog.Backdrop>
+          <AlertDialog.Container placement="center" size="sm">
+            <AlertDialog.Dialog>
+              <AlertDialog.Header>
+                <AlertDialog.Icon status="danger" />
+                <AlertDialog.Heading>{t("images.deleteConversation")}</AlertDialog.Heading>
+              </AlertDialog.Header>
+              <AlertDialog.Body>
+                {conversationToDelete ? t("images.deleteConversationConfirm", { title: conversationToDelete.title }) : null}
+              </AlertDialog.Body>
+              <AlertDialog.Footer>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={deleteConversation.isPending}
+                  onClick={() => setConversationToDelete(null)}
+                >
+                  {t("common.cancel")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={deleteConversation.isPending}
+                  onClick={confirmDeleteConversation}
+                >
+                  {deleteConversation.isPending ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                  {t("images.deleteConversation")}
+                </Button>
+              </AlertDialog.Footer>
+            </AlertDialog.Dialog>
+          </AlertDialog.Container>
+        </AlertDialog.Backdrop>
+      </AlertDialog>
     </>
   );
 }

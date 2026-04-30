@@ -1,14 +1,21 @@
 import * as React from "react";
+import { Input as HeroInput, type InputProps as HeroInputProps } from "@heroui/react";
 import { cn } from "@/lib/utils";
 
-export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
-  ({ className, ...props }, ref) => (
-    <input
+export interface InputProps extends Omit<HeroInputProps, "fullWidth" | "variant"> {
+  variant?: HeroInputProps["variant"];
+}
+
+export const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ className, variant = "primary", ...props }, ref) => (
+    <HeroInput
       ref={ref}
       className={cn(
-        "h-9 w-full rounded-md border bg-white px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring",
+        "h-9 w-full rounded-md border bg-white px-3 text-sm shadow-none",
         className,
       )}
+      fullWidth
+      variant={variant}
       {...props}
     />
   ),
