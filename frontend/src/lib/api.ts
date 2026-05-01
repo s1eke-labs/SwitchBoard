@@ -228,8 +228,27 @@ export type UsageRequestLogsParams = {
 export type ImageGenerationRequest = {
   prompt: string;
   model?: string;
-  size?: "auto" | "1024x1024" | "1024x1536" | "1536x1024";
-  quality?: "auto" | "low" | "medium" | "high";
+  size?:
+    | "1024x1024"
+    | "1536x1536"
+    | "2880x2880"
+    | "768x1024"
+    | "1536x2048"
+    | "2448x3264"
+    | "1024x768"
+    | "2048x1536"
+    | "3264x2448"
+    | "720x1280"
+    | "1152x2048"
+    | "2160x3840"
+    | "1280x720"
+    | "2048x1152"
+    | "3840x2160"
+    | "1344x576"
+    | "2688x1152"
+    | "3360x1440";
+  quality?: "auto";
+  n?: 1 | 2 | 4;
   response_format?: "b64_json" | "url";
   reference_images?: ImageReferenceInput[];
   conversation_id?: string | null;
@@ -271,6 +290,9 @@ export type ImageGenerationJob = {
   id: string;
   conversation_id: string | null;
   prompt: string;
+  size: NonNullable<ImageGenerationRequest["size"]> | "auto" | "1024x1536" | "1536x1024";
+  quality: "auto" | "low" | "medium" | "high";
+  n: 1 | 2 | 4;
   status: ImageGenerationJobStatus;
   created_at: number;
   updated_at: number;
@@ -282,16 +304,8 @@ export type ImageGenerationJob = {
   error: IssueDetail | null;
 };
 
-export type ImageConversation = {
-  id: string;
-  title: string;
-  created_at: number;
-  updated_at: number;
-  job_count: number;
-};
-
-export type ImageConversationListResponse = {
-  items: ImageConversation[];
+export type ImageGenerationJobListResponse = {
+  items: ImageGenerationJob[];
   total_count: number;
 };
 
@@ -489,18 +503,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  imageJobs: (limit = 20) => request<ImageGenerationJob[]>(`/api/images/jobs?limit=${limit}`),
+  imageJobs: ({ page = 1, limit = 20 }: { page?: number; limit?: number } = {}) =>
+    request<ImageGenerationJobListResponse>(`/api/images/jobs?page=${page}&limit=${limit}`),
   imageJob: (jobId: string) => request<ImageGenerationJob>(`/api/images/jobs/${jobId}`),
-  createImageConversation: () =>
-    request<ImageConversation>("/api/images/conversations", {
-      method: "POST",
-    }),
-  imageConversations: ({ page = 1, limit = 50 }: { page?: number; limit?: number } = {}) =>
-    request<ImageConversationListResponse>(`/api/images/conversations?page=${page}&limit=${limit}`),
-  imageConversationJobs: (conversationId: string, limit = 100) =>
-    request<ImageGenerationJob[]>(`/api/images/conversations/${conversationId}/jobs?limit=${limit}`),
-  deleteImageConversation: (conversationId: string) =>
-    request<{ ok: boolean }>(`/api/images/conversations/${conversationId}`, {
-      method: "DELETE",
-    }),
 };

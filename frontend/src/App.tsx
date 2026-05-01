@@ -28,16 +28,16 @@ function ImageJobNotifier() {
   const { t } = useI18n();
   const statusesRef = useRef(new Map<string, ImageGenerationJob["status"]>());
   const jobs = useQuery({
-    queryKey: ["imageJobs"],
-    queryFn: () => api.imageJobs(),
+    queryKey: ["imageJobs", "notifier"],
+    queryFn: () => api.imageJobs({ limit: 50 }),
     refetchInterval: (query) => {
-      const data = query.state.data as ImageGenerationJob[] | undefined;
+      const data = query.state.data?.items;
       return data?.some(isActiveImageJob) ? 3000 : false;
     },
   });
 
   useEffect(() => {
-    for (const job of jobs.data ?? []) {
+    for (const job of jobs.data?.items ?? []) {
       const previous = statusesRef.current.get(job.id);
       if (previous && previous !== job.status && job.status === "succeeded") {
         toast.success(t("images.generated"));

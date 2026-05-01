@@ -17,17 +17,14 @@ from config import get_settings, validate_runtime_settings
 from config_transfer import ConfigExportDTO, ConfigImportSummary, export_config, import_config
 from db import init_db
 from images import (
-    ImageConversationListResponse,
-    ImageConversationResponse,
     ImageGenerationError,
+    ImageGenerationJobListResponse,
     ImageGenerationJobResponse,
     ImageGenerationQueue,
     ImageGenerationRequest,
     ImageGenerationResponse,
-    create_image_conversation,
     generate_image,
     image_file_path,
-    list_image_conversations,
 )
 from issues import (
     account_auth_not_found_detail,
@@ -308,44 +305,6 @@ def create_app() -> FastAPI:
             logger.warning("Image generation failed: %s", exc.detail.message)
             raise http_error_from_detail(exc.status_code, exc.detail) from exc
 
-    @app.post(
-        "/api/images/conversations",
-        response_model=ImageConversationResponse,
-        status_code=status.HTTP_201_CREATED,
-        dependencies=authed,
-    )
-    def create_image_conversation_api() -> ImageConversationResponse:
-        try:
-            return create_image_conversation(settings)
-        except ImageGenerationError as exc:
-            raise http_error_from_detail(exc.status_code, exc.detail) from exc
-
-    @app.get("/api/images/conversations", response_model=ImageConversationListResponse, dependencies=authed)
-    def image_conversations(page: int = 1, limit: int = 50) -> ImageConversationListResponse:
-        try:
-            return list_image_conversations(settings, page=page, limit=max(1, min(limit, 100)))
-        except ImageGenerationError as exc:
-            raise http_error_from_detail(exc.status_code, exc.detail) from exc
-
-    @app.get(
-        "/api/images/conversations/{conversation_id}/jobs",
-        response_model=list[ImageGenerationJobResponse],
-        dependencies=authed,
-    )
-    async def image_conversation_jobs(conversation_id: str, limit: int = 100) -> list[ImageGenerationJobResponse]:
-        try:
-            return await image_queue.list_for_conversation(conversation_id, limit=max(1, min(limit, 200)))
-        except ImageGenerationError as exc:
-            raise http_error_from_detail(exc.status_code, exc.detail) from exc
-
-    @app.delete("/api/images/conversations/{conversation_id}", response_model=dict[str, bool], dependencies=authed)
-    async def delete_image_conversation_api(conversation_id: str) -> dict[str, bool]:
-        try:
-            await image_queue.delete_conversation(conversation_id)
-        except ImageGenerationError as exc:
-            raise http_error_from_detail(exc.status_code, exc.detail) from exc
-        return {"ok": True}
-
     @app.post("/api/images/jobs", response_model=ImageGenerationJobResponse, status_code=status.HTTP_202_ACCEPTED, dependencies=authed)
     async def create_image_job(payload: ImageGenerationRequest) -> ImageGenerationJobResponse:
         try:
@@ -353,9 +312,12 @@ def create_app() -> FastAPI:
         except ImageGenerationError as exc:
             raise http_error_from_detail(exc.status_code, exc.detail) from exc
 
-    @app.get("/api/images/jobs", response_model=list[ImageGenerationJobResponse], dependencies=authed)
-    async def image_jobs(limit: int = 20) -> list[ImageGenerationJobResponse]:
-        return await image_queue.list_recent(limit=max(1, min(limit, 50)))
+    @app.get("/api/images/jobs", response_model=ImageGenerationJobListResponse, dependencies=authed)
+    async def image_jobs(page: int = 1, limit: int = 20) -> ImageGenerationJobListResponse:
+        try:
+            return await image_queue.list_recent(page=page, limit=max(1, min(limit, 50)))
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
 
     @app.get("/api/images/jobs/{job_id}", response_model=ImageGenerationJobResponse, dependencies=authed)
     async def image_job(job_id: str) -> ImageGenerationJobResponse:

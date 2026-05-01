@@ -39,6 +39,7 @@ const issueTranslationKeys: Partial<Record<string, TranslationKey>> = {
   IMAGE_PROMPT_TOO_LONG: "errors.imagePromptTooLong",
   IMAGE_INVALID_SIZE: "errors.imageInvalidSize",
   IMAGE_INVALID_QUALITY: "errors.imageInvalidQuality",
+  IMAGE_INVALID_COUNT: "errors.imageInvalidCount",
   IMAGE_INVALID_RESPONSE_FORMAT: "errors.imageInvalidResponseFormat",
   IMAGE_REFERENCE_TOO_MANY: "errors.imageReferenceTooMany",
   IMAGE_REFERENCE_INVALID: "errors.imageReferenceInvalid",
@@ -52,9 +53,7 @@ const issueTranslationKeys: Partial<Record<string, TranslationKey>> = {
   IMAGE_UPSTREAM_TIMEOUT: "errors.imageUpstreamTimeout",
   IMAGE_UPSTREAM_ERROR: "errors.imageUpstreamError",
   IMAGE_JOB_NOT_FOUND: "errors.imageJobNotFound",
-  IMAGE_CONVERSATION_NOT_FOUND: "errors.imageConversationNotFound",
-  IMAGE_CONVERSATION_ACTIVE_JOBS: "errors.imageConversationActiveJobs",
-  IMAGE_CONVERSATION_INVALID_PAGE: "errors.imageConversationInvalidPage",
+  IMAGE_JOB_INVALID_PAGE: "errors.imageJobInvalidPage",
   IMAGE_INVALID_REQUEST: "errors.imageInvalidRequest",
 };
 

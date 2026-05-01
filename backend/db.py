@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS image_jobs (
     model TEXT,
     size TEXT NOT NULL,
     quality TEXT NOT NULL,
+    n INTEGER NOT NULL DEFAULT 1,
     response_format TEXT NOT NULL,
     status TEXT NOT NULL,
     created_at INTEGER NOT NULL,
@@ -209,37 +210,14 @@ def _migrate_images(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE image_jobs ADD COLUMN previous_response_id TEXT")
     if "upstream_response_id" not in columns:
         conn.execute("ALTER TABLE image_jobs ADD COLUMN upstream_response_id TEXT")
+    if "n" not in columns:
+        conn.execute("ALTER TABLE image_jobs ADD COLUMN n INTEGER NOT NULL DEFAULT 1")
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_image_jobs_conversation_created
             ON image_jobs(conversation_id, created_at ASC, id ASC)
         """
     )
-    row = conn.execute("SELECT COUNT(*) AS count FROM image_jobs WHERE conversation_id IS NULL").fetchone()
-    if row is None or int(row["count"]) == 0:
-        return
-    now = now_ts()
-    created = conn.execute("SELECT MIN(created_at) AS created_at FROM image_jobs").fetchone()
-    created_at = int(created["created_at"]) if created and created["created_at"] is not None else now
-    conversation_id = "legacy-image-history"
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO image_conversations (id, title, created_at, updated_at)
-        VALUES (?, ?, ?, ?)
-        """,
-        (conversation_id, "Image history", created_at, now),
-    )
-    conn.execute(
-        """
-        UPDATE image_conversations
-        SET updated_at = (
-            SELECT MAX(updated_at) FROM image_jobs WHERE conversation_id IS NULL
-        )
-        WHERE id = ?
-        """,
-        (conversation_id,),
-    )
-    conn.execute("UPDATE image_jobs SET conversation_id = ? WHERE conversation_id IS NULL", (conversation_id,))
 
 
 def connect(db_path: Path) -> sqlite3.Connection:

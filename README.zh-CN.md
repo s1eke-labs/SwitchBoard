@@ -15,7 +15,7 @@ SwitchBoard 是一个小型全栈应用，适合在本地使用 Codex、并希�
 - 导出和导入本地账号展示状态，方便在不同安装之间迁移 SwitchBoard 设置。
 - 浏览 Codex 会话，按文本搜索，并查看会话事件。
 - 查看请求日志、Token 用量、缓存用量、预估成本，以及按账号归属筛选审计数据。
-- 通过受登录保护的本地 WebUI 提交文生图和参考图生成队列，按持久化作图会话整理历史，并代理到 OpenAI Images 兼容上游。
+- 通过受登录保护的本地 WebUI 提交文生图和参考图生成队列，在分页图片游廊中浏览历史，并代理到 OpenAI Images 兼容上游。
 - 界面会根据浏览器语言默认显示英文或简体中文，并可在登录页和应用头部手动切换。
 - 支持后端/前端分离开发、本地类生产运行，以及 Docker Compose 运行。
 
@@ -84,21 +84,19 @@ npm run dev
 
 作图页会由后端读取当前 `CODEX_HOME/auth.json` 中的 ChatGPT access token，并直连 Responses 上游。页面会先把请求提交到持久化 FIFO 队列，再轮询任务状态，因此浏览器不用一直挂在漫长的上游请求上。只要 SwitchBoard 页面仍然打开，任务完成或失败后都会弹出应用内通知。
 
-图片任务会归档到持久化作图会话。作图页左侧会分页展示会话，可以新建、切换和永久删除会话，右侧会把当前会话渲染成类似聊天窗口的小图流；点击小图后，会展开原图预览，并显示提示词、修订提示词、参考图和下载操作。旧版本数据库里的图片任务会自动迁移到一个 “Image history” 历史会话。包含排队中或生成中任务的会话暂时不能删除，需要等任务结束后再删。
+作图页会把所有图片任务渲染成分页图片游廊。每个游廊卡片都有固定视图，图片会在卡片内自适应显示，因此不同比例的输出不会变形或被强行裁切。点击卡片后会展开原图预览，并显示提示词、修订提示词、参考图、风格信息、下载操作，以及一个“编辑”按钮；点击编辑会把这张图作为唯一参考图放回输入区。
 
-作图会话是 SwitchBoard 本地的历史分组。图片生成请求会以 `store: false` 发送，以兼容不允许保存响应的上游并减少上游留存；队列任务不会再自动通过上游 `previous_response_id` 串联上下文，后续提示词需要自行写明上下文或附上参考图。如果上游仍返回 response id，SwitchBoard 可能会把它作为本地任务元数据保存，但仍不会保存 ChatGPT access token。
+图片生成请求会以 `store: false` 发送，以兼容不允许保存响应的上游并减少上游留存；队列任务不会再自动通过上游 `previous_response_id` 串联上下文，后续提示词需要自行写明上下文或附上参考图。如果上游仍返回 response id，SwitchBoard 可能会把它作为本地任务元数据保存，但仍不会保存 ChatGPT access token。
+
+作图设置只展示比例、普通/高清/超清输出档位，以及 1、2、4 张数量选择，不再直接展示原始尺寸。SwitchBoard 会用比例和档位映射出实际生成分辨率，并始终把上游图片 `quality` 参数设为 `auto`。生成分辨率必须满足：最长边不超过 3840 px，宽和高都能被 16 px 整除，长短边比例不超过 3:1，总像素数在 655,360 到 8,294,400 之间。
 
 图片任务最多可以包含 4 张参考图。使用提示词上方的加号按钮上传参考图，参考图会和提示词放在同一个固定高度输入区；缩略图槽位会提前预留，提交前点击缩略图可以本地放大预览。每张参考图必须是 PNG、JPEG 或 WebP，且不超过 10 MB。参考图会随任务保存，重启 SwitchBoard 后仍可在任务历史里回看。
 
 浏览器使用的队列接口是：
 
 ```text
-POST /api/images/conversations
-GET /api/images/conversations?page=1&limit=4
-GET /api/images/conversations/{conversation_id}/jobs
-DELETE /api/images/conversations/{conversation_id}
 POST /api/images/jobs
-GET /api/images/jobs
+GET /api/images/jobs?page=1&limit=20
 GET /api/images/jobs/{job_id}
 ```
 
@@ -110,7 +108,7 @@ POST /api/images/generations
 
 登录后从应用头部进入“作图”页面即可。不需要配置图片专用上游密钥，也不会把 token 返回给前端。
 
-生成图片和已保存参考图都会保存在 `SWITCHBOARD_DATA_DIR/images` 下，并通过需要登录的 `/api/images/files/{filename}` 地址返回给前端预览。作图会话元数据、队列任务状态、参考图元数据、上游返回的 response id、结果和错误会写入 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`。删除作图会话会同时删除 SQLite 历史以及该会话引用的生成图和参考图文件。如果 SwitchBoard 在任务运行中重启，该任务会恢复为排队状态。
+生成图片和已保存参考图都会保存在 `SWITCHBOARD_DATA_DIR/images` 下，并通过需要登录的 `/api/images/files/{filename}` 地址返回给前端预览。队列任务状态、参考图元数据、上游返回的 response id、结果和错误会写入 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`。如果 SwitchBoard 在任务运行中重启，该任务会恢复为排队状态。
 
 ## 开发命令
 
@@ -228,7 +226,7 @@ SwitchBoard 在观察到当前 `auth.json` 时记录正在使用的 Codex 账号
 - 隐藏账号和自定义名称都是 SwitchBoard 本地元数据。
 - 配置导出只包含 SwitchBoard 本地账号展示状态，绝不会包含凭据。
 - 图片生成只在内存中读取当前 `CODEX_HOME/auth.json` 的 access token；token 不会写入 SQLite，也不会返回给前端。
-- 图片生成请求会以 `store: false` 发送到上游；作图会话是本地历史分组，不会自动保留上游响应状态给后续提示词续用。
+- 图片生成请求会以 `store: false` 发送到上游；队列任务不会自动保留上游响应状态给后续提示词续用。
 - 参考图会作为任务历史的私有文件保存，但浏览器只会把它们发送给已登录的 SwitchBoard 后端。
 - 图片 debug 日志不会打印 access token、Authorization header 的真实值或图片 base64 内容。
 - 不要提交 `.env`、SQLite 数据库或本地 Codex 凭据。

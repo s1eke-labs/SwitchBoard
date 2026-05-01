@@ -10,6 +10,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+import images as images_module
 from config import Settings
 from db import connect, init_db
 from images import (
@@ -119,7 +120,8 @@ async def test_generate_image_calls_responses_with_current_codex_token(tmp_path)
                 "action": "generate",
                 "model": "gpt-image-2",
                 "size": "1024x1024",
-                "quality": "high",
+                "quality": "auto",
+                "n": 1,
             }
         ],
         "tool_choice": {"type": "image_generation"},
@@ -259,6 +261,25 @@ def test_build_upstream_payload_adds_reference_images_without_forcing_generate(t
     assert payload["store"] is False
 
 
+def test_allowed_image_sizes_satisfy_resolution_constraints() -> None:
+    for size in images_module.ALLOWED_IMAGE_SIZES:
+        assert images_module._image_size_satisfies_constraints(size)
+
+
+def test_build_upstream_payload_uses_resolution_size_auto_quality_and_count(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    payload = build_upstream_payload(
+        settings,
+        ImageGenerationRequest(prompt="poster", size="3840x2160", quality="auto", n=4),
+    )
+
+    tool = payload["tools"][0]
+    assert tool["size"] == "3840x2160"
+    assert tool["quality"] == "auto"
+    assert tool["n"] == 4
+
+
 def test_build_upstream_payload_adds_previous_response_id(tmp_path) -> None:
     settings = _settings(tmp_path)
 
@@ -273,11 +294,38 @@ def test_build_upstream_payload_adds_previous_response_id(tmp_path) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "size",
+    [
+        "3856x2144",
+        "1000x1024",
+        "3840x1264",
+        "768x832",
+        "3840x2176",
+    ],
+)
+async def test_generate_image_enforces_resolution_constraints_even_if_size_is_allowed(monkeypatch, tmp_path, size: str) -> None:
+    monkeypatch.setattr(images_module, "ALLOWED_IMAGE_SIZES", {size})
+
+    with pytest.raises(ImageGenerationError) as exc_info:
+        await generate_image(
+            _settings(tmp_path),
+            ImageGenerationRequest(prompt="poster", size=size),
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"output": []})),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail.code == "IMAGE_INVALID_SIZE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("payload", "code"),
     [
         (ImageGenerationRequest(prompt=" "), "IMAGE_PROMPT_REQUIRED"),
         (ImageGenerationRequest(prompt="x", size="2048x2048"), "IMAGE_INVALID_SIZE"),
         (ImageGenerationRequest(prompt="x", quality="ultra"), "IMAGE_INVALID_QUALITY"),
+        (ImageGenerationRequest(prompt="x", quality="high"), "IMAGE_INVALID_QUALITY"),
+        (ImageGenerationRequest(prompt="x", n=3), "IMAGE_INVALID_COUNT"),
         (
             ImageGenerationRequest(
                 prompt="x",
@@ -541,7 +589,7 @@ async def test_image_generation_queue_runs_jobs_sequentially(tmp_path) -> None:
     assert second_done.result is not None
     assert second_done.result.data[0].file_name == "second.png"
     recent = await queue.list_recent()
-    assert recent[0].id == second.id
+    assert recent.items[0].id == second.id
     await queue.close()
 
 
@@ -609,7 +657,7 @@ async def test_image_generation_queue_persists_jobs_and_references(tmp_path) -> 
     await restored.close()
 
 
-def test_image_migration_moves_legacy_jobs_to_history_conversation(tmp_path) -> None:
+def test_image_migration_keeps_legacy_jobs_visible_without_conversation(tmp_path) -> None:
     db_path = tmp_path / "switchboard.sqlite"
     with connect(db_path) as conn:
         conn.execute(
@@ -642,14 +690,12 @@ def test_image_migration_moves_legacy_jobs_to_history_conversation(tmp_path) -> 
 
     with connect(db_path) as conn:
         job = conn.execute("SELECT conversation_id FROM image_jobs WHERE id = 'old-job'").fetchone()
-        conversation = conn.execute("SELECT title FROM image_conversations WHERE id = ?", (job["conversation_id"],)).fetchone()
 
-    assert job["conversation_id"] == "legacy-image-history"
-    assert conversation["title"] == "Image history"
+    assert job["conversation_id"] is None
 
 
 @pytest.mark.asyncio
-async def test_image_generation_queue_keeps_sessions_without_auto_chaining_responses(tmp_path) -> None:
+async def test_image_generation_queue_keeps_jobs_without_auto_chaining_responses(tmp_path) -> None:
     settings = _settings(tmp_path)
     captured: list[ImageGenerationRequest] = []
 
@@ -674,17 +720,17 @@ async def test_image_generation_queue_keeps_sessions_without_auto_chaining_respo
 
     first_done = await queue.get(first.id)
     assert first_done is not None
-    assert first_done.conversation_id is not None
+    assert first_done.conversation_id is None
     assert first_done.upstream_response_id == "resp-base-image"
 
-    second = await queue.enqueue(ImageGenerationRequest(prompt="failed edit", conversation_id=first_done.conversation_id))
+    second = await queue.enqueue(ImageGenerationRequest(prompt="failed edit", conversation_id="ignored-conversation"))
     for _ in range(20):
         second_failed = await queue.get(second.id)
         if second_failed is not None and second_failed.status == "failed":
             break
         await asyncio.sleep(0.01)
 
-    third = await queue.enqueue(ImageGenerationRequest(prompt="final edit", conversation_id=first_done.conversation_id))
+    third = await queue.enqueue(ImageGenerationRequest(prompt="final edit", conversation_id="ignored-conversation"))
     for _ in range(20):
         third_done = await queue.get(third.id)
         if third_done is not None and third_done.status == "succeeded":
@@ -694,16 +740,18 @@ async def test_image_generation_queue_keeps_sessions_without_auto_chaining_respo
     second_failed = await queue.get(second.id)
     third_done = await queue.get(third.id)
     assert second_failed is not None
+    assert second_failed.conversation_id is None
     assert second_failed.previous_response_id is None
     assert second_failed.upstream_response_id is None
     assert third_done is not None
+    assert third_done.conversation_id is None
     assert third_done.previous_response_id is None
     assert [payload.previous_response_id for payload in captured] == [None, None, None]
     await queue.close()
 
 
 @pytest.mark.asyncio
-async def test_image_generation_queue_lists_jobs_by_conversation(tmp_path) -> None:
+async def test_image_generation_queue_paginates_recent_jobs(tmp_path) -> None:
     settings = _settings(tmp_path)
 
     async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
@@ -716,18 +764,21 @@ async def test_image_generation_queue_lists_jobs_by_conversation(tmp_path) -> No
 
     queue = ImageGenerationQueue(settings, generator=generator)
     first = await queue.enqueue(ImageGenerationRequest(prompt="first"))
-    other = await queue.enqueue(ImageGenerationRequest(prompt="other", conversation_id=None))
+    other = await queue.enqueue(ImageGenerationRequest(prompt="other", conversation_id="ignored-conversation"))
+    third = await queue.enqueue(ImageGenerationRequest(prompt="third"))
     for _ in range(20):
-        other_done = await queue.get(other.id)
-        if other_done is not None and other_done.status == "succeeded":
+        third_done = await queue.get(third.id)
+        if third_done is not None and third_done.status == "succeeded":
             break
         await asyncio.sleep(0.01)
 
-    first_done = await queue.get(first.id)
-    assert first_done is not None
-    jobs = await queue.list_for_conversation(first_done.conversation_id or "")
+    first_page = await queue.list_recent(page=1, limit=2)
+    second_page = await queue.list_recent(page=2, limit=2)
 
-    assert [job.id for job in jobs] == [first.id, other.id]
+    assert first_page.total_count == 3
+    assert [job.id for job in first_page.items] == [third.id, other.id]
+    assert [job.id for job in second_page.items] == [first.id]
+    assert all(job.conversation_id is None for job in first_page.items + second_page.items)
     await queue.close()
 
 
@@ -787,7 +838,7 @@ def test_image_job_api_requires_auth_and_validates_payload(monkeypatch, tmp_path
     }
 
 
-def test_image_conversation_api_requires_auth_and_lists_jobs(monkeypatch, tmp_path) -> None:
+def test_image_conversation_api_is_not_public(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
@@ -801,38 +852,15 @@ def test_image_conversation_api_requires_auth_and_lists_jobs(monkeypatch, tmp_pa
     importlib.reload(main)
     client = TestClient(main.create_app())
 
-    assert client.get("/api/images/conversations").status_code == 401
     assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
 
-    created = client.post("/api/images/conversations")
-    assert created.status_code == 201
-    conversation = created.json()
-    assert conversation["title"] == "New image session"
-    assert conversation["job_count"] == 0
-
-    listed = client.get("/api/images/conversations")
-    assert listed.status_code == 200
-    assert listed.json()["items"][0]["id"] == conversation["id"]
-    assert listed.json()["total_count"] == 1
-
-    bad_page = client.get("/api/images/conversations", params={"page": 0})
-    assert bad_page.status_code == 400
-    assert bad_page.json() == {
-        "detail": {"code": "IMAGE_CONVERSATION_INVALID_PAGE", "message": "Image conversation page is invalid"}
-    }
-
-    jobs = client.get(f"/api/images/conversations/{conversation['id']}/jobs")
-    assert jobs.status_code == 200
-    assert jobs.json() == []
-
-    missing = client.get("/api/images/conversations/missing/jobs")
-    assert missing.status_code == 404
-    assert missing.json() == {
-        "detail": {"code": "IMAGE_CONVERSATION_NOT_FOUND", "message": "Image conversation not found"}
-    }
+    assert client.get("/api/images/conversations").status_code == 404
+    assert client.post("/api/images/conversations").status_code == 404
+    assert client.get("/api/images/conversations/missing/jobs").status_code == 404
+    assert client.delete("/api/images/conversations/missing").status_code == 404
 
 
-def test_image_conversation_api_paginates(monkeypatch, tmp_path) -> None:
+def test_image_job_api_paginates_global_jobs(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
@@ -848,150 +876,50 @@ def test_image_conversation_api_paginates(monkeypatch, tmp_path) -> None:
     assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
     settings = client.app.state.settings
     with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO image_conversations (id, title, created_at, updated_at)
+            VALUES ('legacy-conversation', 'Legacy', 0, 0)
+            """
+        )
         for index in range(5):
             conn.execute(
                 """
-                INSERT INTO image_conversations (id, title, created_at, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO image_jobs (
+                    id, conversation_id, prompt, model, size, quality, response_format, status,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, NULL, '1024x1024', 'auto', 'b64_json', 'succeeded', ?, ?)
                 """,
-                (f"conversation-{index}", f"Conversation {index}", index, index),
+                (
+                    f"job-{index}",
+                    "legacy-conversation" if index == 0 else None,
+                    f"Prompt {index}",
+                    index,
+                    index,
+                ),
             )
 
-    first_page = client.get("/api/images/conversations", params={"page": 1, "limit": 3})
-    second_page = client.get("/api/images/conversations", params={"page": 2, "limit": 3})
+    first_page = client.get("/api/images/jobs", params={"page": 1, "limit": 3})
+    second_page = client.get("/api/images/jobs", params={"page": 2, "limit": 3})
+    bad_page = client.get("/api/images/jobs", params={"page": 0})
 
     assert first_page.status_code == 200
     assert first_page.json()["total_count"] == 5
     assert [item["id"] for item in first_page.json()["items"]] == [
-        "conversation-4",
-        "conversation-3",
-        "conversation-2",
+        "job-4",
+        "job-3",
+        "job-2",
     ]
     assert second_page.status_code == 200
     assert [item["id"] for item in second_page.json()["items"]] == [
-        "conversation-1",
-        "conversation-0",
+        "job-1",
+        "job-0",
     ]
-
-
-def test_image_conversation_delete_api_removes_history_and_files(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("APP_PASSWORD", "secret")
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
-    (tmp_path / "codex").mkdir()
-
-    import config
-
-    config.get_settings.cache_clear()
-    import main
-
-    importlib.reload(main)
-    client = TestClient(main.create_app())
-
-    assert client.delete("/api/images/conversations/gone").status_code == 401
-    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
-    assert client.delete("/api/images/conversations/gone").status_code == 404
-
-    settings = client.app.state.settings
-    image_dir = tmp_path / "switchboard-data" / "images"
-    image_dir.mkdir(exist_ok=True)
-    generated_path = image_dir / "generated.png"
-    reference_path = image_dir / "reference.png"
-    generated_path.write_bytes(b"generated")
-    reference_path.write_bytes(b"reference")
-    result = ImageGenerationResponse(
-        created=1776000000,
-        model="gpt-image-2",
-        data=[ImageData(file_name="generated.png", file_url="/api/images/files/generated.png")],
-    )
-    with connect(settings.db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO image_conversations (id, title, created_at, updated_at)
-            VALUES ('delete-me', 'Delete me', 1, 2)
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO image_jobs (
-                id, conversation_id, prompt, model, size, quality, response_format, status,
-                created_at, updated_at, result_json
-            )
-            VALUES (
-                'job-delete', 'delete-me', 'poster', NULL, '1024x1024', 'auto',
-                'b64_json', 'succeeded', 1, 2, ?
-            )
-            """,
-            (result.model_dump_json(),),
-        )
-        conn.execute(
-            """
-            INSERT INTO image_job_references (
-                id, job_id, position, original_file_name, mime_type, size_bytes, file_name, created_at
-            )
-            VALUES ('ref-delete', 'job-delete', 0, 'ref.png', 'image/png', 9, 'reference.png', 1)
-            """
-        )
-
-    response = client.delete("/api/images/conversations/delete-me")
-
-    assert response.status_code == 200
-    assert response.json() == {"ok": True}
-    assert generated_path.exists() is False
-    assert reference_path.exists() is False
-    with connect(settings.db_path) as conn:
-        assert conn.execute("SELECT 1 FROM image_conversations WHERE id = 'delete-me'").fetchone() is None
-        assert conn.execute("SELECT 1 FROM image_jobs WHERE id = 'job-delete'").fetchone() is None
-        assert conn.execute("SELECT 1 FROM image_job_references WHERE id = 'ref-delete'").fetchone() is None
-    listed = client.get("/api/images/conversations", params={"page": 1, "limit": 3})
-    assert listed.status_code == 200
-    assert listed.json()["total_count"] == 0
-
-
-def test_image_conversation_delete_api_rejects_active_jobs(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("APP_PASSWORD", "secret")
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
-    (tmp_path / "codex").mkdir()
-
-    import config
-
-    config.get_settings.cache_clear()
-    import main
-
-    importlib.reload(main)
-    client = TestClient(main.create_app())
-    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
-    settings = client.app.state.settings
-    with connect(settings.db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO image_conversations (id, title, created_at, updated_at)
-            VALUES ('active-conversation', 'Active', 1, 2)
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO image_jobs (
-                id, conversation_id, prompt, model, size, quality, response_format, status,
-                created_at, updated_at
-            )
-            VALUES (
-                'active-job', 'active-conversation', 'poster', NULL, '1024x1024', 'auto',
-                'b64_json', 'queued', 1, 2
-            )
-            """
-        )
-
-    response = client.delete("/api/images/conversations/active-conversation")
-
-    assert response.status_code == 409
-    assert response.json() == {
-        "detail": {"code": "IMAGE_CONVERSATION_ACTIVE_JOBS", "message": "Image conversation has active jobs"}
+    assert bad_page.status_code == 400
+    assert bad_page.json() == {
+        "detail": {"code": "IMAGE_JOB_INVALID_PAGE", "message": "Image job page is invalid"}
     }
-    with connect(settings.db_path) as conn:
-        assert conn.execute("SELECT 1 FROM image_conversations WHERE id = 'active-conversation'").fetchone() is not None
-        assert conn.execute("SELECT 1 FROM image_jobs WHERE id = 'active-job'").fetchone() is not None
 
 
 def test_image_file_api_requires_auth_and_serves_saved_file(monkeypatch, tmp_path) -> None:

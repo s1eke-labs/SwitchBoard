@@ -15,7 +15,7 @@ SwitchBoard is a small full-stack app for people who use Codex locally and want 
 - Export and import local account display state for moving SwitchBoard setup between machines.
 - Browse Codex sessions, search by text, and inspect session events.
 - Review request logs, token usage, cache usage, estimated costs, and account attribution filters.
-- Queue text-to-image and reference-image generation jobs from a protected local WebUI, organize them into persistent image sessions, and proxy them to an OpenAI Images-compatible upstream.
+- Queue text-to-image and reference-image generation jobs from a protected local WebUI, browse them in a paginated image gallery, and proxy them to an OpenAI Images-compatible upstream.
 - Default the interface to English or Simplified Chinese based on browser language, with manual switching available on the login page and app header.
 - Run as separate backend/frontend dev servers, a production-style local app, or Docker Compose.
 
@@ -84,21 +84,19 @@ If `CODEX_HOME` is missing or points to a file instead of a directory, SwitchBoa
 
 The Images page uses the current `CODEX_HOME/auth.json` ChatGPT access token and calls the Responses upstream directly from the backend. The page submits jobs to a persisted FIFO queue, then polls for completion so the browser is not held open on the long upstream request. Completed and failed jobs trigger in-app toast notifications while SwitchBoard remains open.
 
-Image jobs are grouped into persistent image sessions. The Images page shows a paginated session list, lets you create or permanently delete sessions, and renders the selected session as a chat-like stream of compact image thumbnails. Click a thumbnail to open the full preview with its prompt, revised prompt, references, and download action. Existing image jobs from older SwitchBoard databases are migrated into an "Image history" session. Sessions with queued or running jobs cannot be deleted until those jobs finish.
+The Images page renders all image jobs in a paginated gallery. Each gallery tile keeps a stable viewport and uses contained image fitting, so different output ratios remain visible without distortion. Click a tile to open the full preview with its prompt, revised prompt, references, style metadata, download action, and an edit action that places that image into the prompt composer as the only reference image.
 
-Image sessions are SwitchBoard-local history groups. Image generation requests use `store: false` for upstream compatibility and privacy, so queued jobs are not automatically chained through upstream `previous_response_id`; follow-up prompts should include the needed context or reference images. If an upstream response ID is returned, SwitchBoard may keep it as local job metadata, while ChatGPT access tokens are still never stored.
+Image generation requests use `store: false` for upstream compatibility and privacy, so queued jobs are not automatically chained through upstream `previous_response_id`; follow-up prompts should include the needed context or reference images. If an upstream response ID is returned, SwitchBoard may keep it as local job metadata, while ChatGPT access tokens are still never stored.
+
+Image settings expose an aspect ratio, Standard/HD/Ultra HD output tier, and a count of 1, 2, or 4 images instead of raw dimensions. SwitchBoard maps the ratio and tier to the generated resolution and always sends upstream image `quality` as `auto`. Generated resolutions must have a longest side of 3840 px or less, width and height divisible by 16 px, an aspect ratio no wider than 3:1, and a total pixel count from 655,360 through 8,294,400.
 
 Image jobs can include up to 4 reference images. Use the plus button above the prompt to upload references in the same fixed-height prompt composer; thumbnail slots stay reserved, and clicking a pending thumbnail opens a local preview before submission. Each reference must be PNG, JPEG, or WebP and no larger than 10 MB. References are saved alongside the job so task history can be reopened after restarting SwitchBoard.
 
 The browser-facing queue endpoints are:
 
 ```text
-POST /api/images/conversations
-GET /api/images/conversations?page=1&limit=4
-GET /api/images/conversations/{conversation_id}/jobs
-DELETE /api/images/conversations/{conversation_id}
 POST /api/images/jobs
-GET /api/images/jobs
+GET /api/images/jobs?page=1&limit=20
 GET /api/images/jobs/{job_id}
 ```
 
@@ -110,7 +108,7 @@ POST /api/images/generations
 
 Open the Images page from the app header after signing in. No image-specific upstream key is stored or sent to the browser.
 
-Generated images and saved reference images are stored under `SWITCHBOARD_DATA_DIR/images` and served back through authenticated `/api/images/files/{filename}` URLs. Image session metadata, queue job status, reference metadata, returned upstream response IDs, results, and errors are stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`. Deleting an image session removes its SQLite history plus referenced generated and reference image files. If SwitchBoard restarts while a job is running, that job is restored to queued state.
+Generated images and saved reference images are stored under `SWITCHBOARD_DATA_DIR/images` and served back through authenticated `/api/images/files/{filename}` URLs. Queue job status, reference metadata, returned upstream response IDs, results, and errors are stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`. If SwitchBoard restarts while a job is running, that job is restored to queued state.
 
 ## Development Commands
 
@@ -228,7 +226,7 @@ Existing usage events that were collected before account attribution was availab
 - Hidden accounts and custom names are SwitchBoard-local metadata.
 - Config export includes only SwitchBoard-local account display state and never includes credentials.
 - Image generation reads the current `CODEX_HOME/auth.json` access token only in memory; tokens are never stored in SQLite or returned to the frontend.
-- Image generation sends upstream requests with `store: false`; image sessions are local history groups and do not automatically retain upstream response state for follow-up prompts.
+- Image generation sends upstream requests with `store: false`; queued jobs do not automatically retain upstream response state for follow-up prompts.
 - Reference images are stored as private files for job history, but the browser sends them only to the authenticated SwitchBoard backend.
 - Image debug logging never prints the access token, Authorization header value, or image base64 payloads.
 - Do not commit `.env`, SQLite databases, or local Codex credentials.
