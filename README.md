@@ -294,7 +294,7 @@ Import merges by `account_id`: accounts in the file update local display metadat
 backend/
   main.py             FastAPI app and API routes
   accounts.py         Codex account scanning and switching
-  images.py           Image generation queue, storage, and API proxy
+  images/             Image generation package, queue, storage, and API proxy
   sessions.py         Codex session reading and event previews
   usage.py            Usage aggregation and request logs
   db.py               SQLite setup and helpers

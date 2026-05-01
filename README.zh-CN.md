@@ -294,7 +294,7 @@ Compose 会把 `.env` 用于变量替换。宿主机 Codex 目录以可读写方
 backend/
   main.py             FastAPI 应用和 API 路由
   accounts.py         Codex 账号扫描与切换
-  images.py           图片生成队列、存储和 API 代理
+  images/             图片生成包、队列、存储和 API 代理
   sessions.py         Codex 会话读取和事件预览
   usage.py            用量聚合和请求日志
   db.py               SQLite 初始化和辅助函数
