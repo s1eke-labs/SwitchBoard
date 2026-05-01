@@ -162,7 +162,7 @@ CHATGPT_BACKEND_BASE=https://chatgpt.com/backend-api
 - 多图任务会保存并展示为多张独立游廊卡片。
 - 上游图片请求使用 `store: false`；后续提示词需要自行写明上下文或附上参考图。
 - 生成图片和参考图保存在 `SWITCHBOARD_DATA_DIR/images`，并通过需要登录的 `/api/images/files/{file_path}` 返回。
-- 任务元数据保存在 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`。如果 SwitchBoard 在任务运行中重启，该任务会恢复为排队状态。
+- 任务元数据保存在 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`。如果 SwitchBoard 在任务运行中重启，该任务会标记为失败以避免重复生成；需要时请手动重试。
 
 浏览器使用的图片接口：
 

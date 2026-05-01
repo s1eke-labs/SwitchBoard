@@ -783,6 +783,89 @@ async def test_image_generation_queue_persists_jobs_and_references(tmp_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_image_generation_queue_marks_running_jobs_failed_on_restart(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO image_jobs (
+                id, prompt, model, size, quality, response_format, status, n, created_at, updated_at
+            )
+            VALUES ('running-job', 'poster', NULL, '1024x1024', 'auto', 'b64_json', 'running', 1, 10, 20)
+            """
+        )
+
+    called = False
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        nonlocal called
+        called = True
+        return ImageGenerationResponse(created=1776000000, model="gpt-image-2", data=[])
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    await queue.start()
+    await asyncio.sleep(0)
+    job = await queue.get("running-job")
+
+    assert not called
+    assert job is not None
+    assert job.status == "failed"
+    assert job.error is not None
+    assert job.error.code == "IMAGE_JOB_INTERRUPTED"
+    assert job.updated_at >= 20
+    await queue.close()
+
+
+@pytest.mark.asyncio
+async def test_image_generation_queue_keeps_partial_results_when_restart_interrupts_job(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    partial_result = ImageGenerationResponse(
+        created=1776000000,
+        model="gpt-image-2",
+        data=[
+            ImageData(
+                file_name="2026/05/running-job/outputs/o1.png",
+                file_url="/api/images/files/2026/05/running-job/outputs/o1.png",
+            )
+        ],
+        response_id="resp-partial",
+    )
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO image_jobs (
+                id, prompt, model, size, quality, response_format, status, n,
+                result_json, upstream_response_id, created_at, updated_at
+            )
+            VALUES (
+                'running-job', 'poster', NULL, '1024x1024', 'auto', 'b64_json', 'running', 4,
+                ?, 'resp-partial', 10, 20
+            )
+            """,
+            (partial_result.model_dump_json(),),
+        )
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        raise AssertionError("Interrupted running jobs must not be generated again")
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    await queue.start()
+    await asyncio.sleep(0)
+    job = await queue.get("running-job")
+
+    assert job is not None
+    assert job.status == "failed"
+    assert job.error is not None
+    assert job.error.code == "IMAGE_JOB_INTERRUPTED"
+    assert job.result is not None
+    assert job.result.response_id == "resp-partial"
+    assert [item.file_name for item in job.result.data] == ["2026/05/running-job/outputs/o1.png"]
+    await queue.close()
+
+
+@pytest.mark.asyncio
 async def test_image_generation_queue_deletes_result_images(tmp_path) -> None:
     settings = _settings(tmp_path)
     image_dir = settings.db_path.parent / "images"

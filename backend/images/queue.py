@@ -407,15 +407,19 @@ class ImageGenerationQueue:
 
     def _reset_running_jobs(self) -> None:
         now = int(time.time())
+        detail = issue_detail(
+            "IMAGE_JOB_INTERRUPTED",
+            "Image generation was interrupted by a service restart. Retry the job to generate again.",
+        )
         try:
             with connect(self._settings.db_path) as conn:
                 conn.execute(
                     """
                     UPDATE image_jobs
-                    SET status = 'queued', updated_at = ?
+                    SET status = 'failed', error_json = ?, updated_at = ?
                     WHERE status = 'running'
                     """,
-                    (now,),
+                    (detail.model_dump_json(), now),
                 )
         except sqlite3.OperationalError as exc:
             if "readonly" not in str(exc).lower():

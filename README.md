@@ -162,7 +162,7 @@ Operational notes:
 - Multi-image jobs are stored and displayed as separate gallery items.
 - Upstream image requests use `store: false`; follow-up prompts should include the needed context or reference images.
 - Generated images and saved references live under `SWITCHBOARD_DATA_DIR/images` and are served through authenticated `/api/images/files/{file_path}` URLs.
-- Job metadata is stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`. If SwitchBoard restarts while a job is running, that job is restored to queued state.
+- Job metadata is stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`. If SwitchBoard restarts while a job is running, that job is marked failed to avoid duplicate generation; retry it manually if needed.
 
 Browser-facing image endpoints:
 
