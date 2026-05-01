@@ -6,9 +6,9 @@ import { useI18n } from "@/i18n";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
 import { sessionPath } from "@/app/routing";
 import { SessionEventList } from "@/features/sessions/SessionEventList";
-import { Button } from "@/components/ui/button";
-import { Card, CardHeader } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Button } from "@/components/heroui/button";
+import { Card, CardHeader } from "@/components/heroui/card";
+import { Input } from "@/components/heroui/input";
 
 const SESSIONS_PAGE_SIZE = 7;
 

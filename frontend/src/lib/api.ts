@@ -304,8 +304,37 @@ export type ImageGenerationJob = {
   error: IssueDetail | null;
 };
 
+export type ImageGenerationJobSummary = Pick<
+  ImageGenerationJob,
+  "id" | "conversation_id" | "prompt" | "size" | "quality" | "n" | "status" | "created_at" | "updated_at" | "position" | "error"
+>;
+
 export type ImageGenerationJobListResponse = {
-  items: ImageGenerationJob[];
+  items: ImageGenerationJobSummary[];
+  total_count: number;
+};
+
+export type ImageGalleryJob = Pick<
+  ImageGenerationJob,
+  "id" | "prompt" | "size" | "quality" | "n" | "status" | "created_at" | "updated_at" | "position" | "references" | "error"
+>;
+
+export type ImageGalleryImage = {
+  url: string | null;
+  revised_prompt: string | null;
+  file_name: string | null;
+  file_url: string | null;
+};
+
+export type ImageGalleryItem = {
+  key: string;
+  job: ImageGalleryJob;
+  image_index: number;
+  image: ImageGalleryImage | null;
+};
+
+export type ImageGalleryListResponse = {
+  items: ImageGalleryItem[];
   total_count: number;
 };
 
@@ -505,5 +534,15 @@ export const api = {
     }),
   imageJobs: ({ page = 1, limit = 20 }: { page?: number; limit?: number } = {}) =>
     request<ImageGenerationJobListResponse>(`/api/images/jobs?page=${page}&limit=${limit}`),
+  imageGalleryItems: ({ page = 1, limit = 20 }: { page?: number; limit?: number } = {}) =>
+    request<ImageGalleryListResponse>(`/api/images/gallery?page=${page}&limit=${limit}`),
   imageJob: (jobId: string) => request<ImageGenerationJob>(`/api/images/jobs/${jobId}`),
+  deleteImageJobResult: (jobId: string, imageIndex: number) =>
+    request<{ ok: boolean }>(`/api/images/jobs/${jobId}/images/${imageIndex}`, {
+      method: "DELETE",
+    }),
+  deleteImageJob: (jobId: string) =>
+    request<{ ok: boolean }>(`/api/images/jobs/${jobId}`, {
+      method: "DELETE",
+    }),
 };

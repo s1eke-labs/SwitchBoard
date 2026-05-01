@@ -6,7 +6,7 @@ Use `README.md` for project overview, setup, commands, Docker behavior, configur
 
 Backend code follows the existing flat FastAPI module style in `backend/`. Use typed public helpers and keep behavior tests focused around the module being changed.
 
-Frontend code uses React, Vite, Tailwind CSS, and shadcn/ui primitives. Prefer existing `frontend/src/components/ui` primitives, add missing shadcn primitives from `frontend/` with `npm run ui -- add <component>`, and keep SwitchBoard-specific composition in `frontend/src/features` or `frontend/src/pages`. Use Sonner toasts for transient status messages.
+Frontend code uses React, Vite, Tailwind CSS, and HeroUI-backed local UI wrappers. Prefer HeroUI components whenever HeroUI provides the needed primitive or interaction pattern; avoid hand-rolling custom UI controls, dialogs, popovers, menus, checkboxes, buttons, cards, inputs, or other standard components unless HeroUI/local wrappers cannot reasonably cover the use case. Prefer existing `frontend/src/components/heroui` wrappers when they already wrap HeroUI components, add missing local wrappers only when useful, and keep SwitchBoard-specific composition in `frontend/src/features` or `frontend/src/pages`. Use HeroUI toast for transient status messages.
 
 ## Validation
 

@@ -82,33 +82,35 @@ For local development, `SWITCHBOARD_DATA_DIR=./data/dev` is a convenient disposa
 
 If `CODEX_HOME` is missing or points to a file instead of a directory, SwitchBoard fails fast during startup with a clear error.
 
-The Images page uses the current `CODEX_HOME/auth.json` ChatGPT access token and calls the Responses upstream directly from the backend. The page submits jobs to a persisted FIFO queue, then polls for completion so the browser is not held open on the long upstream request. Completed and failed jobs trigger in-app toast notifications while SwitchBoard remains open.
+## Images
 
-The Images page renders all image jobs in a paginated gallery. Each gallery tile keeps a stable viewport and uses contained image fitting, so different output ratios remain visible without distortion. Click a tile to open the full preview with its prompt, revised prompt, references, style metadata, download action, and an edit action that places that image into the prompt composer as the only reference image.
+Open the Images page from the app header after signing in. The backend uses the current `CODEX_HOME/auth.json` ChatGPT access token, so no image-specific key is configured in SwitchBoard or sent to the browser.
 
-Image generation requests use `store: false` for upstream compatibility and privacy, so queued jobs are not automatically chained through upstream `previous_response_id`; follow-up prompts should include the needed context or reference images. If an upstream response ID is returned, SwitchBoard may keep it as local job metadata, while ChatGPT access tokens are still never stored.
+Typical workflow:
 
-Image settings expose an aspect ratio, Standard/HD/Ultra HD output tier, and a count of 1, 2, or 4 images instead of raw dimensions. SwitchBoard maps the ratio and tier to the generated resolution and always sends upstream image `quality` as `auto`. Generated resolutions must have a longest side of 3840 px or less, width and height divisible by 16 px, an aspect ratio no wider than 3:1, and a total pixel count from 655,360 through 8,294,400.
+1. Enter a prompt, choose aspect ratio, quality tier, and image count.
+2. Optionally add up to 4 PNG, JPEG, or WebP reference images, each no larger than 10 MB.
+3. Submit the job. SwitchBoard queues it, polls for progress, and shows a toast when it finishes or fails.
+4. Browse results in the gallery. Pages are counted by image tile, not by queue job, and the page size adapts to the gallery viewport.
+5. Open a tile to preview, download, delete, or use the image as the only reference for a follow-up edit.
 
-Image jobs can include up to 4 reference images. Use the plus button above the prompt to upload references in the same fixed-height prompt composer; thumbnail slots stay reserved, and clicking a pending thumbnail opens a local preview before submission. Each reference must be PNG, JPEG, or WebP and no larger than 10 MB. References are saved alongside the job so task history can be reopened after restarting SwitchBoard.
+Operational notes:
 
-The browser-facing queue endpoints are:
+- Multi-image jobs are stored and displayed as separate image files.
+- The upstream request uses `store: false`; follow-up prompts should include any needed context or reference images.
+- Generated images and saved references live under `SWITCHBOARD_DATA_DIR/images` and are served through authenticated `/api/images/files/{filename}` URLs.
+- Job metadata is stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`. If SwitchBoard restarts while a job is running, that job is restored to queued state.
+- ChatGPT access tokens are never stored in SwitchBoard's SQLite database.
 
-```text
-POST /api/images/jobs
-GET /api/images/jobs?page=1&limit=20
-GET /api/images/jobs/{job_id}
-```
+Browser-facing image endpoints:
 
-For direct synchronous integrations, the original generation endpoint remains available:
-
-```text
-POST /api/images/generations
-```
-
-Open the Images page from the app header after signing in. No image-specific upstream key is stored or sent to the browser.
-
-Generated images and saved reference images are stored under `SWITCHBOARD_DATA_DIR/images` and served back through authenticated `/api/images/files/{filename}` URLs. Queue job status, reference metadata, returned upstream response IDs, results, and errors are stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`. If SwitchBoard restarts while a job is running, that job is restored to queued state.
+| Endpoint | Use |
+| --- | --- |
+| `POST /api/images/jobs` | Queue an image generation job. |
+| `GET /api/images/gallery?page=1&limit={page_size}` | Fetch lightweight gallery tiles. |
+| `GET /api/images/jobs?page=1&limit=20` | Fetch lightweight job summaries for status polling. |
+| `GET /api/images/jobs/{job_id}` | Fetch full details for one job. |
+| `POST /api/images/generations` | Run the direct synchronous generation endpoint. |
 
 ## Development Commands
 
@@ -206,7 +208,7 @@ frontend/
   src/pages/         Dashboard, sessions, request log, and image pages
   src/features/      Account, session, and usage UI
   src/lib/           Shared client helpers
-  src/components/ui/ UI primitives
+  src/components/heroui/ HeroUI-backed primitives
   dist/              Built frontend output
 ```
 

@@ -1,6 +1,6 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal } from "@heroui/react";
+import { Checkbox, Modal } from "@heroui/react";
 import {
   CheckCircle2,
   ChevronDown,
@@ -13,16 +13,17 @@ import {
   Palette,
   Plus,
   Pencil,
+  Trash2,
   X,
   XCircle,
   WandSparkles,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@heroui/react";
 import { api, ImageGenerationJob, ImageGenerationRequest, ImageGenerationResponse } from "@/lib/api";
-import type { ImageReferenceInput } from "@/lib/api";
+import type { ImageGalleryItem, ImageGalleryJob, ImageReferenceInput } from "@/lib/api";
 import { formatAppError } from "@/lib/errors";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Button } from "@/components/heroui/button";
+import { Card, CardContent, CardHeader } from "@/components/heroui/card";
 import { useI18n } from "@/i18n";
 import type { TranslationKey } from "@/i18n";
 
@@ -40,7 +41,11 @@ const IMAGE_SIZE_BY_RATIO_AND_QUALITY = {
 const MAX_REFERENCE_IMAGES = 4;
 const MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024;
 const REFERENCE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
-const GALLERY_PAGE_SIZE = 24;
+const GALLERY_CARD_HEIGHT = 220;
+const GALLERY_GRID_GAP = 12;
+const GALLERY_MIN_COLUMN_WIDTH = 220;
+const GALLERY_MAX_PAGE_SIZE = 50;
+const GALLERY_FALLBACK_PAGE_SIZE = 6;
 
 type ImageAspectRatio = (typeof ASPECT_RATIO_OPTIONS)[number];
 type ImageQuality = (typeof QUALITY_OPTIONS)[number];
@@ -56,12 +61,13 @@ type PendingReferenceImage = {
 };
 type GalleryItem = {
   key: string;
-  job: ImageGenerationJob;
+  job: ImageGalleryJob;
   src: string | null;
   index: number;
+  revisedPrompt: string | null;
 };
 
-const STATUS_LABEL_KEYS: Record<ImageGenerationJob["status"], TranslationKey> = {
+const STATUS_LABEL_KEYS: Record<ImageGalleryJob["status"], TranslationKey> = {
   queued: "images.status.queued",
   running: "images.status.running",
   succeeded: "images.status.succeeded",
@@ -79,16 +85,58 @@ function imageSources(result: ImageGenerationResponse | null) {
     .filter((src): src is string => Boolean(src));
 }
 
-function galleryItemsFromJobs(jobs: ImageGenerationJob[]): GalleryItem[] {
-  return jobs.flatMap<GalleryItem>((job) => {
-    const sources = imageSources(job.result);
-    if (sources.length === 0) return [{ key: job.id, job, src: null, index: 0 }];
-    return sources.map((src, index) => ({ key: `${job.id}:${index}`, job, src, index }));
+function gallerySlotCount(job: ImageGenerationJob) {
+  const sources = imageSources(job.result);
+  return isActiveJob(job) ? Math.max(job.n, sources.length, 1) : Math.max(sources.length, 1);
+}
+
+function galleryApiItemsFromJob(job: ImageGenerationJob): ImageGalleryItem[] {
+  return Array.from({ length: gallerySlotCount(job) }, (_, index) => {
+    const image = job.result?.data[index];
+    return {
+      key: `${job.id}:${index}`,
+      job,
+      image_index: index,
+      image: image
+        ? {
+            url: image.file_url ?? image.url,
+            revised_prompt: image.revised_prompt,
+            file_name: image.file_name,
+            file_url: image.file_url,
+          }
+        : null,
+    };
   });
 }
 
-function isActiveJob(job: ImageGenerationJob) {
+function galleryItemsFromApiItems(items: ImageGalleryItem[]): GalleryItem[] {
+  return items.map((item) => {
+    return {
+      key: item.key,
+      job: item.job,
+      src: item.image?.file_url ?? item.image?.url ?? null,
+      index: item.image_index,
+      revisedPrompt: item.image?.revised_prompt ?? null,
+    };
+  });
+}
+
+function isActiveJob(job: ImageGalleryJob) {
   return job.status === "queued" || job.status === "running";
+}
+
+function isSelectableGalleryItem(item: GalleryItem) {
+  return !isActiveJob(item.job) && (Boolean(item.src) || item.job.status === "failed");
+}
+
+function downloadGalleryItem(item: GalleryItem) {
+  if (!item.src) return;
+  const anchor = document.createElement("a");
+  anchor.href = item.src;
+  anchor.download = `switchboard-image-${item.job.updated_at}-${item.index + 1}.png`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 function imageSettingsFromSize(size: string): { aspectRatio: ImageAspectRatio; quality: ImageQuality } | null {
@@ -104,7 +152,7 @@ function imageSettingsFromSize(size: string): { aspectRatio: ImageAspectRatio; q
 
 function formatImageStyleLabel(
   size: string,
-  quality: ImageGenerationJob["quality"],
+  quality: ImageGalleryJob["quality"],
   t: (key: TranslationKey) => string,
 ) {
   const settings = imageSettingsFromSize(size);
@@ -166,11 +214,28 @@ function blobToReference(blob: Blob, fileName: string): Promise<PendingReference
   });
 }
 
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = typeof reader.result === "string" ? reader.result : "";
+      const [, b64Json = ""] = value.split(",", 2);
+      if (!b64Json) {
+        reject(new Error("invalid image data"));
+        return;
+      }
+      resolve(b64Json);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+
 function fileToReference(file: File): Promise<PendingReferenceImage> {
   return blobToReference(file, file.name);
 }
 
-async function sourceToReference(src: string, job: ImageGenerationJob, index: number) {
+async function sourceToReference(src: string, job: ImageGalleryJob, index: number) {
   const response = await fetch(src);
   if (!response.ok) throw new Error("fetch failed");
   const rawBlob = await response.blob();
@@ -182,7 +247,7 @@ async function sourceToReference(src: string, job: ImageGenerationJob, index: nu
   return blobToReference(blob, fileName);
 }
 
-function JobStatusIcon({ job }: { job: ImageGenerationJob }) {
+function JobStatusIcon({ job }: { job: ImageGalleryJob }) {
   if (job.status === "succeeded") return <CheckCircle2 size={15} className="text-emerald-600" />;
   if (job.status === "failed") return <XCircle size={15} className="text-destructive" />;
   if (job.status === "running") return <Loader2 size={15} className="animate-spin text-primary" />;
@@ -391,30 +456,74 @@ function ReferencePreviewModal({
   );
 }
 
+function DeleteConfirmModal({
+  count,
+  deleting,
+  onConfirm,
+  onClose,
+}: {
+  count: number;
+  deleting: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <Modal isOpen onOpenChange={(open) => { if (!open && !deleting) onClose(); }}>
+      <Modal.Backdrop variant="opaque">
+        <Modal.Container placement="center" size="sm" className="p-3">
+          <Modal.Dialog className="overflow-hidden rounded-md bg-background p-0">
+            <Modal.Header className="flex-row items-center justify-between gap-3 border-b px-4 py-3">
+              <Modal.Heading className="truncate text-sm font-semibold">{t("images.deleteConfirmTitle")}</Modal.Heading>
+              <Button type="button" variant="ghost" size="icon" aria-label={t("common.cancel")} disabled={deleting} onClick={onClose}>
+                <X size={18} />
+              </Button>
+            </Modal.Header>
+            <Modal.Body className="px-4 py-4">
+              <p className="text-sm leading-6 text-muted-foreground">{t("images.deleteConfirm", { count })}</p>
+            </Modal.Body>
+            <Modal.Footer className="justify-end gap-2 border-t px-4 py-3">
+              <Button type="button" variant="secondary" disabled={deleting} onClick={onClose}>
+                {t("common.cancel")}
+              </Button>
+              <Button type="button" variant="destructive" disabled={deleting} onClick={onConfirm}>
+                {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                {t("images.deleteConfirmAction")}
+              </Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal>
+  );
+}
+
 function ImagePreviewModal({
   item,
   editing,
+  deleting,
+  retrying,
   onEdit,
+  onDelete,
+  onRetry,
   onClose,
 }: {
   item: GalleryItem;
   editing: boolean;
+  deleting: boolean;
+  retrying: boolean;
   onEdit: (item: GalleryItem) => void;
+  onDelete: (item: GalleryItem) => void;
+  onRetry: (item: GalleryItem) => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
   const { job, src } = item;
-  const revisedPrompt = job.result?.data.find((data) => data.revised_prompt)?.revised_prompt;
+  const revisedPrompt = item.revisedPrompt;
   const styleLabel = formatImageStyleLabel(job.size, job.quality, t);
 
   function handleDownload() {
-    if (!src) return;
-    const anchor = document.createElement("a");
-    anchor.href = src;
-    anchor.download = `switchboard-image-${job.result?.created ?? job.updated_at}-${item.index + 1}.png`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
+    downloadGalleryItem(item);
   }
 
   return (
@@ -435,6 +544,16 @@ function ImagePreviewModal({
                 <Button variant="secondary" size="sm" disabled={!src || editing} onClick={() => onEdit(item)}>
                   {editing ? <Loader2 size={15} className="animate-spin" /> : <Pencil size={15} />}
                   {t("images.edit")}
+                </Button>
+                {job.status === "failed" ? (
+                  <Button variant="secondary" size="sm" disabled={retrying} onClick={() => onRetry(item)}>
+                    {retrying ? <Loader2 size={15} className="animate-spin" /> : <WandSparkles size={15} />}
+                    {t("images.retry")}
+                  </Button>
+                ) : null}
+                <Button variant="destructive" size="sm" disabled={!isSelectableGalleryItem(item) || deleting} onClick={() => onDelete(item)}>
+                  {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                  {t("images.delete")}
                 </Button>
                 <Button type="button" variant="ghost" size="icon" aria-label={t("images.closePreview")} onClick={onClose}>
                   <X size={18} />
@@ -503,11 +622,19 @@ function ImagePreviewModal({
 function ImageGallery({
   items,
   loading,
+  selecting,
+  selectedKeys,
+  deleting,
   onOpenPreview,
+  onToggleSelected,
 }: {
   items: GalleryItem[];
   loading: boolean;
+  selecting: boolean;
+  selectedKeys: Set<string>;
+  deleting: boolean;
   onOpenPreview: (key: string) => void;
+  onToggleSelected: (key: string) => void;
 }) {
   const { t } = useI18n();
   if (loading) {
@@ -527,37 +654,58 @@ function ImageGallery({
     );
   }
   return (
-    <div className="grid auto-rows-[220px] grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+    <div className="grid auto-rows-[220px] grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
       {items.map((item) => {
         const statusLabel = t(STATUS_LABEL_KEYS[item.job.status]);
         const active = isActiveJob(item.job);
+        const selectable = isSelectableGalleryItem(item);
+        const selected = selectedKeys.has(item.key);
         return (
-          <button
+          <div
             key={item.key}
-            type="button"
-            onClick={() => onOpenPreview(item.key)}
-            aria-label={`${t("images.preview")} · ${statusLabel}`}
-            className="group flex h-[220px] min-w-0 flex-col overflow-hidden rounded-md border bg-white text-left transition-colors hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring"
+            className={`group relative flex h-[220px] min-w-0 flex-col overflow-hidden rounded-md border bg-white text-left transition-colors hover:border-primary/50 focus-within:ring-2 focus-within:ring-ring ${
+              selected ? "border-primary ring-2 ring-ring" : ""
+            }`}
           >
-            <div className="flex min-h-0 flex-1 items-center justify-center bg-muted/60 p-2">
-              {item.src ? (
-                <img src={item.src} alt={item.job.prompt} className="h-full w-full object-contain transition-transform group-hover:scale-[1.01]" />
-              ) : (
-                <div className="flex items-center text-muted-foreground" aria-label={statusLabel}>
-                  <JobStatusIcon job={item.job} />
-                </div>
-              )}
-            </div>
-            <div className="h-11 shrink-0 border-t px-3 py-2.5">
-              <div className="flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span className="flex min-w-0 items-center gap-1">
-                  {active ? null : <JobStatusIcon job={item.job} />}
-                  <span className="truncate">{statusLabel}</span>
-                </span>
-                <span className="shrink-0">{formatJobTime(item.job.updated_at)}</span>
+            {selecting ? (
+              <div className="absolute left-2 top-2 z-10 rounded-md bg-white/90 px-1.5 py-1 shadow-soft">
+                <Checkbox
+                  aria-label={t("images.selectImage")}
+                  isSelected={selected}
+                  isDisabled={!selectable || deleting}
+                  onChange={() => onToggleSelected(item.key)}
+                />
               </div>
-            </div>
-          </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                if (selecting) {
+                  if (selectable && !deleting) onToggleSelected(item.key);
+                  return;
+                }
+                onOpenPreview(item.key);
+              }}
+              aria-label={selecting ? t("images.selectImage") : `${t("images.preview")} · ${statusLabel}`}
+              className="flex min-h-0 flex-1 flex-col text-left focus:outline-none"
+            >
+              <div className="flex min-h-0 flex-1 items-center justify-center bg-muted/60 p-2">
+                {item.src ? (
+                  <img src={item.src} alt={item.job.prompt} className="h-full w-full object-contain transition-transform group-hover:scale-[1.01]" />
+                ) : (
+                  <div className="flex items-center text-muted-foreground" aria-label={statusLabel}>
+                    <JobStatusIcon job={item.job} />
+                  </div>
+                )}
+              </div>
+              <div className="h-11 shrink-0 border-t px-3 py-2.5">
+                <div className="flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span className="flex min-w-0 items-center gap-1">{active ? <JobStatusIcon job={item.job} /> : null}</span>
+                  <span className="shrink-0">{formatJobTime(item.job.updated_at)}</span>
+                </div>
+              </div>
+            </button>
+          </div>
         );
       })}
     </div>
@@ -569,7 +717,13 @@ export function ImageStudioPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const galleryBodyRef = useRef<HTMLDivElement | null>(null);
   const referenceImagesRef = useRef<PendingReferenceImage[]>([]);
+  const [galleryLayout, setGalleryLayout] = useState({
+    width: 0,
+    top: 0,
+    viewportHeight: typeof window === "undefined" ? 0 : window.innerHeight,
+  });
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<ImageAspectRatio>("1:1");
   const [quality, setQuality] = useState<ImageQuality>("low");
@@ -582,24 +736,41 @@ export function ImageStudioPage() {
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
   const [galleryPage, setGalleryPage] = useState(1);
   const [editingItemKey, setEditingItemKey] = useState<string | null>(null);
+  const [selectingGallery, setSelectingGallery] = useState(false);
+  const [selectedGalleryKeys, setSelectedGalleryKeys] = useState<Set<string>>(() => new Set());
+  const [pendingDeleteItems, setPendingDeleteItems] = useState<GalleryItem[] | null>(null);
   const trimmedPrompt = prompt.trim();
+  const galleryPageSize = useMemo(() => {
+    if (!galleryLayout.width || !galleryLayout.viewportHeight) return GALLERY_FALLBACK_PAGE_SIZE;
+    const columns = Math.max(
+      1,
+      Math.floor((galleryLayout.width + GALLERY_GRID_GAP) / (GALLERY_MIN_COLUMN_WIDTH + GALLERY_GRID_GAP)),
+    );
+    const availableHeight = Math.max(GALLERY_CARD_HEIGHT, galleryLayout.viewportHeight - galleryLayout.top - 24);
+    const rows = Math.max(1, Math.floor((availableHeight + GALLERY_GRID_GAP) / (GALLERY_CARD_HEIGHT + GALLERY_GRID_GAP)));
+    return Math.max(1, Math.min(GALLERY_MAX_PAGE_SIZE, columns * rows));
+  }, [galleryLayout]);
 
-  const jobs = useQuery({
-    queryKey: ["imageJobs", galleryPage],
-    queryFn: () => api.imageJobs({ page: galleryPage, limit: GALLERY_PAGE_SIZE }),
+  const gallery = useQuery({
+    queryKey: ["imageGallery", galleryPage, galleryPageSize],
+    queryFn: () => api.imageGalleryItems({ page: galleryPage, limit: galleryPageSize }),
     placeholderData: (previousData) => previousData,
     refetchInterval: (query) => {
       const data = query.state.data?.items;
-      return data?.some(isActiveJob) ? 3000 : false;
+      return data?.some((item) => isActiveJob(item.job)) ? 3000 : false;
     },
   });
-  const jobItems = useMemo(() => jobs.data?.items ?? [], [jobs.data?.items]);
-  const galleryItems = useMemo(() => galleryItemsFromJobs(jobItems), [jobItems]);
-  const galleryTotalPages = Math.max(1, Math.ceil((jobs.data?.total_count ?? 0) / GALLERY_PAGE_SIZE));
+  const galleryItems = useMemo(() => galleryItemsFromApiItems(gallery.data?.items ?? []), [gallery.data?.items]);
+  const galleryTotalPages = Math.max(1, Math.ceil((gallery.data?.total_count ?? 0) / galleryPageSize));
   const selectedItem = useMemo(
     () => galleryItems.find((item) => item.key === selectedItemKey) ?? null,
     [galleryItems, selectedItemKey],
   );
+  const selectedGalleryItems = useMemo(
+    () => galleryItems.filter((item) => selectedGalleryKeys.has(item.key) && isSelectableGalleryItem(item)),
+    [galleryItems, selectedGalleryKeys],
+  );
+  const selectedDownloadableCount = selectedGalleryItems.filter((item) => item.src).length;
   const previewReference = useMemo(
     () => referenceImages.find((reference) => reference.id === previewReferenceId) ?? null,
     [previewReferenceId, referenceImages],
@@ -618,23 +789,61 @@ export function ImageStudioPage() {
   }, []);
 
   useEffect(() => {
-    if (!jobs.isFetching && galleryPage > galleryTotalPages) {
+    function measureGallery() {
+      const rect = galleryBodyRef.current?.getBoundingClientRect();
+      setGalleryLayout((current) => {
+        const next = {
+          width: Math.floor(rect?.width ?? 0),
+          top: Math.floor(rect?.top ?? 0),
+          viewportHeight: window.innerHeight,
+        };
+        return current.width === next.width && current.top === next.top && current.viewportHeight === next.viewportHeight
+          ? current
+          : next;
+      });
+    }
+
+    measureGallery();
+    const observer = new ResizeObserver(measureGallery);
+    if (galleryBodyRef.current) observer.observe(galleryBodyRef.current);
+    window.addEventListener("resize", measureGallery);
+    window.addEventListener("orientationchange", measureGallery);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measureGallery);
+      window.removeEventListener("orientationchange", measureGallery);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!gallery.isFetching && galleryPage > galleryTotalPages) {
       setGalleryPage(galleryTotalPages);
     }
-  }, [galleryPage, galleryTotalPages, jobs.isFetching]);
+  }, [galleryPage, galleryTotalPages, gallery.isFetching]);
+
+  useEffect(() => {
+    setSelectedGalleryKeys((current) => {
+      const available = new Set(galleryItems.filter(isSelectableGalleryItem).map((item) => item.key));
+      const next = new Set([...current].filter((key) => available.has(key)));
+      return next.size === current.size ? current : next;
+    });
+  }, [galleryItems]);
 
   const createJob = useMutation({
     mutationFn: (payload: ImageGenerationRequest) => api.createImageJob(payload),
     onSuccess: (job) => {
       setGalleryPage(1);
-      queryClient.setQueryData(["imageJobs", 1], (current: typeof jobs.data | undefined) => {
+      queryClient.setQueryData(["imageGallery", 1, galleryPageSize], (current: typeof gallery.data | undefined) => {
         if (!current) return current;
+        const existingSlots = current.items.filter((item) => item.job.id === job.id).length;
+        const incomingSlots = galleryApiItemsFromJob(job);
         return {
           ...current,
-                    items: [job, ...current.items.filter((item) => item.id !== job.id)].slice(0, GALLERY_PAGE_SIZE),
-          total_count: current.total_count + (current.items.some((item) => item.id === job.id) ? 0 : 1),
+          items: [...incomingSlots, ...current.items.filter((item) => item.job.id !== job.id)].slice(0, galleryPageSize),
+          total_count: current.total_count + Math.max(incomingSlots.length - existingSlots, 0),
         };
       });
+      queryClient.invalidateQueries({ queryKey: ["imageGallery"] });
       queryClient.invalidateQueries({ queryKey: ["imageJobs"] });
       for (const reference of referenceImages) {
         URL.revokeObjectURL(reference.previewUrl);
@@ -643,7 +852,74 @@ export function ImageStudioPage() {
       toast.success(t("images.jobQueued"));
     },
     onError: (error) => {
-      toast.error(t("images.generateFailed"), {
+      toast.danger(t("images.generateFailed"), {
+        description: formatAppError(error),
+      });
+    },
+  });
+
+  const retryJob = useMutation({
+    mutationFn: async (job: ImageGalleryJob) => {
+      const references: ImageReferenceInput[] = [];
+      for (const reference of job.references) {
+        const response = await fetch(reference.file_url);
+        if (!response.ok) throw new Error("fetch failed");
+        references.push({
+          file_name: reference.original_file_name,
+          mime_type: reference.mime_type,
+          b64_json: await blobToBase64(await response.blob()),
+        });
+      }
+      const retry = await api.createImageJob({
+        prompt: job.prompt,
+        size: job.size as ImageGenerationRequest["size"],
+        quality: "auto",
+        n: job.n,
+        response_format: "b64_json",
+        reference_images: references,
+      });
+      await api.deleteImageJob(job.id);
+      return retry;
+    },
+    onSuccess: () => {
+      setGalleryPage(1);
+      setSelectedItemKey(null);
+      queryClient.invalidateQueries({ queryKey: ["imageGallery"] });
+      queryClient.invalidateQueries({ queryKey: ["imageJobs"] });
+      toast.success(t("images.jobQueued"));
+    },
+    onError: (error) => {
+      toast.danger(t("images.retryFailed"), {
+        description: formatAppError(error),
+      });
+    },
+  });
+
+  const deleteImages = useMutation({
+    mutationFn: async (items: GalleryItem[]) => {
+      const orderedItems = [...items].sort((first, second) => {
+        const jobOrder = first.job.id.localeCompare(second.job.id);
+        return jobOrder || second.index - first.index;
+      });
+      for (const item of orderedItems) {
+        if (item.src) {
+          await api.deleteImageJobResult(item.job.id, item.index);
+        } else {
+          await api.deleteImageJob(item.job.id);
+        }
+      }
+    },
+    onSuccess: () => {
+      setPendingDeleteItems(null);
+      setSelectedItemKey(null);
+      setSelectedGalleryKeys(new Set());
+      setSelectingGallery(false);
+      queryClient.invalidateQueries({ queryKey: ["imageGallery"] });
+      queryClient.invalidateQueries({ queryKey: ["imageJobs"] });
+      toast.success(t("images.deleted"));
+    },
+    onError: (error) => {
+      toast.danger(t("images.deleteFailed"), {
         description: formatAppError(error),
       });
     },
@@ -653,23 +929,23 @@ export function ImageStudioPage() {
     const incoming = Array.from(files);
     const slots = MAX_REFERENCE_IMAGES - referenceImages.length;
     if (incoming.length > slots) {
-      toast.error(t("images.referenceTooMany"));
+      toast.danger(t("images.referenceTooMany"));
     }
     const accepted = incoming.slice(0, Math.max(0, slots));
     const nextReferences: PendingReferenceImage[] = [];
     for (const file of accepted) {
       if (!REFERENCE_IMAGE_TYPES.has(file.type)) {
-        toast.error(t("images.referenceUnsupported", { name: file.name }));
+        toast.danger(t("images.referenceUnsupported", { name: file.name }));
         continue;
       }
       if (file.size > MAX_REFERENCE_IMAGE_BYTES) {
-        toast.error(t("images.referenceTooLarge", { name: file.name }));
+        toast.danger(t("images.referenceTooLarge", { name: file.name }));
         continue;
       }
       try {
         nextReferences.push(await fileToReference(file));
       } catch {
-        toast.error(t("images.referenceReadFailed", { name: file.name }));
+        toast.danger(t("images.referenceReadFailed", { name: file.name }));
       }
     }
     if (nextReferences.length > 0) {
@@ -711,10 +987,55 @@ export function ImageStudioPage() {
       window.setTimeout(() => textareaRef.current?.focus(), 0);
       toast.success(t("images.editReady"));
     } catch {
-      toast.error(t("images.editReferenceFailed"));
+      toast.danger(t("images.editReferenceFailed"));
     } finally {
       setEditingItemKey(null);
     }
+  }
+
+  function toggleGallerySelection(key: string) {
+    setSelectedGalleryKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectingGallery() {
+    setSelectingGallery((current) => {
+      if (current) setSelectedGalleryKeys(new Set());
+      return !current;
+    });
+  }
+
+  function downloadSelectedImages() {
+    for (const item of selectedGalleryItems) {
+      downloadGalleryItem(item);
+    }
+  }
+
+  function deleteSelectedImages() {
+    if (selectedGalleryItems.length === 0 || deleteImages.isPending) return;
+    setPendingDeleteItems(selectedGalleryItems);
+  }
+
+  function deletePreviewImage(item: GalleryItem) {
+    if (!isSelectableGalleryItem(item) || deleteImages.isPending) return;
+    setPendingDeleteItems([item]);
+  }
+
+  function retryPreviewJob(item: GalleryItem) {
+    if (item.job.status !== "failed" || retryJob.isPending) return;
+    retryJob.mutate(item.job);
+  }
+
+  function confirmDeleteImages() {
+    if (!pendingDeleteItems?.length || deleteImages.isPending) return;
+    deleteImages.mutate(pendingDeleteItems);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -738,7 +1059,7 @@ export function ImageStudioPage() {
   }
 
   function selectGalleryPage(targetPage: number) {
-    if (targetPage === galleryPage || targetPage < 1 || targetPage > galleryTotalPages || jobs.isFetching) return;
+    if (targetPage === galleryPage || targetPage < 1 || targetPage > galleryTotalPages || gallery.isFetching) return;
     setGalleryPage(targetPage);
     setSelectedItemKey(null);
   }
@@ -876,14 +1197,47 @@ export function ImageStudioPage() {
           </CardContent>
         </Card>
 
-        <Card className="flex min-h-[520px] flex-col overflow-hidden">
+        <Card className="flex min-h-[520px] flex-col">
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <ImageIcon size={18} className="text-primary" />
                 <h2 className="truncate text-base font-bold">{t("images.gallery")}</h2>
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex flex-wrap items-center justify-end gap-1">
+                {selectingGallery ? (
+                  <>
+                    <span className="px-2 text-xs font-semibold text-muted-foreground">
+                      {t("images.selectedCount", { count: selectedGalleryItems.length })}
+                    </span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={selectedDownloadableCount === 0 || deleteImages.isPending}
+                      onClick={downloadSelectedImages}
+                    >
+                      <Download size={15} />
+                      {t("images.download")}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={selectedGalleryItems.length === 0 || deleteImages.isPending}
+                      onClick={deleteSelectedImages}
+                    >
+                      {deleteImages.isPending ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                      {t("images.delete")}
+                    </Button>
+                  </>
+                ) : null}
+                <Button
+                  variant={selectingGallery ? "secondary" : "default"}
+                  size="sm"
+                  onClick={toggleSelectingGallery}
+                  disabled={gallery.isPending || deleteImages.isPending}
+                >
+                  {selectingGallery ? t("common.cancel") : t("images.select")}
+                </Button>
                 <Button
                   aria-label={t("common.previousPage")}
                   title={t("common.previousPage")}
@@ -891,15 +1245,15 @@ export function ImageStudioPage() {
                   size="icon"
                   className="h-8 w-8 rounded-md"
                   onClick={() => selectGalleryPage(Math.max(1, galleryPage - 1))}
-                  disabled={galleryPage === 1 || jobs.isFetching}
+                  disabled={galleryPage === 1 || gallery.isFetching}
                 >
                   <ChevronLeft size={15} />
                 </Button>
                 <PageSelector
                   page={galleryPage}
                   totalPages={galleryTotalPages}
-                  disabled={jobs.isFetching}
-                  jumping={jobs.isFetching}
+                  disabled={gallery.isFetching}
+                  jumping={gallery.isFetching}
                   onSelect={selectGalleryPage}
                 />
                 <Button
@@ -909,15 +1263,25 @@ export function ImageStudioPage() {
                   size="icon"
                   className="h-8 w-8 rounded-md"
                   onClick={() => selectGalleryPage(Math.min(galleryTotalPages, galleryPage + 1))}
-                  disabled={galleryPage >= galleryTotalPages || jobs.isFetching}
+                  disabled={galleryPage >= galleryTotalPages || gallery.isFetching}
                 >
                   <ChevronRight size={15} />
                 </Button>
               </div>
             </div>
           </CardHeader>
-          <CardContent className="min-h-[456px] flex-1 overflow-auto p-4">
-            <ImageGallery items={galleryItems} loading={jobs.isPending} onOpenPreview={setSelectedItemKey} />
+          <CardContent className="min-h-[456px] flex-1 p-4">
+            <div ref={galleryBodyRef}>
+              <ImageGallery
+                items={galleryItems}
+                loading={gallery.isPending}
+                selecting={selectingGallery}
+                selectedKeys={selectedGalleryKeys}
+                deleting={deleteImages.isPending}
+                onOpenPreview={setSelectedItemKey}
+                onToggleSelected={toggleGallerySelection}
+              />
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -926,8 +1290,20 @@ export function ImageStudioPage() {
         <ImagePreviewModal
           item={selectedItem}
           editing={editingItemKey === selectedItem.key}
+          deleting={deleteImages.isPending}
+          retrying={retryJob.isPending}
           onEdit={handleEditItem}
+          onDelete={deletePreviewImage}
+          onRetry={retryPreviewJob}
           onClose={() => setSelectedItemKey(null)}
+        />
+      ) : null}
+      {pendingDeleteItems ? (
+        <DeleteConfirmModal
+          count={pendingDeleteItems.length}
+          deleting={deleteImages.isPending}
+          onConfirm={confirmDeleteImages}
+          onClose={() => setPendingDeleteItems(null)}
         />
       ) : null}
       {previewReference ? <ReferencePreviewModal reference={previewReference} onClose={() => setPreviewReferenceId(null)} /> : null}

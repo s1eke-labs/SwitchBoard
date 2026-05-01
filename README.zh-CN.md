@@ -82,33 +82,35 @@ npm run dev
 
 如果 `CODEX_HOME` 不存在，或者指向的是文件而不是目录，SwitchBoard 会在启动时快速失败并给出明确错误。
 
-作图页会由后端读取当前 `CODEX_HOME/auth.json` 中的 ChatGPT access token，并直连 Responses 上游。页面会先把请求提交到持久化 FIFO 队列，再轮询任务状态，因此浏览器不用一直挂在漫长的上游请求上。只要 SwitchBoard 页面仍然打开，任务完成或失败后都会弹出应用内通知。
+## 作图
 
-作图页会把所有图片任务渲染成分页图片游廊。每个游廊卡片都有固定视图，图片会在卡片内自适应显示，因此不同比例的输出不会变形或被强行裁切。点击卡片后会展开原图预览，并显示提示词、修订提示词、参考图、风格信息、下载操作，以及一个“编辑”按钮；点击编辑会把这张图作为唯一参考图放回输入区。
+登录后从应用头部进入“作图”页面。后端会使用当前 `CODEX_HOME/auth.json` 里的 ChatGPT access token，因此不需要在 SwitchBoard 里配置图片专用密钥，也不会把 token 返回给浏览器。
 
-图片生成请求会以 `store: false` 发送，以兼容不允许保存响应的上游并减少上游留存；队列任务不会再自动通过上游 `previous_response_id` 串联上下文，后续提示词需要自行写明上下文或附上参考图。如果上游仍返回 response id，SwitchBoard 可能会把它作为本地任务元数据保存，但仍不会保存 ChatGPT access token。
+常用流程：
 
-作图设置只展示比例、普通/高清/超清输出档位，以及 1、2、4 张数量选择，不再直接展示原始尺寸。SwitchBoard 会用比例和档位映射出实际生成分辨率，并始终把上游图片 `quality` 参数设为 `auto`。生成分辨率必须满足：最长边不超过 3840 px，宽和高都能被 16 px 整除，长短边比例不超过 3:1，总像素数在 655,360 到 8,294,400 之间。
+1. 输入提示词，选择比例、质量档位和生成张数。
+2. 可选上传最多 4 张参考图；格式必须是 PNG、JPEG 或 WebP，每张不超过 10 MB。
+3. 提交任务。SwitchBoard 会加入持久化队列、轮询进度，并在完成或失败时弹出通知。
+4. 在游廊浏览结果。页码按图片卡片计数，不按队列任务计数；每页数量会根据游廊视口自适应。
+5. 打开图片卡片后，可以预览、下载、删除，或把该图作为唯一参考图继续编辑。
 
-图片任务最多可以包含 4 张参考图。使用提示词上方的加号按钮上传参考图，参考图会和提示词放在同一个固定高度输入区；缩略图槽位会提前预留，提交前点击缩略图可以本地放大预览。每张参考图必须是 PNG、JPEG 或 WebP，且不超过 10 MB。参考图会随任务保存，重启 SwitchBoard 后仍可在任务历史里回看。
+运行约定：
 
-浏览器使用的队列接口是：
+- 多图任务会保存并展示为多张独立图片。
+- 上游请求使用 `store: false`；后续提示词需要自行写明上下文或附上参考图。
+- 生成图片和参考图保存在 `SWITCHBOARD_DATA_DIR/images`，并通过需要登录的 `/api/images/files/{filename}` 返回。
+- 任务元数据保存在 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`。如果 SwitchBoard 在任务运行中重启，该任务会恢复为排队状态。
+- ChatGPT access token 不会写入 SwitchBoard 的 SQLite 数据库。
 
-```text
-POST /api/images/jobs
-GET /api/images/jobs?page=1&limit=20
-GET /api/images/jobs/{job_id}
-```
+浏览器使用的图片接口：
 
-如果需要直接同步调用，原来的生成接口仍然可用：
-
-```text
-POST /api/images/generations
-```
-
-登录后从应用头部进入“作图”页面即可。不需要配置图片专用上游密钥，也不会把 token 返回给前端。
-
-生成图片和已保存参考图都会保存在 `SWITCHBOARD_DATA_DIR/images` 下，并通过需要登录的 `/api/images/files/{filename}` 地址返回给前端预览。队列任务状态、参考图元数据、上游返回的 response id、结果和错误会写入 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`。如果 SwitchBoard 在任务运行中重启，该任务会恢复为排队状态。
+| 接口 | 用途 |
+| --- | --- |
+| `POST /api/images/jobs` | 提交图片生成任务。 |
+| `GET /api/images/gallery?page=1&limit={page_size}` | 获取轻量游廊卡片。 |
+| `GET /api/images/jobs?page=1&limit=20` | 获取轻量任务摘要，用于状态轮询。 |
+| `GET /api/images/jobs/{job_id}` | 获取单个任务完整详情。 |
+| `POST /api/images/generations` | 直接同步调用图片生成接口。 |
 
 ## 开发命令
 
@@ -206,7 +208,7 @@ frontend/
   src/pages/         仪表盘、会话、请求日志和作图页面
   src/features/      账号、会话和用量 UI
   src/lib/           共享客户端辅助函数
-  src/components/ui/ UI 基础组件
+  src/components/heroui/ HeroUI 封装基础组件
   dist/              已构建前端输出
 ```
 

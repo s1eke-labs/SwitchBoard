@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Download, Loader2, RefreshCw, Upload } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@heroui/react";
 import { api, AccountDTO } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { formatAppError, formatIssueMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/heroui/button";
 import { AccountCard } from "@/features/accounts/AccountCard";
 
 const COLLAPSED_VISIBLE_COUNT = 3;
@@ -47,26 +47,27 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
   function handleSwitch(accountId: string) {
     const targetAccount = accounts.find((account) => account.account_id === accountId);
     const targetName = targetAccount?.display_name ?? t("accounts.defaultName");
+    const toastId = toast(t("accounts.switchingTo", { name: targetName }), { isLoading: true });
     const promise = switchAccount.mutateAsync(accountId);
 
-    toast.promise(promise, {
-      loading: t("accounts.switchingTo", { name: targetName }),
-      success: (result) => {
+    promise
+      .then((result) => {
+        toast.close(toastId);
         if (result.warning) {
           toast.warning(t("accounts.scanWarningTitle"), {
             description: formatIssueMessage(result.warning) ?? result.warning.message,
           });
         }
-        return {
-          message: t("accounts.accountSwitched"),
+        toast.success(t("accounts.accountSwitched"), {
           description: t("accounts.accountSwitchedDescription", { name: result.account.display_name }),
-        };
-      },
-      error: (error) => ({
-        message: t("accounts.switchFailed"),
-        description: error instanceof Error ? formatAppError(error) : t("accounts.switchFailedFallback"),
-      }),
-    });
+        });
+      })
+      .catch((error) => {
+        toast.close(toastId);
+        toast.danger(t("accounts.switchFailed"), {
+          description: error instanceof Error ? formatAppError(error) : t("accounts.switchFailedFallback"),
+        });
+      });
   }
 
   function configFileName() {
@@ -88,22 +89,25 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
   }
 
   function handleExportConfig() {
+    const toastId = toast(t("accounts.exportingConfig"), { isLoading: true });
     const promise = exportConfig.mutateAsync().then((config) => {
       downloadConfigFile(config);
       return config;
     });
 
-    toast.promise(promise, {
-      loading: t("accounts.exportingConfig"),
-      success: (config) => ({
-        message: t("accounts.configExported"),
-        description: t("accounts.configExportedDescription", { count: config.accounts.length }),
-      }),
-      error: (error) => ({
-        message: t("accounts.exportFailed"),
-        description: error instanceof Error ? formatAppError(error) : t("accounts.exportFailedFallback"),
-      }),
-    });
+    promise
+      .then((config) => {
+        toast.close(toastId);
+        toast.success(t("accounts.configExported"), {
+          description: t("accounts.configExportedDescription", { count: config.accounts.length }),
+        });
+      })
+      .catch((error) => {
+        toast.close(toastId);
+        toast.danger(t("accounts.exportFailed"), {
+          description: error instanceof Error ? formatAppError(error) : t("accounts.exportFailedFallback"),
+        });
+      });
   }
 
   async function handleImportConfig(file: File) {
@@ -118,7 +122,7 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
         }),
       });
     } catch (error) {
-      toast.error(t("accounts.importFailed"), {
+      toast.danger(t("accounts.importFailed"), {
         description: error instanceof Error ? formatAppError(error) : t("accounts.importFailedFallback"),
       });
     }

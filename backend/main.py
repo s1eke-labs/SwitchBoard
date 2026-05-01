@@ -17,6 +17,7 @@ from config import get_settings, validate_runtime_settings
 from config_transfer import ConfigExportDTO, ConfigImportSummary, export_config, import_config
 from db import init_db
 from images import (
+    ImageGalleryListResponse,
     ImageGenerationError,
     ImageGenerationJobListResponse,
     ImageGenerationJobResponse,
@@ -319,12 +320,35 @@ def create_app() -> FastAPI:
         except ImageGenerationError as exc:
             raise http_error_from_detail(exc.status_code, exc.detail) from exc
 
+    @app.get("/api/images/gallery", response_model=ImageGalleryListResponse, dependencies=authed)
+    async def image_gallery(page: int = 1, limit: int = 20) -> ImageGalleryListResponse:
+        try:
+            return await image_queue.list_gallery_items(page=page, limit=max(1, min(limit, 50)))
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
     @app.get("/api/images/jobs/{job_id}", response_model=ImageGenerationJobResponse, dependencies=authed)
     async def image_job(job_id: str) -> ImageGenerationJobResponse:
         job = await image_queue.get(job_id)
         if job is None:
             raise http_error(status.HTTP_404_NOT_FOUND, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
         return job
+
+    @app.delete("/api/images/jobs/{job_id}/images/{image_index}", response_model=dict[str, bool], dependencies=authed)
+    async def delete_image_job_result(job_id: str, image_index: int) -> dict[str, bool]:
+        try:
+            await image_queue.delete_result_image(job_id, image_index)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+        return {"ok": True}
+
+    @app.delete("/api/images/jobs/{job_id}", response_model=dict[str, bool], dependencies=authed)
+    async def delete_image_job(job_id: str) -> dict[str, bool]:
+        try:
+            await image_queue.delete_job(job_id)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+        return {"ok": True}
 
     @app.get("/api/images/files/{filename}", dependencies=authed)
     def image_file(filename: str) -> FileResponse:

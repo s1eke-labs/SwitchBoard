@@ -5,9 +5,9 @@ import { AccountDTO, api, UsageRequestLogDTO, UsageRequestLogsResponse } from "@
 import { getCurrentLocale, translate, useI18n } from "@/i18n";
 import { formatAppError } from "@/lib/errors";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/heroui/button";
+import { Card, CardContent, CardHeader } from "@/components/heroui/card";
+import { Badge } from "@/components/heroui/badge";
 
 const REQUEST_LOG_PAGE_SIZE = 30;
 const ALL_ACCOUNTS_FILTER = "__all__";

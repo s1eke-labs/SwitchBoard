@@ -145,8 +145,55 @@ class ImageGenerationJobResponse(BaseModel):
     error: IssueDetail | None = None
 
 
+class ImageGenerationJobSummaryResponse(BaseModel):
+    id: str
+    conversation_id: str | None = None
+    prompt: str
+    size: str
+    quality: str
+    n: int
+    status: ImageJobStatus
+    created_at: int
+    updated_at: int
+    position: int | None = None
+    error: IssueDetail | None = None
+
+
 class ImageGenerationJobListResponse(BaseModel):
-    items: list[ImageGenerationJobResponse]
+    items: list[ImageGenerationJobSummaryResponse]
+    total_count: int
+
+
+class ImageGalleryImageResponse(BaseModel):
+    url: str | None = None
+    revised_prompt: str | None = None
+    file_name: str | None = None
+    file_url: str | None = None
+
+
+class ImageGalleryJobResponse(BaseModel):
+    id: str
+    prompt: str
+    size: str
+    quality: str
+    n: int
+    status: ImageJobStatus
+    created_at: int
+    updated_at: int
+    position: int | None = None
+    references: list[ImageReferenceData] = Field(default_factory=list)
+    error: IssueDetail | None = None
+
+
+class ImageGalleryItemResponse(BaseModel):
+    key: str
+    job: ImageGalleryJobResponse
+    image_index: int
+    image: ImageGalleryImageResponse | None = None
+
+
+class ImageGalleryListResponse(BaseModel):
+    items: list[ImageGalleryItemResponse]
     total_count: int
 
 
@@ -159,6 +206,56 @@ class ImageGenerationError(Exception):
 
 def _image_error(status_code: int, code: str, message: str) -> ImageGenerationError:
     return ImageGenerationError(status_code, issue_detail(code, message))
+
+
+def _gallery_slot_count(job: ImageGenerationJobResponse) -> int:
+    result_count = len(job.result.data) if job.result else 0
+    if job.status in {"queued", "running"}:
+        return max(job.n, result_count, 1)
+    return max(result_count, 1)
+
+
+def _gallery_job_from_job(job: ImageGenerationJobResponse) -> ImageGalleryJobResponse:
+    return ImageGalleryJobResponse(
+        id=job.id,
+        prompt=job.prompt,
+        size=job.size,
+        quality=job.quality,
+        n=job.n,
+        status=job.status,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        position=job.position,
+        references=job.references,
+        error=job.error,
+    )
+
+
+def _job_summary_from_job(job: ImageGenerationJobResponse) -> ImageGenerationJobSummaryResponse:
+    return ImageGenerationJobSummaryResponse(
+        id=job.id,
+        conversation_id=job.conversation_id,
+        prompt=job.prompt,
+        size=job.size,
+        quality=job.quality,
+        n=job.n,
+        status=job.status,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        position=job.position,
+        error=job.error,
+    )
+
+
+def _gallery_image_from_data(data: ImageData | None) -> ImageGalleryImageResponse | None:
+    if data is None:
+        return None
+    return ImageGalleryImageResponse(
+        url=data.file_url or data.url,
+        revised_prompt=data.revised_prompt,
+        file_name=data.file_name,
+        file_url=data.file_url,
+    )
 
 
 def _base64_from_data_url(value: str) -> str | None:
@@ -278,6 +375,12 @@ def _image_tool_model(settings: Settings, payload: ImageGenerationRequest) -> st
     return payload.model or settings.image_model
 
 
+def _image_generation_instructions(payload: ImageGenerationRequest) -> str:
+    if payload.n == 1:
+        return IMAGE_GENERATION_INSTRUCTIONS
+    return f"{IMAGE_GENERATION_INSTRUCTIONS} Create exactly {payload.n} separate images."
+
+
 def build_upstream_payload(settings: Settings, payload: ImageGenerationRequest) -> dict[str, object]:
     content: list[dict[str, object]] = [
         {
@@ -297,13 +400,12 @@ def build_upstream_payload(settings: Settings, payload: ImageGenerationRequest) 
         "model": _image_tool_model(settings, payload),
         "size": payload.size,
         "quality": "auto",
-        "n": payload.n,
     }
     if not payload.reference_images:
         tool["action"] = "generate"
     upstream_payload: dict[str, object] = {
         "model": settings.image_responses_model,
-        "instructions": IMAGE_GENERATION_INSTRUCTIONS,
+        "instructions": _image_generation_instructions(payload),
         "input": [
             {
                 "role": "user",
@@ -562,7 +664,12 @@ def _payloads_from_text(text: str, settings: Settings, access_token: str) -> lis
     return [payload]
 
 
-async def _payloads_from_streaming_response(response: httpx.Response, settings: Settings, access_token: str) -> list[object]:
+async def _payloads_from_streaming_response(
+    response: httpx.Response,
+    settings: Settings,
+    access_token: str,
+    on_payload: Callable[[object], Awaitable[None]] | None = None,
+) -> list[object]:
     chunks: list[str] = []
     async for raw_line in response.aiter_lines():
         line = raw_line.rstrip("\r")
@@ -578,6 +685,8 @@ async def _payloads_from_streaming_response(response: httpx.Response, settings: 
                     _payload_type(payload),
                     _json_for_debug(_value_for_debug(payload), access_token),
                 )
+                if on_payload is not None:
+                    await on_payload(payload)
     return _payloads_from_text("\n".join(chunks), settings, access_token)
 
 
@@ -611,6 +720,27 @@ def _response_id_from_payloads(payloads: list[object]) -> str | None:
     return None
 
 
+def _failed_response_error_from_payloads(payloads: list[object]) -> IssueDetail | None:
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("type") != "response.failed":
+            continue
+        response = payload.get("response")
+        if not isinstance(response, dict):
+            continue
+        error = response.get("error")
+        if not isinstance(error, dict):
+            continue
+        message = error.get("message")
+        code = error.get("code")
+        if isinstance(message, str) and message:
+            return issue_detail("IMAGE_UPSTREAM_ERROR", message)
+        if isinstance(code, str) and code:
+            return issue_detail("IMAGE_UPSTREAM_ERROR", code)
+    return None
+
+
 def _image_output_dir(settings: Settings) -> Path:
     output_dir = settings.image_output_dir or settings.db_path.parent / "images"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -639,6 +769,24 @@ def _save_image_file(settings: Settings, data: ImageData, created: int) -> Image
     data.saved_path = str(path)
     data.url = data.file_url
     return data
+
+
+def _delete_private_file(path_value: str | None) -> None:
+    if not path_value:
+        return
+    with suppress(OSError):
+        Path(path_value).unlink()
+
+
+def _response_for_storage(result: ImageGenerationResponse) -> ImageGenerationResponse:
+    return result.model_copy(
+        update={
+            "data": [
+                item.model_copy(update={"b64_json": None}) if item.file_url or item.saved_path else item
+                for item in result.data
+            ]
+        }
+    )
 
 
 def image_file_path(settings: Settings, filename: str) -> Path:
@@ -688,12 +836,13 @@ def _save_reference_file(
 
 
 ImageGenerator = Callable[[Settings, ImageGenerationRequest], Awaitable[ImageGenerationResponse]]
+ImageProgressCallback = Callable[[ImageGenerationResponse], Awaitable[None]]
 
 
 class ImageGenerationQueue:
     def __init__(self, settings: Settings, generator: ImageGenerator | None = None) -> None:
         self._settings = settings
-        self._generator = generator or generate_image
+        self._generator = generator
         self._lock = asyncio.Lock()
         self._worker_task: asyncio.Task[None] | None = None
         init_db(settings.db_path)
@@ -764,6 +913,70 @@ class ImageGenerationQueue:
         async with self._lock:
             return self._job_response_from_db(job_id)
 
+    async def delete_result_image(self, job_id: str, image_index: int) -> None:
+        if image_index < 0:
+            raise _image_error(400, "IMAGE_INVALID_INDEX", "Image index is invalid")
+        async with self._lock:
+            with connect(self._settings.db_path) as conn:
+                job = conn.execute("SELECT * FROM image_jobs WHERE id = ?", (job_id,)).fetchone()
+                if job is None:
+                    raise _image_error(404, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
+                if job["status"] in {"queued", "running"}:
+                    raise _image_error(409, "IMAGE_JOB_ACTIVE", "Image generation job is still active")
+                result = ImageGenerationResponse.model_validate_json(job["result_json"]) if job["result_json"] else None
+                if result is None or image_index >= len(result.data):
+                    raise _image_error(404, "IMAGE_NOT_FOUND", "Image not found")
+                removed = result.data.pop(image_index)
+                _delete_private_file(removed.saved_path)
+                if result.data:
+                    conn.execute(
+                        """
+                        UPDATE image_jobs
+                        SET result_json = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (result.model_dump_json(), int(time.time()), job_id),
+                    )
+                    return
+                reference_rows = list(
+                    conn.execute(
+                        """
+                        SELECT file_name FROM image_job_references
+                        WHERE job_id = ?
+                        """,
+                        (job_id,),
+                    )
+                )
+                conn.execute("DELETE FROM image_jobs WHERE id = ?", (job_id,))
+            for row in reference_rows:
+                with suppress(OSError, ValueError):
+                    image_file_path(self._settings, str(row["file_name"])).unlink()
+
+    async def delete_job(self, job_id: str) -> None:
+        async with self._lock:
+            with connect(self._settings.db_path) as conn:
+                job = conn.execute("SELECT * FROM image_jobs WHERE id = ?", (job_id,)).fetchone()
+                if job is None:
+                    raise _image_error(404, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
+                if job["status"] in {"queued", "running"}:
+                    raise _image_error(409, "IMAGE_JOB_ACTIVE", "Image generation job is still active")
+                result = ImageGenerationResponse.model_validate_json(job["result_json"]) if job["result_json"] else None
+                reference_rows = list(
+                    conn.execute(
+                        """
+                        SELECT file_name FROM image_job_references
+                        WHERE job_id = ?
+                        """,
+                        (job_id,),
+                    )
+                )
+                conn.execute("DELETE FROM image_jobs WHERE id = ?", (job_id,))
+            for item in result.data if result else []:
+                _delete_private_file(item.saved_path)
+            for row in reference_rows:
+                with suppress(OSError, ValueError):
+                    image_file_path(self._settings, str(row["file_name"])).unlink()
+
     async def list_recent(self, page: int = 1, limit: int = 20) -> ImageGenerationJobListResponse:
         if page < 1:
             raise _image_error(400, "IMAGE_JOB_INVALID_PAGE", "Image job page is invalid")
@@ -784,9 +997,56 @@ class ImageGenerationQueue:
                     )
                 ]
             return ImageGenerationJobListResponse(
-                items=[job for job_id in job_ids if (job := self._job_response_from_db(job_id)) is not None],
+                items=[
+                    _job_summary_from_job(job)
+                    for job_id in job_ids
+                    if (job := self._job_response_from_db(job_id)) is not None
+                ],
                 total_count=total_count,
             )
+
+    async def list_gallery_items(self, page: int = 1, limit: int = 20) -> ImageGalleryListResponse:
+        if page < 1:
+            raise _image_error(400, "IMAGE_JOB_INVALID_PAGE", "Image job page is invalid")
+        async with self._lock:
+            with connect(self._settings.db_path) as conn:
+                job_ids = [
+                    str(row["id"])
+                    for row in conn.execute(
+                        """
+                        SELECT id FROM image_jobs
+                        ORDER BY created_at DESC, rowid DESC
+                        """
+                    )
+                ]
+            jobs = [job for job_id in job_ids if (job := self._job_response_from_db(job_id)) is not None]
+            slot_counts = [_gallery_slot_count(job) for job in jobs]
+            total_count = sum(slot_counts)
+            start = (page - 1) * limit
+            end = start + limit
+            items: list[ImageGalleryItemResponse] = []
+            cursor = 0
+            for job, slot_count in zip(jobs, slot_counts):
+                if cursor + slot_count <= start:
+                    cursor += slot_count
+                    continue
+                gallery_job = _gallery_job_from_job(job)
+                for image_index in range(slot_count):
+                    absolute_index = cursor + image_index
+                    if start <= absolute_index < end:
+                        image = job.result.data[image_index] if job.result and image_index < len(job.result.data) else None
+                        items.append(
+                            ImageGalleryItemResponse(
+                                key=f"{job.id}:{image_index}",
+                                job=gallery_job,
+                                image_index=image_index,
+                                image=_gallery_image_from_data(image),
+                            )
+                        )
+                cursor += slot_count
+                if cursor >= end:
+                    break
+            return ImageGalleryListResponse(items=items, total_count=total_count)
 
     async def close(self) -> None:
         task = self._worker_task
@@ -937,6 +1197,7 @@ class ImageGenerationQueue:
 
     def _finish_job(self, job_id: str, result: ImageGenerationResponse) -> None:
         now = int(time.time())
+        stored_result = _response_for_storage(result)
         with connect(self._settings.db_path) as conn:
             conn.execute(
                 """
@@ -945,7 +1206,21 @@ class ImageGenerationQueue:
                     upstream_response_id = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (result.model_dump_json(), result.response_id, now, job_id),
+                (stored_result.model_dump_json(), stored_result.response_id, now, job_id),
+            )
+
+    def _update_job_result(self, job_id: str, result: ImageGenerationResponse) -> None:
+        now = int(time.time())
+        stored_result = _response_for_storage(result)
+        with connect(self._settings.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE image_jobs
+                SET result_json = ?, error_json = NULL,
+                    upstream_response_id = ?, updated_at = ?
+                WHERE id = ? AND status = 'running'
+                """,
+                (stored_result.model_dump_json(), stored_result.response_id, now, job_id),
             )
 
     def _fail_job(self, job_id: str, detail: IssueDetail) -> None:
@@ -966,8 +1241,16 @@ class ImageGenerationQueue:
                 if job_id is None:
                     return
                 payload = self._payload_from_job_id(job_id)
+
+            async def update_partial_result(result: ImageGenerationResponse) -> None:
+                async with self._lock:
+                    self._update_job_result(job_id, result)
+
             try:
-                result = await self._generator(self._settings, payload)
+                if self._generator is None:
+                    result = await generate_image(self._settings, payload, progress_callback=update_partial_result)
+                else:
+                    result = await self._generator(self._settings, payload)
             except ImageGenerationError as exc:
                 async with self._lock:
                     self._fail_job(job_id, exc.detail)
@@ -980,10 +1263,82 @@ class ImageGenerationQueue:
                     self._finish_job(job_id, result)
 
 
+def _image_data_key(data: ImageData) -> str | None:
+    return data.file_url or data.saved_path or data.b64_json or data.url
+
+
 async def generate_image(
     settings: Settings,
     payload: ImageGenerationRequest,
     transport: httpx.AsyncBaseTransport | None = None,
+    progress_callback: ImageProgressCallback | None = None,
+) -> ImageGenerationResponse:
+    _validate_payload(settings, payload)
+    if payload.n == 1:
+        return await _generate_image_request(settings, payload, transport=transport, progress_callback=progress_callback)
+
+    accumulated: list[ImageData] = []
+    seen_data: set[str] = set()
+    created = int(time.time())
+    response_id: str | None = None
+
+    def merge_result(result: ImageGenerationResponse) -> bool:
+        nonlocal created, response_id
+        if not accumulated:
+            created = result.created
+        response_id = result.response_id or response_id
+        changed = False
+        for item in result.data:
+            data_key = _image_data_key(item)
+            if not data_key or data_key in seen_data:
+                continue
+            seen_data.add(data_key)
+            accumulated.append(item)
+            changed = True
+        return changed
+
+    async def publish_progress() -> None:
+        if progress_callback is None or not accumulated:
+            return
+        await progress_callback(
+            ImageGenerationResponse(
+                created=created,
+                model=_image_tool_model(settings, payload),
+                data=list(accumulated),
+                response_id=response_id,
+            )
+        )
+
+    single_payload = payload.model_copy(update={"n": 1})
+    for _ in range(payload.n):
+        async def single_progress(result: ImageGenerationResponse) -> None:
+            if merge_result(result):
+                await publish_progress()
+
+        result = await _generate_image_request(
+            settings,
+            single_payload,
+            transport=transport,
+            progress_callback=single_progress,
+        )
+        if merge_result(result):
+            await publish_progress()
+
+    if not accumulated:
+        raise _image_error(502, "IMAGE_UPSTREAM_ERROR", "Image upstream returned no image data")
+    return ImageGenerationResponse(
+        created=created,
+        model=_image_tool_model(settings, payload),
+        data=accumulated,
+        response_id=response_id,
+    )
+
+
+async def _generate_image_request(
+    settings: Settings,
+    payload: ImageGenerationRequest,
+    transport: httpx.AsyncBaseTransport | None = None,
+    progress_callback: ImageProgressCallback | None = None,
 ) -> ImageGenerationResponse:
     _validate_payload(settings, payload)
     account_id, access_token = _current_auth_tokens(settings)
@@ -1006,6 +1361,36 @@ async def generate_image(
     )
     _debug_log(settings, "request payload=%s", _json_for_debug(_value_for_debug(upstream_payload)))
 
+    streamed_payloads: list[object] = []
+    seen_image_results: set[str] = set()
+    saved_data: list[ImageData] = []
+
+    async def handle_stream_payload(stream_payload: object) -> None:
+        streamed_payloads.append(stream_payload)
+        if progress_callback is None:
+            return
+        new_items: list[ImageData] = []
+        for item in _image_items_from_payloads([stream_payload], payload.response_format):
+            image_key = item.b64_json or item.url
+            if not image_key or image_key in seen_image_results:
+                continue
+            seen_image_results.add(image_key)
+            new_items.append(item)
+        if not new_items:
+            return
+        created = _created_from_payloads(streamed_payloads)
+        saved_data.extend(_save_image_file(settings, item, created) for item in new_items)
+        for item in saved_data[-len(new_items) :]:
+            _debug_log(settings, "saved partial image file=%s", item.saved_path)
+        await progress_callback(
+            ImageGenerationResponse(
+                created=created,
+                model=_image_tool_model(settings, payload),
+                data=list(saved_data),
+                response_id=_response_id_from_payloads(streamed_payloads),
+            )
+        )
+
     timeout = httpx.Timeout(settings.image_timeout_seconds, connect=min(10.0, settings.image_timeout_seconds))
     try:
         async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
@@ -1024,7 +1409,12 @@ async def generate_image(
                         "IMAGE_UPSTREAM_ERROR",
                         _upstream_error_message(response, access_token),
                     )
-                response_payloads = await _payloads_from_streaming_response(response, settings, access_token)
+                response_payloads = await _payloads_from_streaming_response(
+                    response,
+                    settings,
+                    access_token,
+                    on_payload=handle_stream_payload,
+                )
     except httpx.TimeoutException as exc:
         raise _image_error(504, "IMAGE_UPSTREAM_TIMEOUT", "Image upstream request timed out") from exc
     except httpx.HTTPError as exc:
@@ -1038,11 +1428,22 @@ async def generate_image(
     if not response_payloads:
         raise _image_error(502, "IMAGE_UPSTREAM_ERROR", "Image upstream returned an invalid payload")
 
-    data = _image_items_from_payloads(response_payloads, payload.response_format)
-    if not data:
+    failed_response_error = _failed_response_error_from_payloads(response_payloads)
+    if failed_response_error is not None:
+        raise ImageGenerationError(502, failed_response_error)
+
+    final_new_items: list[ImageData] = []
+    for item in _image_items_from_payloads(response_payloads, payload.response_format):
+        image_key = item.b64_json or item.url
+        if not image_key or image_key in seen_image_results:
+            continue
+        seen_image_results.add(image_key)
+        final_new_items.append(item)
+    if not saved_data and not final_new_items:
         raise _image_error(502, "IMAGE_UPSTREAM_ERROR", "Image upstream returned no image data")
     created = _created_from_payloads(response_payloads)
-    saved_data = [_save_image_file(settings, item, created) for item in data]
+    if final_new_items:
+        saved_data.extend(_save_image_file(settings, item, created) for item in final_new_items)
     for item in saved_data:
         _debug_log(settings, "saved image file=%s", item.saved_path)
     return ImageGenerationResponse(

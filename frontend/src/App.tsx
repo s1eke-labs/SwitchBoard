@@ -1,12 +1,12 @@
 import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@heroui/react";
 import { AppShell } from "@/app/AppShell";
 import { useRoute } from "@/app/routing";
 import { useI18n } from "@/i18n";
 import { api } from "@/lib/api";
-import type { ImageGenerationJob } from "@/lib/api";
+import type { ImageGenerationJobSummary } from "@/lib/api";
 import { formatAppError } from "@/lib/errors";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { ImageStudioPage } from "@/pages/ImageStudioPage";
@@ -20,13 +20,13 @@ function errorStatus(error: unknown) {
     : 0;
 }
 
-function isActiveImageJob(job: ImageGenerationJob) {
+function isActiveImageJob(job: ImageGenerationJobSummary) {
   return job.status === "queued" || job.status === "running";
 }
 
 function ImageJobNotifier() {
   const { t } = useI18n();
-  const statusesRef = useRef(new Map<string, ImageGenerationJob["status"]>());
+  const statusesRef = useRef(new Map<string, ImageGenerationJobSummary["status"]>());
   const jobs = useQuery({
     queryKey: ["imageJobs", "notifier"],
     queryFn: () => api.imageJobs({ limit: 50 }),
@@ -43,7 +43,7 @@ function ImageJobNotifier() {
         toast.success(t("images.generated"));
       }
       if (previous && previous !== job.status && job.status === "failed") {
-        toast.error(t("images.generateFailed"), {
+        toast.danger(t("images.generateFailed"), {
           description: job.error?.message,
         });
       }

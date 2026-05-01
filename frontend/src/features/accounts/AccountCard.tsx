@@ -4,10 +4,10 @@ import { AccountDTO, LimitDTO } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { formatAppError } from "@/lib/errors";
 import { cn, formatDuration, formatPercent, formatTime } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/heroui/badge";
+import { Button } from "@/components/heroui/button";
+import { Card, CardContent } from "@/components/heroui/card";
+import { Input } from "@/components/heroui/input";
 
 function LimitMeter({ label, limit }: { label: string; limit: LimitDTO | null }) {
   const remaining = limit?.remaining_percent ?? 100;

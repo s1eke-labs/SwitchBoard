@@ -2,7 +2,7 @@ import { ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Activity, BarChart3, Image, LogOut, ReceiptText, UserRound } from "lucide-react";
 import { api } from "@/lib/api";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/heroui/button";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { AppRoute } from "@/app/routing";
 import { useI18n } from "@/i18n";

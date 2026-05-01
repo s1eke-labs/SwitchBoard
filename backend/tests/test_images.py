@@ -121,7 +121,6 @@ async def test_generate_image_calls_responses_with_current_codex_token(tmp_path)
                 "model": "gpt-image-2",
                 "size": "1024x1024",
                 "quality": "auto",
-                "n": 1,
             }
         ],
         "tool_choice": {"type": "image_generation"},
@@ -156,6 +155,79 @@ async def test_generate_image_accepts_full_responses_url(tmp_path) -> None:
     )
 
     assert captured["url"] == "https://chatgpt.example.test/backend-api/codex/responses"
+
+
+@pytest.mark.asyncio
+async def test_generate_image_reports_partial_results_while_streaming(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    _write_auth(settings)
+    partials: list[ImageGenerationResponse] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return _sse_response(
+            {
+                "id": "resp_partial",
+                "type": "response.image_generation_call.completed",
+                "created": 1776000001,
+                "output": [{"type": "image_generation_call", "result": "aGVsbG8=", "output_format": "png"}],
+            },
+            {
+                "id": "resp_partial",
+                "type": "response.image_generation_call.completed",
+                "created": 1776000002,
+                "output": [{"type": "image_generation_call", "result": "d29ybGQ=", "output_format": "png"}],
+            },
+        )
+
+    async def capture_partial(result: ImageGenerationResponse) -> None:
+        partials.append(result)
+
+    result = await generate_image(
+        settings,
+        ImageGenerationRequest(prompt="two posters"),
+        transport=httpx.MockTransport(handler),
+        progress_callback=capture_partial,
+    )
+
+    assert [len(partial.data) for partial in partials] == [1, 2]
+    assert partials[0].data[0].saved_path
+    assert Path(partials[0].data[0].saved_path).read_bytes() == b"hello"
+    assert partials[1].data[1].saved_path
+    assert Path(partials[1].data[1].saved_path).read_bytes() == b"world"
+    assert len(result.data) == 2
+    assert [item.file_url for item in result.data] == [item.file_url for item in partials[-1].data]
+
+
+@pytest.mark.asyncio
+async def test_generate_image_runs_multi_count_as_separate_upstream_requests(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    _write_auth(settings)
+    captured_payloads: list[dict[str, object]] = []
+    partials: list[ImageGenerationResponse] = []
+    results = ["aGVsbG8=", "d29ybGQ="]
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured_payloads.append(json.loads(request.read()))
+        result = results[len(captured_payloads) - 1]
+        return _sse_response({"output": [{"type": "image_generation_call", "result": result, "output_format": "png"}]})
+
+    async def capture_partial(result: ImageGenerationResponse) -> None:
+        partials.append(result)
+
+    result = await generate_image(
+        settings,
+        ImageGenerationRequest(prompt="two posters", n=2),
+        transport=httpx.MockTransport(handler),
+        progress_callback=capture_partial,
+    )
+
+    assert len(captured_payloads) == 2
+    assert all(payload["instructions"] == "Use the image_generation tool to create an image from the user's prompt." for payload in captured_payloads)
+    assert all("n" not in payload["tools"][0] for payload in captured_payloads)
+    assert [len(partial.data) for partial in partials] == [1, 2]
+    assert len(result.data) == 2
+    assert Path(result.data[0].saved_path).read_bytes() == b"hello"
+    assert Path(result.data[1].saved_path).read_bytes() == b"world"
 
 
 @pytest.mark.asyncio
@@ -257,6 +329,7 @@ def test_build_upstream_payload_adds_reference_images_without_forcing_generate(t
     tool = payload["tools"][0]
     assert tool["type"] == "image_generation"
     assert tool["model"] == "gpt-image-2"
+    assert "n" not in tool
     assert "action" not in tool
     assert payload["store"] is False
 
@@ -266,7 +339,7 @@ def test_allowed_image_sizes_satisfy_resolution_constraints() -> None:
         assert images_module._image_size_satisfies_constraints(size)
 
 
-def test_build_upstream_payload_uses_resolution_size_auto_quality_and_count(tmp_path) -> None:
+def test_build_upstream_payload_uses_resolution_size_auto_quality_and_count_instruction(tmp_path) -> None:
     settings = _settings(tmp_path)
 
     payload = build_upstream_payload(
@@ -277,7 +350,11 @@ def test_build_upstream_payload_uses_resolution_size_auto_quality_and_count(tmp_
     tool = payload["tools"][0]
     assert tool["size"] == "3840x2160"
     assert tool["quality"] == "auto"
-    assert tool["n"] == 4
+    assert "n" not in tool
+    assert payload["instructions"] == (
+        "Use the image_generation tool to create an image from the user's prompt. "
+        "Create exactly 4 separate images."
+    )
 
 
 def test_build_upstream_payload_adds_previous_response_id(tmp_path) -> None:
@@ -657,6 +734,72 @@ async def test_image_generation_queue_persists_jobs_and_references(tmp_path) -> 
     await restored.close()
 
 
+@pytest.mark.asyncio
+async def test_image_generation_queue_deletes_result_images(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    image_dir = settings.db_path.parent / "images"
+    image_dir.mkdir()
+    first_path = image_dir / "first.png"
+    second_path = image_dir / "second.png"
+    first_path.write_bytes(b"first")
+    second_path.write_bytes(b"second")
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        return ImageGenerationResponse(
+            created=123,
+            model="gpt-image-2",
+            data=[
+                ImageData(b64_json="Zmlyc3Q=", file_name="first.png", file_url="/api/images/files/first.png", saved_path=str(first_path)),
+                ImageData(b64_json="c2Vjb25k", file_name="second.png", file_url="/api/images/files/second.png", saved_path=str(second_path)),
+            ],
+        )
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    job = await queue.enqueue(ImageGenerationRequest(prompt="poster", n=2))
+    for _ in range(20):
+        done = await queue.get(job.id)
+        if done is not None and done.status == "succeeded":
+            break
+        await asyncio.sleep(0.01)
+
+    await queue.delete_result_image(job.id, 0)
+    updated = await queue.get(job.id)
+
+    assert updated is not None
+    assert updated.result is not None
+    assert len(updated.result.data) == 1
+    assert updated.result.data[0].file_name == "second.png"
+    assert not first_path.exists()
+    assert second_path.exists()
+
+    await queue.delete_result_image(job.id, 0)
+
+    assert await queue.get(job.id) is None
+    assert not second_path.exists()
+    await queue.close()
+
+
+@pytest.mark.asyncio
+async def test_image_generation_queue_deletes_failed_jobs_without_images(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        raise ImageGenerationError(502, issue_detail("IMAGE_UPSTREAM_ERROR", "failed"))
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    job = await queue.enqueue(ImageGenerationRequest(prompt="poster"))
+    for _ in range(20):
+        failed = await queue.get(job.id)
+        if failed is not None and failed.status == "failed":
+            break
+        await asyncio.sleep(0.01)
+
+    await queue.delete_job(job.id)
+
+    assert await queue.get(job.id) is None
+    await queue.close()
+
+
 def test_image_migration_keeps_legacy_jobs_visible_without_conversation(tmp_path) -> None:
     db_path = tmp_path / "switchboard.sqlite"
     with connect(db_path) as conn:
@@ -779,6 +922,46 @@ async def test_image_generation_queue_paginates_recent_jobs(tmp_path) -> None:
     assert [job.id for job in first_page.items] == [third.id, other.id]
     assert [job.id for job in second_page.items] == [first.id]
     assert all(job.conversation_id is None for job in first_page.items + second_page.items)
+    await queue.close()
+
+
+@pytest.mark.asyncio
+async def test_image_generation_queue_paginates_gallery_items_by_image_slots(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        return ImageGenerationResponse(
+            created=1776000000,
+            model="gpt-image-2",
+            data=[
+                ImageData(b64_json="aGVsbG8=", file_name=f"{payload.prompt}-{index}.png")
+                for index in range(payload.n)
+            ],
+            response_id=f"resp-{payload.prompt}",
+        )
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    first = await queue.enqueue(ImageGenerationRequest(prompt="first", n=4))
+    second = await queue.enqueue(ImageGenerationRequest(prompt="second", n=1))
+    for _ in range(20):
+        second_done = await queue.get(second.id)
+        if second_done is not None and second_done.status == "succeeded":
+            break
+        await asyncio.sleep(0.01)
+
+    first_page = await queue.list_gallery_items(page=1, limit=3)
+    second_page = await queue.list_gallery_items(page=2, limit=3)
+
+    assert first_page.total_count == 5
+    assert [(item.job.id, item.image_index) for item in first_page.items] == [
+        (second.id, 0),
+        (first.id, 0),
+        (first.id, 1),
+    ]
+    assert [(item.job.id, item.image_index) for item in second_page.items] == [
+        (first.id, 2),
+        (first.id, 3),
+    ]
     await queue.close()
 
 
@@ -906,6 +1089,8 @@ def test_image_job_api_paginates_global_jobs(monkeypatch, tmp_path) -> None:
 
     assert first_page.status_code == 200
     assert first_page.json()["total_count"] == 5
+    assert "result" not in first_page.json()["items"][0]
+    assert "references" not in first_page.json()["items"][0]
     assert [item["id"] for item in first_page.json()["items"]] == [
         "job-4",
         "job-3",
@@ -920,6 +1105,71 @@ def test_image_job_api_paginates_global_jobs(monkeypatch, tmp_path) -> None:
     assert bad_page.json() == {
         "detail": {"code": "IMAGE_JOB_INVALID_PAGE", "message": "Image job page is invalid"}
     }
+
+
+def test_image_gallery_api_paginates_by_image_slots(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
+    (tmp_path / "codex").mkdir()
+
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+    client = TestClient(main.create_app())
+    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
+    settings = client.app.state.settings
+    old_result = ImageGenerationResponse(
+        created=1776000000,
+        model="gpt-image-2",
+        data=[ImageData(b64_json="aGVsbG8=", file_name=f"old-{index}.png") for index in range(4)],
+    )
+    new_result = ImageGenerationResponse(
+        created=1776000001,
+        model="gpt-image-2",
+        data=[ImageData(b64_json="aGVsbG8=", file_name="new-0.png")],
+    )
+    with connect(settings.db_path) as conn:
+        for job_id, prompt, n, created_at, result in [
+            ("old-job", "Old", 4, 1, old_result),
+            ("new-job", "New", 1, 2, new_result),
+        ]:
+            conn.execute(
+                """
+                INSERT INTO image_jobs (
+                    id, prompt, model, size, quality, response_format, status,
+                    n, result_json, created_at, updated_at
+                )
+                VALUES (?, ?, NULL, '1024x1024', 'auto', 'b64_json', 'succeeded', ?, ?, ?, ?)
+                """,
+                (job_id, prompt, n, result.model_dump_json(), created_at, created_at),
+            )
+
+    first_page = client.get("/api/images/gallery", params={"page": 1, "limit": 3})
+    second_page = client.get("/api/images/gallery", params={"page": 2, "limit": 3})
+
+    assert first_page.status_code == 200
+    assert first_page.json()["total_count"] == 5
+    assert [(item["job"]["id"], item["image_index"]) for item in first_page.json()["items"]] == [
+        ("new-job", 0),
+        ("old-job", 0),
+        ("old-job", 1),
+    ]
+    assert "result" not in first_page.json()["items"][0]["job"]
+    assert first_page.json()["items"][0]["image"] == {
+        "url": None,
+        "revised_prompt": None,
+        "file_name": "new-0.png",
+        "file_url": None,
+    }
+    assert second_page.status_code == 200
+    assert [(item["job"]["id"], item["image_index"]) for item in second_page.json()["items"]] == [
+        ("old-job", 2),
+        ("old-job", 3),
+    ]
 
 
 def test_image_file_api_requires_auth_and_serves_saved_file(monkeypatch, tmp_path) -> None:

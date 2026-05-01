@@ -1,10 +1,10 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { Toast } from "@heroui/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { I18nProvider, initializeLocale } from "./i18n";
-import { Toaster } from "./components/ui/sonner";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -24,7 +24,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <I18nProvider>
         <QueryClientProvider client={queryClient}>
           <App />
-          <Toaster />
+          <Toast.Provider maxVisibleToasts={4} placement="top" width={420} />
         </QueryClientProvider>
       </I18nProvider>
     </AppErrorBoundary>

@@ -1,7 +1,7 @@
 import { Component, ErrorInfo, ReactNode } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Button } from "@/components/heroui/button";
+import { Card, CardContent, CardHeader } from "@/components/heroui/card";
 import { translate } from "@/i18n";
 
 type AppErrorBoundaryProps = {

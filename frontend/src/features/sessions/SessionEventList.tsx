@@ -6,8 +6,8 @@ import { api, SessionEventPreview, SessionUserIndexItem } from "@/lib/api";
 import { translate, useI18n } from "@/i18n";
 import { formatAppError } from "@/lib/errors";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/heroui/badge";
+import { Button } from "@/components/heroui/button";
 import { formatBytes, fullEventBody, userIndexLabel } from "@/features/sessions/sessionUtils";
 
 const SESSION_EVENTS_PAGE_SIZE = 80;

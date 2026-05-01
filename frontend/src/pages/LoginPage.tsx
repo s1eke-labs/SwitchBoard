@@ -5,8 +5,8 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { api } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { formatAppError } from "@/lib/errors";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button } from "@/components/heroui/button";
+import { Input } from "@/components/heroui/input";
 
 export function LoginPage({ onDone }: { onDone: () => void }) {
   const [password, setPassword] = useState("");

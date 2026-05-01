@@ -13,7 +13,7 @@ import { api, UsageAggregatePointDTO } from "@/lib/api";
 import { getCurrentLocale, translate, useI18n } from "@/i18n";
 import { formatChartTime, formatNumber } from "@/lib/utils";
 import { useElementSize } from "@/hooks/useElementSize";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/heroui/card";
 
 type RangeKey = "24h" | "7d" | "30d" | "90d";
 
