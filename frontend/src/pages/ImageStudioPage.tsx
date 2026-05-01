@@ -95,7 +95,7 @@ export function ImageStudioPage() {
     () => galleryItems.filter((item) => selectedGalleryKeys.has(item.key) && isSelectableGalleryItem(item)),
     [galleryItems, selectedGalleryKeys],
   );
-  const selectedDownloadableCount = selectedGalleryItems.filter((item) => item.src).length;
+  const selectedDownloadableCount = selectedGalleryItems.filter((item) => item.fullSrc).length;
   const previewReference = useMemo(
     () => referenceImages.find((reference) => reference.id === previewReferenceId) ?? null,
     [previewReferenceId, referenceImages],
@@ -227,7 +227,7 @@ export function ImageStudioPage() {
         return jobOrder || second.index - first.index;
       });
       for (const item of orderedItems) {
-        if (item.src) {
+        if (item.fullSrc) {
           await api.deleteImageJobResult(item.job.id, item.index);
         } else {
           await api.deleteImageJob(item.job.id);
@@ -298,10 +298,10 @@ export function ImageStudioPage() {
   }
 
   async function handleEditItem(item: GalleryItem) {
-    if (!item.src) return;
+    if (!item.fullSrc) return;
     setEditingItemKey(item.key);
     try {
-      const reference = await sourceToReference(item.src, item.job, item.index);
+      const reference = await sourceToReference(item.fullSrc, item.job, item.index);
       setReferenceImages((current) => {
         for (const existing of current) {
           URL.revokeObjectURL(existing.previewUrl);

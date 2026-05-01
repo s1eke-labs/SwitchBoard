@@ -1,8 +1,6 @@
-import { useState } from "react";
 import { Checkbox } from "@heroui/react";
 import {
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -13,6 +11,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Button } from "@/components/heroui/button";
+import { PageSelector } from "@/components/PageSelector";
 import { Card, CardContent, CardHeader } from "@/components/heroui/card";
 import { useI18n } from "@/i18n";
 import type { ImageGalleryJob } from "@/lib/api";
@@ -25,67 +24,6 @@ export function ImageJobStatusIcon({ job }: { job: ImageGalleryJob }) {
   if (job.status === "failed") return <XCircle size={15} className="text-destructive" />;
   if (job.status === "running") return <Loader2 size={15} className="animate-spin text-primary" />;
   return <Clock3 size={15} className="text-muted-foreground" />;
-}
-
-function PageSelector({
-  page,
-  totalPages,
-  disabled,
-  jumping,
-  onSelect,
-}: {
-  page: number;
-  totalPages: number;
-  disabled: boolean;
-  jumping: boolean;
-  onSelect: (page: number) => void;
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const pageCount = Math.max(1, totalPages);
-
-  return (
-    <div className={`relative ${jumping ? "opacity-70" : ""}`} aria-busy={jumping}>
-      <button
-        type="button"
-        className="flex h-8 min-w-28 items-center justify-center gap-1 rounded-md px-2 text-center text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-        onClick={() => setOpen((value) => !value)}
-        disabled={disabled || pageCount <= 1}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-      >
-        <span>{jumping ? t("common.loadingEllipsis") : t("common.pageLabel", { page: Math.min(page, pageCount), total: pageCount })}</span>
-        <ChevronDown size={14} className={`shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open ? (
-        <div className="absolute bottom-10 left-1/2 z-30 max-h-48 w-52 -translate-x-1/2 overflow-auto rounded-md border bg-white p-2 shadow-soft">
-          <div className="grid grid-cols-4 gap-1" role="listbox" aria-label={t("common.selectPage")}>
-            {Array.from({ length: pageCount }, (_, index) => {
-              const pageNumber = index + 1;
-              const active = pageNumber === page;
-              return (
-                <button
-                  key={pageNumber}
-                  type="button"
-                  className={`h-8 rounded-md text-sm font-semibold transition-colors hover:bg-muted ${
-                    active ? "bg-foreground text-white hover:bg-foreground" : "text-foreground"
-                  }`}
-                  onClick={() => {
-                    setOpen(false);
-                    onSelect(pageNumber);
-                  }}
-                  role="option"
-                  aria-selected={active}
-                >
-                  {pageNumber}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function ImageGallery({
@@ -159,8 +97,12 @@ function ImageGallery({
               className="flex min-h-0 flex-1 flex-col text-left focus:outline-none"
             >
               <div className="flex min-h-0 flex-1 items-center justify-center bg-muted/60 p-2">
-                {item.src ? (
-                  <img src={item.src} alt={item.job.prompt} className="h-full w-full object-contain transition-transform group-hover:scale-[1.01]" />
+                {item.thumbnailSrc ? (
+                  <img
+                    src={item.thumbnailSrc}
+                    alt={item.job.prompt}
+                    className="h-full w-full object-contain transition-transform group-hover:scale-[1.01]"
+                  />
                 ) : (
                   <div className="flex items-center text-muted-foreground" aria-label={statusLabel}>
                     <ImageJobStatusIcon job={item.job} />
@@ -263,7 +205,18 @@ export function ImageGalleryPanel({
             >
               <ChevronLeft size={15} />
             </Button>
-            <PageSelector page={page} totalPages={totalPages} disabled={fetching} jumping={fetching} onSelect={onSelectPage} />
+            <PageSelector
+              page={page}
+              totalPages={totalPages}
+              disabled={fetching}
+              jumping={fetching}
+              className={fetching ? "opacity-70" : ""}
+              buttonClassName="flex h-8 min-w-28 items-center justify-center gap-1 rounded-md px-2 text-center text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+              menuClassName="max-h-48 w-52 rounded-md"
+              showChevron
+              chevronSize={14}
+              onSelect={onSelectPage}
+            />
             <Button
               aria-label={t("common.nextPage")}
               title={t("common.nextPage")}

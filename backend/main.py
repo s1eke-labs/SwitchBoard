@@ -350,10 +350,10 @@ def create_app() -> FastAPI:
             raise http_error_from_detail(exc.status_code, exc.detail) from exc
         return {"ok": True}
 
-    @app.get("/api/images/files/{filename}", dependencies=authed)
-    def image_file(filename: str) -> FileResponse:
+    @app.get("/api/images/files/{file_path:path}", dependencies=authed)
+    def image_file(file_path: str) -> FileResponse:
         try:
-            path = image_file_path(settings, filename)
+            path = image_file_path(settings, file_path)
         except ValueError as exc:
             raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_FILE_INVALID", "Invalid image filename") from exc
         if not path.exists() or not path.is_file():

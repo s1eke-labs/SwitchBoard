@@ -24,7 +24,8 @@ export type PendingReferenceImage = {
 export type GalleryItem = {
   key: string;
   job: ImageGalleryJob;
-  src: string | null;
+  thumbnailSrc: string | null;
+  fullSrc: string | null;
   index: number;
   revisedPrompt: string | null;
 };

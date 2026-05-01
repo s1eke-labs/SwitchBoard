@@ -7,6 +7,7 @@ dependencies = [
     "cryptography>=47.0.0",
     "fastapi>=0.136.1",
     "httpx>=0.28.1",
+    "pillow>=12.0.0",
     "uvicorn[standard]>=0.46.0",
 ]
 

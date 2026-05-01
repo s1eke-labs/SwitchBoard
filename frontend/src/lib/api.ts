@@ -265,6 +265,7 @@ export type ImageReferenceData = {
   id: string;
   file_name: string;
   file_url: string;
+  thumbnail_url: string | null;
   original_file_name: string;
   mime_type: string;
   size_bytes: number;
@@ -280,6 +281,7 @@ export type ImageGenerationResponse = {
     revised_prompt: string | null;
     file_name: string | null;
     file_url: string | null;
+    thumbnail_url: string | null;
     saved_path: string | null;
   }>;
 };
@@ -324,6 +326,7 @@ export type ImageGalleryImage = {
   revised_prompt: string | null;
   file_name: string | null;
   file_url: string | null;
+  thumbnail_url: string | null;
 };
 
 export type ImageGalleryItem = {

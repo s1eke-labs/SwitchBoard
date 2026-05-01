@@ -6,72 +6,12 @@ import { useI18n } from "@/i18n";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
 import { sessionPath } from "@/app/routing";
 import { SessionEventList } from "@/features/sessions/SessionEventList";
+import { PageSelector } from "@/components/PageSelector";
 import { Button } from "@/components/heroui/button";
 import { Card, CardHeader } from "@/components/heroui/card";
 import { Input } from "@/components/heroui/input";
 
 const SESSIONS_PAGE_SIZE = 7;
-
-function PageSelector({
-  page,
-  totalPages,
-  disabled,
-  jumping,
-  onSelect,
-}: {
-  page: number;
-  totalPages: number;
-  disabled: boolean;
-  jumping: boolean;
-  onSelect: (page: number) => void;
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const pageCount = Math.max(1, totalPages);
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        className="h-9 min-w-24 rounded-md px-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-        onClick={() => setOpen((value) => !value)}
-        disabled={disabled || pageCount <= 1}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-      >
-        {jumping ? t("common.loadingEllipsis") : t("common.pageLabel", { page: Math.min(page, pageCount), total: pageCount })}
-      </button>
-      {open ? (
-        <div className="absolute bottom-11 left-1/2 z-20 max-h-56 w-56 -translate-x-1/2 overflow-auto rounded-lg border bg-white p-2 shadow-soft">
-          <div className="grid grid-cols-4 gap-1" role="listbox" aria-label={t("common.selectPage")}>
-            {Array.from({ length: pageCount }, (_, index) => {
-              const pageNumber = index + 1;
-              const active = pageNumber === page;
-              return (
-                <button
-                  key={pageNumber}
-                  type="button"
-                  className={cn(
-                    "h-8 rounded-md text-sm font-semibold transition-colors hover:bg-muted",
-                    active ? "bg-foreground text-white hover:bg-foreground" : "text-foreground",
-                  )}
-                  onClick={() => {
-                    setOpen(false);
-                    onSelect(pageNumber);
-                  }}
-                  role="option"
-                  aria-selected={active}
-                >
-                  {pageNumber}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 function SessionButton({
   session,
@@ -229,6 +169,7 @@ export function SessionsPage({
                     totalPages={totalPages}
                     disabled={sessions.isFetching}
                     jumping={sessions.isFetching}
+                    buttonClassName="h-9 min-w-24 rounded-md px-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
                     onSelect={selectPage}
                   />
                   <Button

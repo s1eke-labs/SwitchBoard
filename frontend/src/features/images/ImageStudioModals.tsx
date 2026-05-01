@@ -1,5 +1,5 @@
 import { Modal } from "@heroui/react";
-import { Download, Loader2, Palette, Pencil, Trash2, WandSparkles, X } from "lucide-react";
+import { Download, ImageIcon, Loader2, Palette, Pencil, Trash2, WandSparkles, X } from "lucide-react";
 import { Button } from "@/components/heroui/button";
 import { useI18n } from "@/i18n";
 import { STATUS_LABEL_KEYS } from "@/features/images/constants";
@@ -98,7 +98,8 @@ export function ImagePreviewModal({
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const { job, src } = item;
+  const { job } = item;
+  const src = item.fullSrc;
   const revisedPrompt = item.revisedPrompt;
   const styleLabel = formatImageStyleLabel(job.size, job.quality, t);
 
@@ -175,7 +176,13 @@ export function ImagePreviewModal({
                     <div className="grid grid-cols-2 gap-2">
                       {job.references.map((reference) => (
                         <div key={reference.id} className="overflow-hidden rounded-md border bg-white">
-                          <img src={reference.file_url} alt={reference.original_file_name} className="aspect-square w-full object-cover" />
+                          {reference.thumbnail_url ? (
+                            <img src={reference.thumbnail_url} alt={reference.original_file_name} className="aspect-square w-full object-cover" />
+                          ) : (
+                            <div className="flex aspect-square w-full items-center justify-center bg-muted text-muted-foreground">
+                              <ImageIcon size={18} />
+                            </div>
+                          )}
                           <div className="px-2 py-1.5 text-xs">
                             <div className="truncate font-semibold">{reference.original_file_name}</div>
                             <div className="text-muted-foreground">{formatBytes(reference.size_bytes)}</div>

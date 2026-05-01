@@ -10,11 +10,13 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
+from dataclasses import dataclass, field
 from contextlib import suppress
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
 import httpx
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
 from codex_files import auth_tokens, current_auth_path, read_json
@@ -82,6 +84,12 @@ MAX_REFERENCE_IMAGES = 4
 MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024
 ALLOWED_REFERENCE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 IMAGE_GENERATION_INSTRUCTIONS = "Use the image_generation tool to create an image from the user's prompt."
+IMAGE_THUMBNAIL_MAX_SIDE_PX = 512
+IMAGE_THUMBNAIL_SUFFIX = ".thumb.webp"
+IMAGE_REFERENCES_DIR = "references"
+IMAGE_OUTPUTS_DIR = "outputs"
+IMAGE_DERIVED_DIR = "derived"
+IMAGE_FILE_URL_PREFIX = "/api/images/files"
 
 
 class ImageReferenceInput(BaseModel):
@@ -94,6 +102,7 @@ class ImageReferenceData(BaseModel):
     id: str
     file_name: str
     file_url: str
+    thumbnail_url: str | None = None
     original_file_name: str
     mime_type: str
     size_bytes: int
@@ -117,6 +126,7 @@ class ImageData(BaseModel):
     revised_prompt: str | None = None
     file_name: str | None = None
     file_url: str | None = None
+    thumbnail_url: str | None = None
     saved_path: str | None = None
 
 
@@ -169,6 +179,7 @@ class ImageGalleryImageResponse(BaseModel):
     revised_prompt: str | None = None
     file_name: str | None = None
     file_url: str | None = None
+    thumbnail_url: str | None = None
 
 
 class ImageGalleryJobResponse(BaseModel):
@@ -202,6 +213,19 @@ class ImageGenerationError(Exception):
         super().__init__(detail.message)
         self.status_code = status_code
         self.detail = detail
+
+
+@dataclass
+class ImageStorageContext:
+    task_dir: str | None = None
+    output_index: int = 0
+    reference_index: int = 0
+    direct_uuid: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+
+    def resolve_task_dir(self, created: int) -> str:
+        if self.task_dir is None:
+            self.task_dir = f"{_image_month_dir(created)}/direct-{created}-{self.direct_uuid}"
+        return self.task_dir
 
 
 def _image_error(status_code: int, code: str, message: str) -> ImageGenerationError:
@@ -247,7 +271,7 @@ def _job_summary_from_job(job: ImageGenerationJobResponse) -> ImageGenerationJob
     )
 
 
-def _gallery_image_from_data(data: ImageData | None) -> ImageGalleryImageResponse | None:
+def _gallery_image_from_data(settings: Settings, data: ImageData | None) -> ImageGalleryImageResponse | None:
     if data is None:
         return None
     return ImageGalleryImageResponse(
@@ -255,6 +279,7 @@ def _gallery_image_from_data(data: ImageData | None) -> ImageGalleryImageRespons
         revised_prompt=data.revised_prompt,
         file_name=data.file_name,
         file_url=data.file_url,
+        thumbnail_url=_thumbnail_url_for_data(settings, data),
     )
 
 
@@ -748,6 +773,106 @@ def _image_output_dir(settings: Settings) -> Path:
     return output_dir
 
 
+def _ensure_private_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
+def is_image_thumbnail_filename(filename: str) -> bool:
+    return Path(filename).name.endswith(IMAGE_THUMBNAIL_SUFFIX)
+
+
+def image_thumbnail_filename(filename: str) -> str:
+    path = Path(filename)
+    return f"{path.stem}{IMAGE_THUMBNAIL_SUFFIX}"
+
+
+def _image_file_url(file_name: str) -> str:
+    return f"{IMAGE_FILE_URL_PREFIX}/{file_name}"
+
+
+def _image_month_dir(created: int) -> str:
+    return time.strftime("%Y/%m", time.gmtime(created))
+
+
+def _image_job_task_dir(job_id: str, created: int) -> str:
+    return f"{_image_month_dir(created)}/{job_id}"
+
+
+def _image_path_parts(file_path: str) -> list[str]:
+    if not file_path or file_path.startswith("/") or "\\" in file_path:
+        raise ValueError("Invalid image filename")
+    parts = file_path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("Invalid image filename")
+    if len(parts) != 5:
+        raise ValueError("Invalid image filename")
+    year, month, task_dir, role, filename = parts
+    if len(year) != 4 or not year.isdigit() or len(month) != 2 or not month.isdigit():
+        raise ValueError("Invalid image filename")
+    if not task_dir or not filename:
+        raise ValueError("Invalid image filename")
+    if role in {IMAGE_REFERENCES_DIR, IMAGE_OUTPUTS_DIR, IMAGE_DERIVED_DIR}:
+        return parts
+    raise ValueError("Invalid image filename")
+
+
+def _image_file_role(file_name: str) -> str | None:
+    parts = _image_path_parts(file_name)
+    role = parts[3]
+    if role in {IMAGE_REFERENCES_DIR, IMAGE_OUTPUTS_DIR}:
+        return role
+    return None
+
+
+def image_thumbnail_relative_path(file_name: str) -> str:
+    thumbnail_name = image_thumbnail_filename(file_name)
+    parts = _image_path_parts(file_name)
+    return "/".join([*parts[:3], IMAGE_DERIVED_DIR, thumbnail_name])
+
+
+def _image_thumbnail_path(settings: Settings, file_name: str) -> Path:
+    return image_file_path(settings, image_thumbnail_relative_path(file_name))
+
+
+def _thumbnail_url_for_filename(settings: Settings, filename: str | None) -> str | None:
+    if not filename or is_image_thumbnail_filename(filename):
+        return None
+    try:
+        thumbnail_relative_path = image_thumbnail_relative_path(filename)
+        thumbnail = image_file_path(settings, thumbnail_relative_path)
+    except ValueError:
+        return None
+    if not thumbnail.exists() or not thumbnail.is_file():
+        return None
+    return _image_file_url(thumbnail_relative_path)
+
+
+def _thumbnail_url_for_data(settings: Settings, data: ImageData) -> str | None:
+    thumbnail_url = _thumbnail_url_for_filename(settings, data.file_name)
+    return thumbnail_url or (data.thumbnail_url if not data.file_name else None)
+
+
+def create_image_thumbnail(source_path: Path, thumbnail_path: Path | None = None) -> Path | None:
+    if is_image_thumbnail_filename(source_path.name) or not source_path.exists() or not source_path.is_file():
+        return None
+    thumbnail_path = thumbnail_path or source_path.with_name(image_thumbnail_filename(source_path.name))
+    _ensure_private_dir(thumbnail_path.parent)
+    try:
+        with Image.open(source_path) as image:
+            image.thumbnail((IMAGE_THUMBNAIL_MAX_SIDE_PX, IMAGE_THUMBNAIL_MAX_SIDE_PX), Image.Resampling.LANCZOS)
+            if image.mode not in {"RGB", "RGBA"}:
+                image = image.convert("RGBA" if "transparency" in image.info else "RGB")
+            image.save(thumbnail_path, format="WEBP", quality=82, method=6)
+    except (OSError, UnidentifiedImageError) as exc:
+        with suppress(OSError):
+            thumbnail_path.unlink()
+        logger.warning("Image thumbnail generation failed for %s: %s", source_path.name, type(exc).__name__)
+        return None
+    os.chmod(thumbnail_path, 0o600)
+    return thumbnail_path
+
+
 def _decode_image_base64(data: ImageData) -> bytes:
     value = data.b64_json or _base64_from_data_url(data.url or "")
     if not value:
@@ -758,24 +883,68 @@ def _decode_image_base64(data: ImageData) -> bytes:
         raise _image_error(502, "IMAGE_UPSTREAM_ERROR", "Image upstream returned invalid image data") from exc
 
 
-def _save_image_file(settings: Settings, data: ImageData, created: int) -> ImageData:
+def _save_image_file(
+    settings: Settings,
+    data: ImageData,
+    created: int,
+    storage_context: ImageStorageContext,
+) -> ImageData:
     extension = Path(data.file_name or "image.png").suffix.lstrip(".") or "png"
-    filename = f"{created}-{uuid.uuid4().hex}.{extension}"
-    path = _image_output_dir(settings) / filename
+    storage_context.output_index += 1
+    task_dir = storage_context.resolve_task_dir(created)
+    filename = f"{task_dir}/{IMAGE_OUTPUTS_DIR}/o{storage_context.output_index}.{extension}"
+    path = image_file_path(settings, filename)
+    _ensure_private_dir(path.parent)
     path.write_bytes(_decode_image_base64(data))
     os.chmod(path, 0o600)
+    thumbnail_relative_path = image_thumbnail_relative_path(filename)
+    thumbnail_path = create_image_thumbnail(path, image_file_path(settings, thumbnail_relative_path))
     data.file_name = filename
-    data.file_url = f"/api/images/files/{filename}"
+    data.file_url = _image_file_url(filename)
+    data.thumbnail_url = _image_file_url(thumbnail_relative_path) if thumbnail_path else None
     data.saved_path = str(path)
     data.url = data.file_url
     return data
 
 
-def _delete_private_file(path_value: str | None) -> None:
+def _delete_private_file(path_value: str | None, thumbnail_path: Path | None = None) -> None:
     if not path_value:
         return
+    path = Path(path_value)
+    if thumbnail_path is not None:
+        with suppress(OSError):
+            thumbnail_path.unlink()
     with suppress(OSError):
-        Path(path_value).unlink()
+        path.unlink()
+
+
+def _delete_image_file(settings: Settings, file_name: str | None = None, path_value: str | None = None) -> None:
+    path: Path | None = None
+    thumbnail_path: Path | None = None
+    if file_name:
+        with suppress(ValueError):
+            path = image_file_path(settings, file_name)
+            thumbnail_path = _image_thumbnail_path(settings, file_name)
+    if path is None and path_value:
+        path = Path(path_value)
+        thumbnail_path = path.with_name(image_thumbnail_filename(path.name))
+    if path is not None:
+        _delete_private_file(str(path), thumbnail_path=thumbnail_path)
+
+
+def _delete_image_task_dir(settings: Settings, job_id: str, created_at: int) -> None:
+    task_dir = image_file_path(settings, f"{_image_job_task_dir(job_id, created_at)}/{IMAGE_OUTPUTS_DIR}/placeholder").parents[1]
+    if not task_dir.exists() or not task_dir.is_dir():
+        return
+    for path in sorted(task_dir.rglob("*"), reverse=True):
+        if path.is_file():
+            with suppress(OSError):
+                path.unlink()
+        elif path.is_dir():
+            with suppress(OSError):
+                path.rmdir()
+    with suppress(OSError):
+        task_dir.rmdir()
 
 
 def _response_for_storage(result: ImageGenerationResponse) -> ImageGenerationResponse:
@@ -790,20 +959,22 @@ def _response_for_storage(result: ImageGenerationResponse) -> ImageGenerationRes
 
 
 def image_file_path(settings: Settings, filename: str) -> Path:
-    if not filename or "/" in filename or "\\" in filename or filename in {".", ".."}:
-        raise ValueError("Invalid image filename")
-    path = _image_output_dir(settings) / filename
+    parts = _image_path_parts(filename)
+    path = _image_output_dir(settings).joinpath(*parts)
     if path.parent.resolve() != _image_output_dir(settings).resolve():
-        raise ValueError("Invalid image filename")
+        root = _image_output_dir(settings).resolve()
+        if not path.parent.resolve().is_relative_to(root):
+            raise ValueError("Invalid image filename")
     return path
 
 
-def _reference_from_row(row) -> ImageReferenceData:
+def _reference_from_row(settings: Settings, row) -> ImageReferenceData:
     file_name = str(row["file_name"])
     return ImageReferenceData(
         id=str(row["id"]),
         file_name=file_name,
-        file_url=f"/api/images/files/{file_name}",
+        file_url=_image_file_url(file_name),
+        thumbnail_url=_thumbnail_url_for_filename(settings, file_name),
         original_file_name=str(row["original_file_name"]),
         mime_type=str(row["mime_type"]),
         size_bytes=int(row["size_bytes"]),
@@ -812,8 +983,7 @@ def _reference_from_row(row) -> ImageReferenceData:
 
 def _save_reference_file(
     settings: Settings,
-    job_id: str,
-    index: int,
+    storage_context: ImageStorageContext,
     reference: ImageReferenceInput,
     mime_type: str,
     data: bytes,
@@ -821,14 +991,20 @@ def _save_reference_file(
 ) -> ImageReferenceData:
     reference_id = uuid.uuid4().hex
     extension = _extension_from_mime(mime_type)
-    filename = f"{created_at}-{job_id}-reference-{index + 1}-{reference_id}.{extension}"
-    path = _image_output_dir(settings) / filename
+    storage_context.reference_index += 1
+    task_dir = storage_context.resolve_task_dir(created_at)
+    filename = f"{task_dir}/{IMAGE_REFERENCES_DIR}/r{storage_context.reference_index}.{extension}"
+    path = image_file_path(settings, filename)
+    _ensure_private_dir(path.parent)
     path.write_bytes(data)
     os.chmod(path, 0o600)
+    thumbnail_relative_path = image_thumbnail_relative_path(filename)
+    thumbnail_path = create_image_thumbnail(path, image_file_path(settings, thumbnail_relative_path))
     return ImageReferenceData(
         id=reference_id,
         file_name=filename,
-        file_url=f"/api/images/files/{filename}",
+        file_url=_image_file_url(filename),
+        thumbnail_url=_image_file_url(thumbnail_relative_path) if thumbnail_path else None,
         original_file_name=_safe_original_file_name(reference.file_name),
         mime_type=mime_type,
         size_bytes=len(data),
@@ -855,9 +1031,10 @@ class ImageGenerationQueue:
         job_id = uuid.uuid4().hex
         async with self._lock:
             previous_response_id = payload.previous_response_id
+            storage_context = ImageStorageContext(task_dir=_image_job_task_dir(job_id, now))
             saved_references = [
-                _save_reference_file(self._settings, job_id, index, reference, mime_type, data, now)
-                for index, (reference, mime_type, data) in enumerate(references)
+                _save_reference_file(self._settings, storage_context, reference, mime_type, data, now)
+                for reference, mime_type, data in references
             ]
             with connect(self._settings.db_path) as conn:
                 conn.execute(
@@ -923,11 +1100,12 @@ class ImageGenerationQueue:
                     raise _image_error(404, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
                 if job["status"] in {"queued", "running"}:
                     raise _image_error(409, "IMAGE_JOB_ACTIVE", "Image generation job is still active")
+                job_created_at = int(job["created_at"])
                 result = ImageGenerationResponse.model_validate_json(job["result_json"]) if job["result_json"] else None
                 if result is None or image_index >= len(result.data):
                     raise _image_error(404, "IMAGE_NOT_FOUND", "Image not found")
                 removed = result.data.pop(image_index)
-                _delete_private_file(removed.saved_path)
+                _delete_image_file(self._settings, file_name=removed.file_name, path_value=removed.saved_path)
                 if result.data:
                     conn.execute(
                         """
@@ -949,8 +1127,8 @@ class ImageGenerationQueue:
                 )
                 conn.execute("DELETE FROM image_jobs WHERE id = ?", (job_id,))
             for row in reference_rows:
-                with suppress(OSError, ValueError):
-                    image_file_path(self._settings, str(row["file_name"])).unlink()
+                _delete_image_file(self._settings, file_name=str(row["file_name"]))
+            _delete_image_task_dir(self._settings, job_id, job_created_at)
 
     async def delete_job(self, job_id: str) -> None:
         async with self._lock:
@@ -960,6 +1138,7 @@ class ImageGenerationQueue:
                     raise _image_error(404, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
                 if job["status"] in {"queued", "running"}:
                     raise _image_error(409, "IMAGE_JOB_ACTIVE", "Image generation job is still active")
+                job_created_at = int(job["created_at"])
                 result = ImageGenerationResponse.model_validate_json(job["result_json"]) if job["result_json"] else None
                 reference_rows = list(
                     conn.execute(
@@ -972,10 +1151,10 @@ class ImageGenerationQueue:
                 )
                 conn.execute("DELETE FROM image_jobs WHERE id = ?", (job_id,))
             for item in result.data if result else []:
-                _delete_private_file(item.saved_path)
+                _delete_image_file(self._settings, file_name=item.file_name, path_value=item.saved_path)
             for row in reference_rows:
-                with suppress(OSError, ValueError):
-                    image_file_path(self._settings, str(row["file_name"])).unlink()
+                _delete_image_file(self._settings, file_name=str(row["file_name"]))
+            _delete_image_task_dir(self._settings, job_id, job_created_at)
 
     async def list_recent(self, page: int = 1, limit: int = 20) -> ImageGenerationJobListResponse:
         if page < 1:
@@ -1040,7 +1219,7 @@ class ImageGenerationQueue:
                                 key=f"{job.id}:{image_index}",
                                 job=gallery_job,
                                 image_index=image_index,
-                                image=_gallery_image_from_data(image),
+                                image=_gallery_image_from_data(self._settings, image),
                             )
                         )
                 cursor += slot_count
@@ -1129,7 +1308,7 @@ class ImageGenerationQueue:
             previous_response_id=str(job["previous_response_id"]) if job["previous_response_id"] else None,
             upstream_response_id=str(job["upstream_response_id"]) if job["upstream_response_id"] else None,
             position=position,
-            references=[_reference_from_row(row) for row in reference_rows],
+            references=[_reference_from_row(self._settings, row) for row in reference_rows],
             result=result,
             error=error,
         )
@@ -1170,6 +1349,13 @@ class ImageGenerationQueue:
             conversation_id=str(job["conversation_id"]) if job["conversation_id"] else None,
             previous_response_id=str(job["previous_response_id"]) if job["previous_response_id"] else None,
         )
+
+    def _storage_context_from_job_id(self, job_id: str) -> ImageStorageContext:
+        with connect(self._settings.db_path) as conn:
+            job = conn.execute("SELECT created_at FROM image_jobs WHERE id = ?", (job_id,)).fetchone()
+        if job is None:
+            raise _image_error(404, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
+        return ImageStorageContext(task_dir=_image_job_task_dir(job_id, int(job["created_at"])))
 
     def _claim_next_job(self) -> str | None:
         now = int(time.time())
@@ -1241,6 +1427,7 @@ class ImageGenerationQueue:
                 if job_id is None:
                     return
                 payload = self._payload_from_job_id(job_id)
+                storage_context = self._storage_context_from_job_id(job_id)
 
             async def update_partial_result(result: ImageGenerationResponse) -> None:
                 async with self._lock:
@@ -1248,7 +1435,12 @@ class ImageGenerationQueue:
 
             try:
                 if self._generator is None:
-                    result = await generate_image(self._settings, payload, progress_callback=update_partial_result)
+                    result = await generate_image(
+                        self._settings,
+                        payload,
+                        progress_callback=update_partial_result,
+                        storage_context=storage_context,
+                    )
                 else:
                     result = await self._generator(self._settings, payload)
             except ImageGenerationError as exc:
@@ -1272,10 +1464,18 @@ async def generate_image(
     payload: ImageGenerationRequest,
     transport: httpx.AsyncBaseTransport | None = None,
     progress_callback: ImageProgressCallback | None = None,
+    storage_context: ImageStorageContext | None = None,
 ) -> ImageGenerationResponse:
     _validate_payload(settings, payload)
+    storage_context = storage_context or ImageStorageContext()
     if payload.n == 1:
-        return await _generate_image_request(settings, payload, transport=transport, progress_callback=progress_callback)
+        return await _generate_image_request(
+            settings,
+            payload,
+            transport=transport,
+            progress_callback=progress_callback,
+            storage_context=storage_context,
+        )
 
     accumulated: list[ImageData] = []
     seen_data: set[str] = set()
@@ -1320,6 +1520,7 @@ async def generate_image(
             single_payload,
             transport=transport,
             progress_callback=single_progress,
+            storage_context=storage_context,
         )
         if merge_result(result):
             await publish_progress()
@@ -1339,8 +1540,10 @@ async def _generate_image_request(
     payload: ImageGenerationRequest,
     transport: httpx.AsyncBaseTransport | None = None,
     progress_callback: ImageProgressCallback | None = None,
+    storage_context: ImageStorageContext | None = None,
 ) -> ImageGenerationResponse:
     _validate_payload(settings, payload)
+    storage_context = storage_context or ImageStorageContext()
     account_id, access_token = _current_auth_tokens(settings)
     upstream_payload = build_upstream_payload(settings, payload)
     headers = {
@@ -1379,7 +1582,7 @@ async def _generate_image_request(
         if not new_items:
             return
         created = _created_from_payloads(streamed_payloads)
-        saved_data.extend(_save_image_file(settings, item, created) for item in new_items)
+        saved_data.extend(_save_image_file(settings, item, created, storage_context) for item in new_items)
         for item in saved_data[-len(new_items) :]:
             _debug_log(settings, "saved partial image file=%s", item.saved_path)
         await progress_callback(
@@ -1443,7 +1646,7 @@ async def _generate_image_request(
         raise _image_error(502, "IMAGE_UPSTREAM_ERROR", "Image upstream returned no image data")
     created = _created_from_payloads(response_payloads)
     if final_new_items:
-        saved_data.extend(_save_image_file(settings, item, created) for item in final_new_items)
+        saved_data.extend(_save_image_file(settings, item, created, storage_context) for item in final_new_items)
     for item in saved_data:
         _debug_log(settings, "saved image file=%s", item.saved_path)
     return ImageGenerationResponse(

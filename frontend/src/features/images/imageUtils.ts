@@ -43,6 +43,7 @@ export function galleryApiItemsFromJob(job: ImageGenerationJob): ImageGalleryIte
             revised_prompt: image.revised_prompt,
             file_name: image.file_name,
             file_url: image.file_url,
+            thumbnail_url: image.thumbnail_url,
           }
         : null,
     };
@@ -54,7 +55,8 @@ export function galleryItemsFromApiItems(items: ImageGalleryItem[]): GalleryItem
     return {
       key: item.key,
       job: item.job,
-      src: item.image?.file_url ?? item.image?.url ?? null,
+      thumbnailSrc: item.image?.thumbnail_url ?? null,
+      fullSrc: item.image?.file_url ?? item.image?.url ?? null,
       index: item.image_index,
       revisedPrompt: item.image?.revised_prompt ?? null,
     };
@@ -66,13 +68,13 @@ export function isActiveJob(job: ImageGalleryJob) {
 }
 
 export function isSelectableGalleryItem(item: GalleryItem) {
-  return !isActiveJob(item.job) && (Boolean(item.src) || item.job.status === "failed");
+  return !isActiveJob(item.job) && (Boolean(item.fullSrc) || item.job.status === "failed");
 }
 
 export function downloadGalleryItem(item: GalleryItem) {
-  if (!item.src) return;
+  if (!item.fullSrc) return;
   const anchor = document.createElement("a");
-  anchor.href = item.src;
+  anchor.href = item.fullSrc;
   anchor.download = `switchboard-image-${item.job.updated_at}-${item.index + 1}.png`;
   document.body.appendChild(anchor);
   anchor.click();

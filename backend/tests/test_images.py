@@ -4,6 +4,7 @@ import asyncio
 import base64
 import importlib
 import json
+import time
 from pathlib import Path
 
 import httpx
@@ -22,11 +23,20 @@ from images import (
     ImageReferenceInput,
     build_upstream_payload,
     generate_image,
+    image_thumbnail_filename,
+    image_thumbnail_relative_path,
 )
 from issues import issue_detail
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nreference"
 PNG_B64 = "iVBORw0KGgpyZWZlcmVuY2U="
+VALID_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC"
+)
+
+
+def _task_dir(job_id: str, created_at: int) -> str:
+    return f"{time.strftime('%Y/%m', time.gmtime(created_at))}/{job_id}"
 
 
 def _settings(tmp_path, **overrides) -> Settings:
@@ -134,6 +144,8 @@ async def test_generate_image_calls_responses_with_current_codex_token(tmp_path)
     assert result.data[0].revised_prompt == "A calmer prompt"
     assert result.data[0].file_name
     assert result.data[0].file_url == f"/api/images/files/{result.data[0].file_name}"
+    assert "/direct-" in result.data[0].file_name
+    assert result.data[0].file_name.endswith("/outputs/o1.png")
     assert result.data[0].saved_path
     assert Path(result.data[0].saved_path).read_bytes() == b"hello"
 
@@ -304,6 +316,41 @@ async def test_generate_image_can_return_data_url(tmp_path) -> None:
     assert result.data[0].b64_json == "aGVsbG8="
     assert result.data[0].file_url
     assert result.data[0].url == result.data[0].file_url
+
+
+@pytest.mark.asyncio
+async def test_generate_image_saves_webp_thumbnail_for_valid_images(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    _write_auth(settings)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return _sse_response(
+            {
+                "output": [
+                    {
+                        "type": "image_generation_call",
+                        "result": VALID_PNG_B64,
+                        "output_format": "png",
+                    }
+                ],
+            }
+        )
+
+    result = await generate_image(
+        settings,
+        ImageGenerationRequest(prompt="poster"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    item = result.data[0]
+    assert item.file_name is not None
+    assert "/direct-" in item.file_name
+    assert item.file_name.endswith("/outputs/o1.png")
+    thumbnail_name = image_thumbnail_relative_path(item.file_name)
+    assert item.thumbnail_url == f"/api/images/files/{thumbnail_name}"
+    thumbnail_path = settings.db_path.parent / "images" / thumbnail_name
+    assert thumbnail_path.exists()
+    assert thumbnail_path.read_bytes().startswith(b"RIFF")
 
 
 def test_build_upstream_payload_adds_reference_images_without_forcing_generate(tmp_path) -> None:
@@ -729,6 +776,7 @@ async def test_image_generation_queue_persists_jobs_and_references(tmp_path) -> 
     assert restored_job is not None
     assert restored_job.status == "succeeded"
     assert restored_job.references[0].original_file_name == "ref.png"
+    assert restored_job.references[0].file_name == f"{_task_dir(job.id, job.created_at)}/references/r1.png"
     assert restored_job.references[0].file_url == f"/api/images/files/{restored_job.references[0].file_name}"
     assert (settings.db_path.parent / "images" / restored_job.references[0].file_name).read_bytes() == PNG_BYTES
     await restored.close()
@@ -743,6 +791,10 @@ async def test_image_generation_queue_deletes_result_images(tmp_path) -> None:
     second_path = image_dir / "second.png"
     first_path.write_bytes(b"first")
     second_path.write_bytes(b"second")
+    first_thumbnail_path = image_dir / image_thumbnail_filename(first_path.name)
+    second_thumbnail_path = image_dir / image_thumbnail_filename(second_path.name)
+    first_thumbnail_path.write_bytes(b"first-thumb")
+    second_thumbnail_path.write_bytes(b"second-thumb")
 
     async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
         return ImageGenerationResponse(
@@ -770,12 +822,15 @@ async def test_image_generation_queue_deletes_result_images(tmp_path) -> None:
     assert len(updated.result.data) == 1
     assert updated.result.data[0].file_name == "second.png"
     assert not first_path.exists()
+    assert not first_thumbnail_path.exists()
     assert second_path.exists()
+    assert second_thumbnail_path.exists()
 
     await queue.delete_result_image(job.id, 0)
 
     assert await queue.get(job.id) is None
     assert not second_path.exists()
+    assert not second_thumbnail_path.exists()
     await queue.close()
 
 
@@ -797,6 +852,59 @@ async def test_image_generation_queue_deletes_failed_jobs_without_images(tmp_pat
     await queue.delete_job(job.id)
 
     assert await queue.get(job.id) is None
+    await queue.close()
+
+
+@pytest.mark.asyncio
+async def test_image_generation_queue_deletes_job_images_references_and_thumbnails(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    image_dir = settings.db_path.parent / "images"
+    image_dir.mkdir()
+    result_path = image_dir / "result.png"
+    result_thumbnail = image_dir / image_thumbnail_filename(result_path.name)
+    result_path.write_bytes(b"result")
+    result_thumbnail.write_bytes(b"result-thumb")
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        return ImageGenerationResponse(
+            created=123,
+            model="gpt-image-2",
+            data=[
+                ImageData(
+                    b64_json="cmVzdWx0",
+                    file_name=result_path.name,
+                    file_url=f"/api/images/files/{result_path.name}",
+                    saved_path=str(result_path),
+                )
+            ],
+        )
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    job = await queue.enqueue(
+        ImageGenerationRequest(
+            prompt="poster",
+            reference_images=[ImageReferenceInput(file_name="ref.png", mime_type="image/png", b64_json=PNG_B64)],
+        )
+    )
+    for _ in range(20):
+        done = await queue.get(job.id)
+        if done is not None and done.status == "succeeded":
+            break
+        await asyncio.sleep(0.01)
+    done = await queue.get(job.id)
+    assert done is not None
+    reference_path = image_dir / done.references[0].file_name
+    reference_thumbnail = image_dir / image_thumbnail_relative_path(done.references[0].file_name)
+    reference_thumbnail.parent.mkdir(parents=True, exist_ok=True)
+    reference_thumbnail.write_bytes(b"reference-thumb")
+
+    await queue.delete_job(job.id)
+
+    assert await queue.get(job.id) is None
+    assert not result_path.exists()
+    assert not result_thumbnail.exists()
+    assert not reference_path.exists()
+    assert not reference_thumbnail.exists()
     await queue.close()
 
 
@@ -1132,6 +1240,9 @@ def test_image_gallery_api_paginates_by_image_slots(monkeypatch, tmp_path) -> No
         model="gpt-image-2",
         data=[ImageData(b64_json="aGVsbG8=", file_name="new-0.png")],
     )
+    image_dir = settings.db_path.parent / "images"
+    image_dir.mkdir(parents=True)
+    (image_dir / image_thumbnail_filename("new-0.png")).write_bytes(b"thumbnail")
     with connect(settings.db_path) as conn:
         for job_id, prompt, n, created_at, result in [
             ("old-job", "Old", 4, 1, old_result),
@@ -1164,6 +1275,7 @@ def test_image_gallery_api_paginates_by_image_slots(monkeypatch, tmp_path) -> No
         "revised_prompt": None,
         "file_name": "new-0.png",
         "file_url": None,
+        "thumbnail_url": None,
     }
     assert second_page.status_code == 200
     assert [(item["job"]["id"], item["image_index"]) for item in second_page.json()["items"]] == [
@@ -1172,14 +1284,166 @@ def test_image_gallery_api_paginates_by_image_slots(monkeypatch, tmp_path) -> No
     ]
 
 
+def test_migrate_image_storage_layout_moves_files_updates_db_and_creates_thumbnails(monkeypatch, tmp_path, capsys) -> None:
+    data_dir = tmp_path / "switchboard-data"
+    image_dir = data_dir / "images"
+    codex_home = tmp_path / "codex"
+    image_dir.mkdir(parents=True)
+    codex_home.mkdir()
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(data_dir))
+
+    import config
+    from db import init_db
+    from scripts.migrate_image_storage_layout import main as migrate_main
+
+    config.get_settings.cache_clear()
+    settings = _settings(tmp_path, db_path=data_dir / "switchboard.sqlite", image_output_dir=image_dir)
+    init_db(settings.db_path)
+    result = ImageGenerationResponse(
+        created=1776000000,
+        model="gpt-image-2",
+        data=[
+            ImageData(
+                file_name="existing.png",
+                file_url="/api/images/files/existing.png",
+                saved_path=str(image_dir / "existing.png"),
+            )
+        ],
+    )
+    long_task_dir = _task_dir("job-two", 2)
+    long_output_name = f"{long_task_dir}/outputs/output-1-long.png"
+    long_reference_name = f"{long_task_dir}/references/reference-1-long-ref.png"
+    long_output_thumb = f"{long_task_dir}/derived/output-1-long.thumb.webp"
+    long_reference_thumb = f"{long_task_dir}/derived/reference-1-long-ref.thumb.webp"
+    long_result = ImageGenerationResponse(
+        created=1776000001,
+        model="gpt-image-2",
+        data=[
+            ImageData(
+                file_name=long_output_name,
+                file_url=f"/api/images/files/{long_output_name}",
+                thumbnail_url=f"/api/images/files/{long_output_thumb}",
+                saved_path=str(image_dir / long_output_name),
+            )
+        ],
+    )
+    (image_dir / "existing.png").write_bytes(base64.b64decode(VALID_PNG_B64))
+    (image_dir / "ref.png").write_bytes(base64.b64decode(VALID_PNG_B64))
+    (image_dir / image_thumbnail_filename("ref.png")).write_bytes(b"old-thumb")
+    (image_dir / long_output_name).parent.mkdir(parents=True)
+    (image_dir / long_output_name).write_bytes(base64.b64decode(VALID_PNG_B64))
+    (image_dir / long_reference_name).parent.mkdir(parents=True)
+    (image_dir / long_reference_name).write_bytes(base64.b64decode(VALID_PNG_B64))
+    (image_dir / long_output_thumb).parent.mkdir(parents=True)
+    (image_dir / long_output_thumb).write_bytes(b"long-output-thumb")
+    (image_dir / long_reference_thumb).parent.mkdir(parents=True, exist_ok=True)
+    (image_dir / long_reference_thumb).write_bytes(b"long-reference-thumb")
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO image_jobs (
+                id, prompt, model, size, quality, response_format, status,
+                n, result_json, created_at, updated_at
+            )
+            VALUES ('job-one', 'Prompt', NULL, '1024x1024', 'auto', 'b64_json', 'succeeded', 1, ?, 1, 1)
+            """,
+            (result.model_dump_json(),),
+        )
+        conn.execute(
+            """
+            INSERT INTO image_job_references (
+                id, job_id, position, original_file_name, mime_type, size_bytes, file_name, created_at
+            )
+            VALUES ('ref-one', 'job-one', 0, 'ref.png', 'image/png', 1, 'ref.png', 1)
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO image_jobs (
+                id, prompt, model, size, quality, response_format, status,
+                n, result_json, created_at, updated_at
+            )
+            VALUES ('job-two', 'Prompt two', NULL, '1024x1024', 'auto', 'b64_json', 'succeeded', 1, ?, 2, 2)
+            """,
+            (long_result.model_dump_json(),),
+        )
+        conn.execute(
+            """
+            INSERT INTO image_job_references (
+                id, job_id, position, original_file_name, mime_type, size_bytes, file_name, created_at
+            )
+            VALUES ('ref-two', 'job-two', 0, 'long-ref.png', 'image/png', 1, ?, 2)
+            """,
+            (long_reference_name,),
+        )
+
+    assert migrate_main() == 0
+    assert migrate_main() == 0
+    output = capsys.readouterr().out
+
+    assert "图片目录整理完成" in output
+    assert not (image_dir / "existing.png").exists()
+    assert not (image_dir / "ref.png").exists()
+    task_dir = _task_dir("job-one", 1)
+    assert (image_dir / task_dir / "outputs" / "o1.png").exists()
+    assert (image_dir / task_dir / "references" / "r1.png").exists()
+    assert (image_dir / task_dir / "derived" / image_thumbnail_filename("o1.png")).exists()
+    assert (image_dir / task_dir / "derived" / image_thumbnail_filename("r1.png")).read_bytes() == b"old-thumb"
+    assert not (image_dir / long_output_name).exists()
+    assert not (image_dir / long_reference_name).exists()
+    assert not (image_dir / long_output_thumb).exists()
+    assert not (image_dir / long_reference_thumb).exists()
+    assert (image_dir / long_task_dir / "outputs" / "o1.png").exists()
+    assert (image_dir / long_task_dir / "references" / "r1.png").exists()
+    assert (image_dir / long_task_dir / "derived" / "o1.thumb.webp").read_bytes() == b"long-output-thumb"
+    assert (image_dir / long_task_dir / "derived" / "r1.thumb.webp").read_bytes() == b"long-reference-thumb"
+    with connect(settings.db_path) as conn:
+        stored_job = conn.execute("SELECT result_json FROM image_jobs WHERE id = 'job-one'").fetchone()
+        stored_reference = conn.execute("SELECT file_name FROM image_job_references WHERE id = 'ref-one'").fetchone()
+        stored_long_job = conn.execute("SELECT result_json FROM image_jobs WHERE id = 'job-two'").fetchone()
+        stored_long_reference = conn.execute("SELECT file_name FROM image_job_references WHERE id = 'ref-two'").fetchone()
+    migrated_result = ImageGenerationResponse.model_validate_json(stored_job["result_json"])
+    migrated_long_result = ImageGenerationResponse.model_validate_json(stored_long_job["result_json"])
+    assert migrated_result.data[0].file_name == f"{task_dir}/outputs/o1.png"
+    assert migrated_result.data[0].file_url == f"/api/images/files/{task_dir}/outputs/o1.png"
+    assert migrated_result.data[0].thumbnail_url == f"/api/images/files/{task_dir}/derived/o1.thumb.webp"
+    assert stored_reference["file_name"] == f"{task_dir}/references/r1.png"
+    assert migrated_long_result.data[0].file_name == f"{long_task_dir}/outputs/o1.png"
+    assert migrated_long_result.data[0].thumbnail_url == f"/api/images/files/{long_task_dir}/derived/o1.thumb.webp"
+    assert stored_long_reference["file_name"] == f"{long_task_dir}/references/r1.png"
+
+
+def test_migrate_image_storage_layout_reports_missing_tables(monkeypatch, tmp_path, capsys) -> None:
+    data_dir = tmp_path / "empty-data"
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(data_dir))
+
+    import config
+    from scripts.migrate_image_storage_layout import main as migrate_main
+
+    config.get_settings.cache_clear()
+
+    assert migrate_main() == 1
+    captured = capsys.readouterr()
+
+    assert "当前数据库缺少表 image_jobs, image_job_references" in captured.err
+    assert str(data_dir / "switchboard.sqlite") in captured.err
+
+
 def test_image_file_api_requires_auth_and_serves_saved_file(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
     image_dir = tmp_path / "switchboard-data" / "images"
-    image_dir.mkdir(parents=True)
-    (image_dir / "sample.png").write_bytes(b"image-bytes")
+    sample_path = image_dir / "2026" / "05" / "job-one" / "outputs" / "sample.png"
+    sample_path.parent.mkdir(parents=True)
+    sample_path.write_bytes(b"image-bytes")
 
     import config
 
@@ -1189,10 +1453,13 @@ def test_image_file_api_requires_auth_and_serves_saved_file(monkeypatch, tmp_pat
     importlib.reload(main)
     client = TestClient(main.create_app())
 
-    assert client.get("/api/images/files/sample.png").status_code == 401
+    assert client.get("/api/images/files/2026/05/job-one/outputs/sample.png").status_code == 401
     assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
 
-    response = client.get("/api/images/files/sample.png")
+    response = client.get("/api/images/files/2026/05/job-one/outputs/sample.png")
 
     assert response.status_code == 200
     assert response.content == b"image-bytes"
+    assert client.get("/api/images/files/generated/sample.png").status_code == 400
+    assert client.get("/api/images/files/2026/05/job-one/unknown/sample.png").status_code == 400
+    assert client.get("/api/images/files/2026/05/job-one/outputs/%2E%2E/sample.png").status_code == 400
