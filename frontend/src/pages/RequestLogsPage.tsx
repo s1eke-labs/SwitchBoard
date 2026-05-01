@@ -1,12 +1,11 @@
 import { ReactNode, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Database, DollarSign, Layers3, Loader2, ReceiptText, UserRound } from "lucide-react";
+import { Activity, ChevronDown, Database, DollarSign, Layers3, Loader2, ReceiptText, UserRound } from "lucide-react";
 import { AccountDTO, api, UsageRequestLogDTO, UsageRequestLogsResponse } from "@/lib/api";
 import { getCurrentLocale, translate, useI18n } from "@/i18n";
 import { formatAppError } from "@/lib/errors";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
 import { PageSelector } from "@/components/PageSelector";
-import { Button } from "@/components/heroui/button";
 import { Card, CardContent, CardHeader } from "@/components/heroui/card";
 import { Badge } from "@/components/heroui/badge";
 import { Table } from "@/components/heroui/table";
@@ -379,38 +378,13 @@ export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
             </div>
           )}
           <div className="flex shrink-0 items-center justify-center border-t p-3">
-            <div className="inline-flex items-center gap-2 bg-white">
-              <Button
-                aria-label={t("common.previousPage")}
-                title={t("common.previousPage")}
-                variant="secondary"
-                size="icon"
-                className="h-9 w-9 rounded-lg"
-                onClick={() => setPage((value) => Math.max(1, value - 1))}
-                disabled={page === 1 || requestLogs.isFetching}
-              >
-                <ChevronLeft size={16} />
-              </Button>
-              <PageSelector
-                page={page}
-                totalPages={totalPages}
-                disabled={requestLogs.isFetching}
-                jumping={requestLogs.isFetching}
-                buttonClassName="h-9 w-32 rounded-md px-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-                onSelect={selectPage}
-              />
-              <Button
-                aria-label={t("common.nextPage")}
-                title={t("common.nextPage")}
-                variant="secondary"
-                size="icon"
-                className="h-9 w-9 rounded-lg"
-                onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
-                disabled={page >= totalPages || requestLogs.isFetching}
-              >
-                <ChevronRight size={16} />
-              </Button>
-            </div>
+            <PageSelector
+              page={page}
+              totalPages={totalPages}
+              disabled={requestLogs.isFetching}
+              jumping={requestLogs.isFetching}
+              onSelect={selectPage}
+            />
           </div>
         </CardContent>
       </Card>

@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Loader2, Search, UserRound } from "lucide-react";
+import { Loader2, Search, UserRound } from "lucide-react";
 import { api, SessionSummary } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
 import { sessionPath } from "@/app/routing";
 import { SessionEventList } from "@/features/sessions/SessionEventList";
 import { PageSelector } from "@/components/PageSelector";
-import { Button } from "@/components/heroui/button";
 import { Card, CardHeader } from "@/components/heroui/card";
 import { Input } from "@/components/heroui/input";
 
@@ -152,38 +151,13 @@ export function SessionsPage({
                 )}
               </div>
               <div className="flex items-center justify-center border-t p-3">
-                <div className="inline-flex items-center gap-2 bg-white">
-                  <Button
-                    aria-label={t("common.previousPage")}
-                    title={t("common.previousPage")}
-                    variant="secondary"
-                    size="icon"
-                    className="h-9 w-9 rounded-lg"
-                    onClick={() => setPage((value) => Math.max(1, value - 1))}
-                    disabled={page === 1 || sessions.isFetching}
-                  >
-                    <ChevronLeft size={16} />
-                  </Button>
-                  <PageSelector
-                    page={page}
-                    totalPages={totalPages}
-                    disabled={sessions.isFetching}
-                    jumping={sessions.isFetching}
-                    buttonClassName="h-9 min-w-24 rounded-md px-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-                    onSelect={selectPage}
-                  />
-                  <Button
-                    aria-label={t("common.nextPage")}
-                    title={t("common.nextPage")}
-                    variant="secondary"
-                    size="icon"
-                    className="h-9 w-9 rounded-lg"
-                    onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
-                    disabled={page >= totalPages || sessions.isFetching}
-                  >
-                    <ChevronRight size={16} />
-                  </Button>
-                </div>
+                <PageSelector
+                  page={page}
+                  totalPages={totalPages}
+                  disabled={sessions.isFetching}
+                  jumping={sessions.isFetching}
+                  onSelect={selectPage}
+                />
               </div>
             </>
           ) : (

@@ -1,8 +1,36 @@
-import { useState } from "react";
-import { Dropdown } from "@heroui/react";
-import { ChevronDown } from "lucide-react";
 import { useI18n } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { Pagination } from "@/components/heroui/pagination";
+
+type PageItem = number | "start-ellipsis" | "end-ellipsis";
+
+function getPaginationItems(page: number, totalPages: number): PageItem[] {
+  const pageCount = Math.max(1, totalPages);
+  const currentPage = Math.min(Math.max(1, page), pageCount);
+
+  if (pageCount <= 7) {
+    return Array.from({ length: pageCount }, (_, index) => index + 1);
+  }
+
+  const items: PageItem[] = [1];
+  const middleStart = Math.max(2, currentPage - 1);
+  const middleEnd = Math.min(pageCount - 1, currentPage + 1);
+
+  if (middleStart > 2) {
+    items.push("start-ellipsis");
+  }
+
+  for (let pageNumber = middleStart; pageNumber <= middleEnd; pageNumber += 1) {
+    items.push(pageNumber);
+  }
+
+  if (middleEnd < pageCount - 1) {
+    items.push("end-ellipsis");
+  }
+
+  items.push(pageCount);
+  return items;
+}
 
 export function PageSelector({
   page,
@@ -11,10 +39,7 @@ export function PageSelector({
   jumping,
   onSelect,
   className,
-  buttonClassName,
-  menuClassName,
-  showChevron = false,
-  chevronSize = 15,
+  size = "md",
 }: {
   page: number;
   totalPages: number;
@@ -22,64 +47,61 @@ export function PageSelector({
   jumping: boolean;
   onSelect: (page: number) => void;
   className?: string;
-  buttonClassName?: string;
-  menuClassName?: string;
-  showChevron?: boolean;
-  chevronSize?: number;
+  size?: "sm" | "md" | "lg";
 }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
   const pageCount = Math.max(1, totalPages);
-  const label = jumping ? t("common.loadingEllipsis") : t("common.pageLabel", { page: Math.min(page, pageCount), total: pageCount });
+  const currentPage = Math.min(Math.max(1, page), pageCount);
+  const items = getPaginationItems(currentPage, pageCount);
+  const isDisabled = disabled || jumping;
+
+  function selectPage(targetPage: number) {
+    if (isDisabled || targetPage === currentPage || targetPage < 1 || targetPage > pageCount) return;
+    onSelect(targetPage);
+  }
 
   return (
-    <div className={cn("relative", className)} aria-busy={jumping}>
-      <Dropdown.Root isOpen={open} onOpenChange={setOpen}>
-        <Dropdown.Trigger
-          className={cn(
-            "h-9 min-w-24 rounded-md px-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50",
-            buttonClassName,
-          )}
-          isDisabled={disabled || pageCount <= 1}
-        >
-          {showChevron ? (
-            <>
-              <span>{label}</span>
-              <ChevronDown size={chevronSize} className={`shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
-            </>
+    <Pagination className={cn("w-auto", className)} size={size} aria-busy={jumping} aria-label={t("common.selectPage")}>
+      <Pagination.Content>
+        <Pagination.Item>
+          <Pagination.Previous
+            aria-label={t("common.previousPage")}
+            isDisabled={isDisabled || currentPage === 1}
+            onPress={() => selectPage(currentPage - 1)}
+          >
+            <Pagination.PreviousIcon />
+            <span>{t("common.previousPage")}</span>
+          </Pagination.Previous>
+        </Pagination.Item>
+        {items.map((item) =>
+          typeof item === "number" ? (
+            <Pagination.Item key={item}>
+              <Pagination.Link
+                aria-label={t("common.pageLabel", { page: item, total: pageCount })}
+                isActive={item === currentPage}
+                isDisabled={isDisabled}
+                onPress={() => selectPage(item)}
+              >
+                {item}
+              </Pagination.Link>
+            </Pagination.Item>
           ) : (
-            label
-          )}
-        </Dropdown.Trigger>
-        <Dropdown.Popover
-          placement="top"
-          className={cn(
-            "max-h-56 w-56 overflow-auto rounded-lg border bg-white p-2 shadow-soft",
-            menuClassName,
-          )}
-        >
-          <Dropdown.Menu className="grid grid-cols-4 gap-1" aria-label={t("common.selectPage")}>
-            {Array.from({ length: pageCount }, (_, index) => {
-              const pageNumber = index + 1;
-              const active = pageNumber === page;
-              return (
-                <Dropdown.Item
-                  key={pageNumber}
-                  id={String(pageNumber)}
-                  className={cn(
-                    "flex h-8 items-center justify-center rounded-md text-sm font-semibold transition-colors hover:bg-muted",
-                    active ? "bg-foreground text-white hover:bg-foreground" : "text-foreground",
-                  )}
-                  onAction={() => onSelect(pageNumber)}
-                  textValue={String(pageNumber)}
-                >
-                  {pageNumber}
-                </Dropdown.Item>
-              );
-            })}
-          </Dropdown.Menu>
-        </Dropdown.Popover>
-      </Dropdown.Root>
-    </div>
+            <Pagination.Item key={item}>
+              <Pagination.Ellipsis />
+            </Pagination.Item>
+          ),
+        )}
+        <Pagination.Item>
+          <Pagination.Next
+            aria-label={t("common.nextPage")}
+            isDisabled={isDisabled || currentPage >= pageCount}
+            onPress={() => selectPage(currentPage + 1)}
+          >
+            <span>{t("common.nextPage")}</span>
+            <Pagination.NextIcon />
+          </Pagination.Next>
+        </Pagination.Item>
+      </Pagination.Content>
+    </Pagination>
   );
 }

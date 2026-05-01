@@ -1,8 +1,6 @@
 import { Checkbox } from "@heroui/react";
 import {
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   Clock3,
   Download,
   ImageIcon,
@@ -194,40 +192,15 @@ export function ImageGalleryPanel({
             <Button variant={selecting ? "secondary" : "default"} size="sm" onClick={onToggleSelecting} disabled={loading || deleting}>
               {selecting ? t("common.cancel") : t("images.select")}
             </Button>
-            <Button
-              aria-label={t("common.previousPage")}
-              title={t("common.previousPage")}
-              variant="secondary"
-              size="icon"
-              className="h-8 w-8 rounded-md"
-              onClick={() => onSelectPage(Math.max(1, page - 1))}
-              disabled={page === 1 || fetching}
-            >
-              <ChevronLeft size={15} />
-            </Button>
             <PageSelector
               page={page}
               totalPages={totalPages}
               disabled={fetching}
               jumping={fetching}
               className={fetching ? "opacity-70" : ""}
-              buttonClassName="flex h-8 min-w-28 items-center justify-center gap-1 rounded-md px-2 text-center text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-              menuClassName="max-h-48 w-52 rounded-md"
-              showChevron
-              chevronSize={14}
+              size="sm"
               onSelect={onSelectPage}
             />
-            <Button
-              aria-label={t("common.nextPage")}
-              title={t("common.nextPage")}
-              variant="secondary"
-              size="icon"
-              className="h-8 w-8 rounded-md"
-              onClick={() => onSelectPage(Math.min(totalPages, page + 1))}
-              disabled={page >= totalPages || fetching}
-            >
-              <ChevronRight size={15} />
-            </Button>
           </div>
         </div>
       </CardHeader>
