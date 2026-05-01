@@ -44,29 +44,6 @@ from issues import IssueDetail, issue_detail
 logger = logging.getLogger(__name__)
 
 
-def _gallery_slot_count(job: ImageGenerationJobResponse) -> int:
-    result_count = len(job.result.data) if job.result else 0
-    if job.status in {"queued", "running"}:
-        return max(job.n, result_count, 1)
-    return max(result_count, 1)
-
-
-def _gallery_job_from_job(job: ImageGenerationJobResponse) -> ImageGalleryJobResponse:
-    return ImageGalleryJobResponse(
-        id=job.id,
-        prompt=job.prompt,
-        size=job.size,
-        quality=job.quality,
-        n=job.n,
-        status=job.status,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-        position=job.position,
-        references=job.references,
-        error=job.error,
-    )
-
-
 def _job_summary_from_job(job: ImageGenerationJobResponse) -> ImageGenerationJobSummaryResponse:
     return ImageGenerationJobSummaryResponse(
         id=job.id,
@@ -271,43 +248,145 @@ class ImageGenerationQueue:
         if page < 1:
             raise _image_error(400, "IMAGE_JOB_INVALID_PAGE", "Image job page is invalid")
         async with self._lock:
-            with connect(self._settings.db_path) as conn:
-                job_ids = [
-                    str(row["id"])
-                    for row in conn.execute(
-                        """
-                        SELECT id FROM image_jobs
-                        ORDER BY created_at DESC, rowid DESC
-                        """
-                    )
-                ]
-            jobs = [job for job_id in job_ids if (job := self._job_response_from_db(job_id)) is not None]
-            slot_counts = [_gallery_slot_count(job) for job in jobs]
-            total_count = sum(slot_counts)
             start = (page - 1) * limit
             end = start + limit
+            with connect(self._settings.db_path) as conn:
+                total_count = int(
+                    conn.execute(
+                        """
+                        WITH counted AS (
+                            SELECT
+                                CASE
+                                    WHEN status IN ('queued', 'running') THEN max(
+                                        n,
+                                        COALESCE(json_array_length(result_json, '$.data'), 0),
+                                        1
+                                    )
+                                    ELSE max(COALESCE(json_array_length(result_json, '$.data'), 0), 1)
+                                END AS slot_count
+                            FROM image_jobs
+                        )
+                        SELECT COALESCE(SUM(slot_count), 0) AS total_count
+                        FROM counted
+                        """
+                    ).fetchone()["total_count"]
+                )
+                job_rows = list(
+                    conn.execute(
+                        """
+                        WITH counted AS (
+                            SELECT
+                                rowid AS job_rowid,
+                                id,
+                                status,
+                                n,
+                                created_at,
+                                CASE
+                                    WHEN status IN ('queued', 'running') THEN max(
+                                        n,
+                                        COALESCE(json_array_length(result_json, '$.data'), 0),
+                                        1
+                                    )
+                                    ELSE max(COALESCE(json_array_length(result_json, '$.data'), 0), 1)
+                                END AS slot_count
+                            FROM image_jobs
+                        ),
+                        positioned AS (
+                            SELECT
+                                id,
+                                job_rowid,
+                                status,
+                                created_at,
+                                slot_count,
+                                COALESCE(
+                                    SUM(slot_count) OVER (
+                                        ORDER BY created_at DESC, job_rowid DESC
+                                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                                    ),
+                                    0
+                                ) AS slot_start,
+                                CASE
+                                    WHEN status = 'queued' THEN
+                                        SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) OVER (
+                                            ORDER BY created_at ASC, job_rowid ASC
+                                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                                        )
+                                    ELSE NULL
+                                END AS position
+                            FROM counted
+                        )
+                        SELECT *
+                        FROM positioned
+                        WHERE slot_start < ? AND slot_start + slot_count > ?
+                        ORDER BY created_at DESC, job_rowid DESC
+                        """,
+                        (end, start),
+                    )
+                )
+                job_ids = [str(row["id"]) for row in job_rows]
+                jobs_by_id: dict[str, sqlite3.Row] = {}
+                references_by_job_id: dict[str, list[sqlite3.Row]] = {job_id: [] for job_id in job_ids}
+                if references_by_job_id:
+                    placeholders = ", ".join("?" for _ in references_by_job_id)
+                    jobs_by_id = {
+                        str(row["id"]): row
+                        for row in conn.execute(
+                            f"""
+                            SELECT *
+                            FROM image_jobs
+                            WHERE id IN ({placeholders})
+                            """,
+                            tuple(references_by_job_id),
+                        )
+                    }
+                    for row in conn.execute(
+                        f"""
+                        SELECT *
+                        FROM image_job_references
+                        WHERE job_id IN ({placeholders})
+                        ORDER BY job_id ASC, position ASC
+                        """,
+                        tuple(references_by_job_id),
+                    ):
+                        references_by_job_id[str(row["job_id"])].append(row)
             items: list[ImageGalleryItemResponse] = []
-            cursor = 0
-            for job, slot_count in zip(jobs, slot_counts):
-                if cursor + slot_count <= start:
-                    cursor += slot_count
+            for row in job_rows:
+                job_id = str(row["id"])
+                job = jobs_by_id.get(job_id)
+                if job is None:
                     continue
-                gallery_job = _gallery_job_from_job(job)
+                result = ImageGenerationResponse.model_validate_json(job["result_json"]) if job["result_json"] else None
+                error = IssueDetail.model_validate_json(job["error_json"]) if job["error_json"] else None
+                gallery_job = ImageGalleryJobResponse(
+                    id=job_id,
+                    prompt=str(job["prompt"]),
+                    size=str(job["size"]),
+                    quality=str(job["quality"]),
+                    n=int(job["n"]),
+                    status=job["status"],
+                    created_at=int(job["created_at"]),
+                    updated_at=int(job["updated_at"]),
+                    position=int(row["position"]) if row["position"] is not None else None,
+                    references=[
+                        _reference_from_row(self._settings, reference_row)
+                        for reference_row in references_by_job_id[job_id]
+                    ],
+                    error=error,
+                )
+                slot_start = int(row["slot_start"])
+                slot_count = int(row["slot_count"])
                 for image_index in range(slot_count):
-                    absolute_index = cursor + image_index
+                    absolute_index = slot_start + image_index
                     if start <= absolute_index < end:
-                        image = job.result.data[image_index] if job.result and image_index < len(job.result.data) else None
+                        image = result.data[image_index] if result and image_index < len(result.data) else None
                         items.append(
                             ImageGalleryItemResponse(
-                                key=f"{job.id}:{image_index}",
+                                key=f"{job_id}:{image_index}",
                                 job=gallery_job,
                                 image_index=image_index,
                                 image=_gallery_image_from_data(self._settings, image),
                             )
                         )
-                cursor += slot_count
-                if cursor >= end:
-                    break
             return ImageGalleryListResponse(items=items, total_count=total_count)
 
     async def close(self) -> None:

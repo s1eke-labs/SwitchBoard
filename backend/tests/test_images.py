@@ -1073,6 +1073,99 @@ async def test_image_generation_queue_paginates_gallery_items_by_image_slots(tmp
     await queue.close()
 
 
+@pytest.mark.asyncio
+async def test_image_generation_queue_gallery_only_hydrates_visible_jobs(monkeypatch, tmp_path) -> None:
+    settings = _settings(tmp_path)
+    queue = ImageGenerationQueue(settings)
+    image_dir = settings.db_path.parent / "images"
+    visible_output = "2026/05/success-job/outputs/o1.png"
+    visible_thumbnail = image_thumbnail_relative_path(visible_output)
+    visible_reference = "2026/05/success-job/references/r1.png"
+    visible_reference_thumbnail = image_thumbnail_relative_path(visible_reference)
+    for path in [image_dir / visible_thumbnail, image_dir / visible_reference_thumbnail]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"thumbnail")
+    success_result = ImageGenerationResponse(
+        created=1776000000,
+        model="gpt-image-2",
+        data=[
+            ImageData(file_name=visible_output, file_url=f"/api/images/files/{visible_output}"),
+            ImageData(file_name="2026/05/success-job/outputs/o2.png"),
+        ],
+    )
+    running_result = ImageGenerationResponse(
+        created=1776000001,
+        model="gpt-image-2",
+        data=[ImageData(file_name="2026/05/running-job/outputs/o1.png")],
+    )
+    failed_error = issue_detail("IMAGE_UPSTREAM_ERROR", "Image generation failed")
+    with connect(settings.db_path) as conn:
+        for job_id, prompt, status, n, created_at, result_json, error_json in [
+            ("running-job", "Running", "running", 4, 300, running_result.model_dump_json(), None),
+            ("failed-job", "Failed", "failed", 4, 200, None, failed_error.model_dump_json()),
+            ("success-job", "Success", "succeeded", 2, 100, success_result.model_dump_json(), None),
+        ]:
+            conn.execute(
+                """
+                INSERT INTO image_jobs (
+                    id, prompt, model, size, quality, response_format, status,
+                    n, result_json, error_json, created_at, updated_at
+                )
+                VALUES (?, ?, NULL, '1024x1024', 'auto', 'b64_json', ?, ?, ?, ?, ?, ?)
+                """,
+                (job_id, prompt, status, n, result_json, error_json, created_at, created_at),
+            )
+        conn.execute(
+            """
+            INSERT INTO image_job_references (
+                id, job_id, position, original_file_name, mime_type, size_bytes, file_name, created_at
+            )
+            VALUES ('ref-visible', 'success-job', 0, 'reference.png', 'image/png', 12, ?, 100)
+            """,
+            (visible_reference,),
+        )
+        for index in range(20):
+            old_result = ImageGenerationResponse(
+                created=1775990000 + index,
+                model="gpt-image-2",
+                data=[
+                    ImageData(file_name=f"2026/05/old-{index}/outputs/o{image_index}.png")
+                    for image_index in range(4)
+                ],
+            )
+            conn.execute(
+                """
+                INSERT INTO image_jobs (
+                    id, prompt, model, size, quality, response_format, status,
+                    n, result_json, created_at, updated_at
+                )
+                VALUES (?, 'Old', NULL, '1024x1024', 'auto', 'b64_json', 'succeeded', 4, ?, ?, ?)
+                """,
+                (f"old-{index}", old_result.model_dump_json(), index, index),
+            )
+
+    def fail_if_full_job_is_loaded(job_id: str) -> None:
+        pytest.fail(f"Gallery should not hydrate full job {job_id}")
+
+    monkeypatch.setattr(queue, "_job_response_from_db", fail_if_full_job_is_loaded)
+
+    page = await queue.list_gallery_items(page=2, limit=4)
+
+    assert page.total_count == 87
+    assert [(item.job.id, item.image_index) for item in page.items] == [
+        ("failed-job", 0),
+        ("success-job", 0),
+        ("success-job", 1),
+        ("old-19", 0),
+    ]
+    assert page.items[0].job.error == failed_error
+    assert page.items[1].image is not None
+    assert page.items[1].image.thumbnail_url == f"/api/images/files/{visible_thumbnail}"
+    assert page.items[1].job.references[0].file_url == f"/api/images/files/{visible_reference}"
+    assert page.items[1].job.references[0].thumbnail_url == f"/api/images/files/{visible_reference_thumbnail}"
+    await queue.close()
+
+
 def test_image_api_requires_auth_and_reports_missing_auth(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
