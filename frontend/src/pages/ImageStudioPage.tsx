@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, DragEvent, FormEvent } from "react";
+import type { ChangeEvent, ClipboardEvent, DragEvent, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@heroui/react";
 import { api, type ImageGalleryJob, type ImageGenerationRequest, type ImageReferenceInput } from "@/lib/api";
@@ -287,6 +287,21 @@ export function ImageStudioPage() {
     void addReferenceFiles(event.dataTransfer.files);
   }
 
+  function handleReferencePaste(event: ClipboardEvent<HTMLElement>) {
+    const imageFiles: File[] = [];
+    for (const item of Array.from(event.clipboardData.items)) {
+      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (file) imageFiles.push(file);
+    }
+    if (imageFiles.length === 0) {
+      imageFiles.push(...Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/")));
+    }
+    if (imageFiles.length === 0) return;
+    event.preventDefault();
+    void addReferenceFiles(imageFiles);
+  }
+
   function removeReference(id: string) {
     setReferenceImages((current) => {
       const removed = current.find((reference) => reference.id === id);
@@ -406,6 +421,7 @@ export function ImageStudioPage() {
           onImageCountChange={setImageCount}
           onReferenceChange={handleReferenceChange}
           onReferenceDrop={handleReferenceDrop}
+          onReferencePaste={handleReferencePaste}
           onPreviewReference={setPreviewReferenceId}
           onRemoveReference={removeReference}
           onSubmit={handleSubmit}
