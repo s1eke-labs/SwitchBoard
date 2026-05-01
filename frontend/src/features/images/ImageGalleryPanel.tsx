@@ -14,7 +14,7 @@ import { Spinner } from "@/components/heroui/spinner";
 import { Toolbar } from "@/components/heroui/toolbar";
 import { useI18n } from "@/i18n";
 import type { ImageGalleryJob } from "@/lib/api";
-import { STATUS_LABEL_KEYS } from "@/features/images/constants";
+import { GALLERY_CARD_HEIGHT, GALLERY_GRID_GAP, STATUS_LABEL_KEYS } from "@/features/images/constants";
 import type { GalleryItem } from "@/features/images/types";
 import { formatJobTime, isActiveJob, isSelectableGalleryItem } from "@/features/images/imageUtils";
 
@@ -28,6 +28,7 @@ export function ImageJobStatusIcon({ job }: { job: ImageGalleryJob }) {
 function ImageGallery({
   items,
   loading,
+  columnCount,
   selecting,
   selectedKeys,
   deleting,
@@ -36,6 +37,7 @@ function ImageGallery({
 }: {
   items: GalleryItem[];
   loading: boolean;
+  columnCount: number;
   selecting: boolean;
   selectedKeys: Set<string>;
   deleting: boolean;
@@ -60,7 +62,14 @@ function ImageGallery({
     );
   }
   return (
-    <div className="grid auto-rows-[220px] grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
+    <div
+      className="grid"
+      style={{
+        gap: GALLERY_GRID_GAP,
+        gridAutoRows: GALLERY_CARD_HEIGHT,
+        gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
+      }}
+    >
       {items.map((item) => {
         const statusLabel = t(STATUS_LABEL_KEYS[item.job.status]);
         const active = isActiveJob(item.job);
@@ -69,7 +78,7 @@ function ImageGallery({
         return (
           <div
             key={item.key}
-            className={`group relative flex h-[220px] min-w-0 flex-col overflow-hidden rounded-md border bg-white text-left transition-colors hover:border-primary/50 focus-within:ring-2 focus-within:ring-ring ${
+            className={`group relative flex min-w-0 flex-col overflow-hidden rounded-md border bg-white text-left transition-colors hover:border-primary/50 focus-within:ring-2 focus-within:ring-ring ${
               selected ? "border-primary ring-2 ring-ring" : ""
             }`}
           >
@@ -95,7 +104,7 @@ function ImageGallery({
               aria-label={selecting ? t("images.selectImage") : `${t("images.preview")} · ${statusLabel}`}
               className="flex min-h-0 flex-1 flex-col text-left focus:outline-none"
             >
-              <div className="flex min-h-0 flex-1 items-center justify-center bg-muted/60 p-2">
+              <div className="flex min-h-0 flex-1 items-center justify-center bg-muted/60 p-1.5">
                 {item.thumbnailSrc ? (
                   <img
                     src={item.thumbnailSrc}
@@ -108,10 +117,10 @@ function ImageGallery({
                   </div>
                 )}
               </div>
-              <div className="h-11 shrink-0 border-t px-3 py-2.5">
-                <div className="flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <span className="flex min-w-0 items-center gap-1">{active ? <ImageJobStatusIcon job={item.job} /> : null}</span>
-                  <span className="shrink-0">{formatJobTime(item.job.updated_at)}</span>
+              <div className="h-9 shrink-0 border-t px-3 py-2">
+                <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                  {active ? <ImageJobStatusIcon job={item.job} /> : null}
+                  <span className="min-w-0 truncate">{formatJobTime(item.job.updated_at)}</span>
                 </div>
               </div>
             </button>
@@ -129,6 +138,7 @@ export function ImageGalleryPanel({
   fetching,
   page,
   totalPages,
+  columnCount,
   selecting,
   selectedItems,
   selectedKeys,
@@ -147,6 +157,7 @@ export function ImageGalleryPanel({
   fetching: boolean;
   page: number;
   totalPages: number;
+  columnCount: number;
   selecting: boolean;
   selectedItems: GalleryItem[];
   selectedKeys: Set<string>;
@@ -162,7 +173,7 @@ export function ImageGalleryPanel({
   const { t } = useI18n();
 
   return (
-    <Card className="flex min-h-[520px] flex-col">
+    <Card className="flex min-h-[520px] flex-col self-start">
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
@@ -205,11 +216,12 @@ export function ImageGalleryPanel({
           </Toolbar>
         </div>
       </CardHeader>
-      <CardContent className="min-h-[456px] flex-1 p-4">
+      <CardContent className="min-h-[456px] flex-1 p-3">
         <div ref={bodyRef}>
           <ImageGallery
             items={items}
             loading={loading}
+            columnCount={columnCount}
             selecting={selecting}
             selectedKeys={selectedKeys}
             deleting={deleting}

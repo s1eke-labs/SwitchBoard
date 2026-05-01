@@ -7,6 +7,8 @@ import { formatAppError } from "@/lib/errors";
 import { useI18n } from "@/i18n";
 import {
   GALLERY_CARD_HEIGHT,
+  GALLERY_DEFAULT_COLUMN_COUNT,
+  GALLERY_DEFAULT_ROW_COUNT,
   GALLERY_FALLBACK_PAGE_SIZE,
   GALLERY_GRID_GAP,
   GALLERY_MAX_PAGE_SIZE,
@@ -63,16 +65,34 @@ export function ImageStudioPage() {
   const [selectedGalleryKeys, setSelectedGalleryKeys] = useState<Set<string>>(() => new Set());
   const [pendingDeleteItems, setPendingDeleteItems] = useState<GalleryItem[] | null>(null);
   const trimmedPrompt = prompt.trim();
-  const galleryPageSize = useMemo(() => {
-    if (!galleryLayout.width || !galleryLayout.viewportHeight) return GALLERY_FALLBACK_PAGE_SIZE;
+  const galleryMetrics = useMemo(() => {
+    if (!galleryLayout.width || !galleryLayout.viewportHeight) {
+      return {
+        columns: GALLERY_DEFAULT_COLUMN_COUNT,
+        pageSize: GALLERY_FALLBACK_PAGE_SIZE,
+      };
+    }
     const columns = Math.max(
       1,
-      Math.floor((galleryLayout.width + GALLERY_GRID_GAP) / (GALLERY_MIN_COLUMN_WIDTH + GALLERY_GRID_GAP)),
+      Math.min(
+        GALLERY_DEFAULT_COLUMN_COUNT,
+        Math.floor((galleryLayout.width + GALLERY_GRID_GAP) / (GALLERY_MIN_COLUMN_WIDTH + GALLERY_GRID_GAP)),
+      ),
     );
     const availableHeight = Math.max(GALLERY_CARD_HEIGHT, galleryLayout.viewportHeight - galleryLayout.top - 24);
-    const rows = Math.max(1, Math.floor((availableHeight + GALLERY_GRID_GAP) / (GALLERY_CARD_HEIGHT + GALLERY_GRID_GAP)));
-    return Math.max(1, Math.min(GALLERY_MAX_PAGE_SIZE, columns * rows));
+    const rows = Math.max(
+      1,
+      Math.min(
+        GALLERY_DEFAULT_ROW_COUNT,
+        Math.floor((availableHeight + GALLERY_GRID_GAP) / (GALLERY_CARD_HEIGHT + GALLERY_GRID_GAP)),
+      ),
+    );
+    return {
+      columns,
+      pageSize: Math.max(1, Math.min(GALLERY_MAX_PAGE_SIZE, columns * rows)),
+    };
   }, [galleryLayout]);
+  const galleryPageSize = galleryMetrics.pageSize;
 
   const gallery = useQuery({
     queryKey: ["imageGallery", galleryPage, galleryPageSize],
@@ -434,6 +454,7 @@ export function ImageStudioPage() {
           fetching={gallery.isFetching}
           page={galleryPage}
           totalPages={galleryTotalPages}
+          columnCount={galleryMetrics.columns}
           selecting={selectingGallery}
           selectedItems={selectedGalleryItems}
           selectedKeys={selectedGalleryKeys}

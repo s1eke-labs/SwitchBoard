@@ -274,7 +274,7 @@ const zhCN: Record<TranslationKey, string> = {
   "images.size": "比例",
   "images.quality": "质量",
   "images.quality.auto": "自动",
-  "images.quality.low": "普通",
+  "images.quality.low": "标清",
   "images.quality.medium": "高清",
   "images.quality.high": "超清",
   "images.count": "数量",

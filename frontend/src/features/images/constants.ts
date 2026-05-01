@@ -16,11 +16,13 @@ export const IMAGE_SIZE_BY_RATIO_AND_QUALITY = {
 export const MAX_REFERENCE_IMAGES = 4;
 export const MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024;
 export const REFERENCE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
-export const GALLERY_CARD_HEIGHT = 220;
-export const GALLERY_GRID_GAP = 12;
-export const GALLERY_MIN_COLUMN_WIDTH = 220;
-export const GALLERY_MAX_PAGE_SIZE = 50;
-export const GALLERY_FALLBACK_PAGE_SIZE = 6;
+export const GALLERY_CARD_HEIGHT = 178;
+export const GALLERY_GRID_GAP = 10;
+export const GALLERY_MIN_COLUMN_WIDTH = 168;
+export const GALLERY_DEFAULT_COLUMN_COUNT = 4;
+export const GALLERY_DEFAULT_ROW_COUNT = 4;
+export const GALLERY_MAX_PAGE_SIZE = GALLERY_DEFAULT_COLUMN_COUNT * GALLERY_DEFAULT_ROW_COUNT;
+export const GALLERY_FALLBACK_PAGE_SIZE = GALLERY_MAX_PAGE_SIZE;
 
 export const STATUS_LABEL_KEYS: Record<ImageGalleryJob["status"], TranslationKey> = {
   queued: "images.status.queued",
