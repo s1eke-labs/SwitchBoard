@@ -44,6 +44,10 @@ export function galleryApiItemsFromJob(job: ImageGenerationJob): ImageGalleryIte
             file_name: image.file_name,
             file_url: image.file_url,
             thumbnail_url: image.thumbnail_url,
+            width: image.width,
+            height: image.height,
+            size_bytes: image.size_bytes,
+            duration_seconds: image.duration_seconds,
           }
         : null,
     };
@@ -59,6 +63,10 @@ export function galleryItemsFromApiItems(items: ImageGalleryItem[]): GalleryItem
       fullSrc: item.image?.file_url ?? item.image?.url ?? null,
       index: item.image_index,
       revisedPrompt: item.image?.revised_prompt ?? null,
+      width: item.image?.width ?? null,
+      height: item.image?.height ?? null,
+      sizeBytes: item.image?.size_bytes ?? null,
+      durationSeconds: item.image?.duration_seconds ?? null,
     };
   });
 }
@@ -92,21 +100,34 @@ export function imageSettingsFromSize(size: string): { aspectRatio: ImageAspectR
   return null;
 }
 
-export function formatImageStyleLabel(
-  size: string,
-  quality: ImageGalleryJob["quality"],
-  t: (key: TranslationKey) => string,
-) {
+export function imageStyleParts(size: string, quality: ImageGalleryJob["quality"], t: (key: TranslationKey) => string) {
   const settings = imageSettingsFromSize(size);
   if (settings) {
-    return `${settings.aspectRatio} · ${t(`images.quality.${settings.quality}`)}`;
+    return {
+      aspectRatio: settings.aspectRatio,
+      quality: t(`images.quality.${settings.quality}`),
+    };
   }
-  return `${size} · ${t(`images.quality.${quality}`)}`;
+  return {
+    aspectRatio: size,
+    quality: t(`images.quality.${quality}`),
+  };
 }
 
 export function formatBytes(value: number) {
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(value / 1024))} KB`;
+}
+
+export function formatDuration(seconds: number) {
+  const value = Math.max(0, Math.round(seconds));
+  if (value < 60) return `${value}s`;
+  const minutes = Math.floor(value / 60);
+  const remainingSeconds = value % 60;
+  if (minutes < 60) return remainingSeconds ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
 export function formatJobTime(value: number) {

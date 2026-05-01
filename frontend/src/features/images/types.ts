@@ -27,4 +27,8 @@ export type GalleryItem = {
   fullSrc: string | null;
   index: number;
   revisedPrompt: string | null;
+  width: number | null;
+  height: number | null;
+  sizeBytes: number | null;
+  durationSeconds: number | null;
 };

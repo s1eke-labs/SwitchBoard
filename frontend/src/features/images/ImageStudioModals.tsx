@@ -1,4 +1,4 @@
-import { Download, ImageIcon, Palette, Pencil, Trash2, WandSparkles } from "lucide-react";
+import { Download, ImageIcon, Info, Pencil, Trash2, WandSparkles } from "lucide-react";
 import { Alert } from "@/components/heroui/alert";
 import { AlertDialog } from "@/components/heroui/alert-dialog";
 import { Button } from "@/components/heroui/button";
@@ -10,7 +10,7 @@ import { Tooltip } from "@/components/heroui/tooltip";
 import { useI18n } from "@/i18n";
 import { STATUS_LABEL_KEYS } from "@/features/images/constants";
 import type { GalleryItem, PendingReferenceImage } from "@/features/images/types";
-import { downloadGalleryItem, formatBytes, formatImageStyleLabel, isSelectableGalleryItem } from "@/features/images/imageUtils";
+import { downloadGalleryItem, formatBytes, formatDuration, imageStyleParts, isSelectableGalleryItem } from "@/features/images/imageUtils";
 import { ImageJobStatusIcon } from "@/features/images/ImageGalleryPanel";
 
 export function ReferencePreviewModal({
@@ -103,7 +103,10 @@ export function ImagePreviewModal({
   const { job } = item;
   const src = item.fullSrc;
   const revisedPrompt = item.revisedPrompt;
-  const styleLabel = formatImageStyleLabel(job.size, job.quality, t);
+  const styleParts = imageStyleParts(job.size, job.quality, t);
+  const generationDuration = item.durationSeconds ?? (job.status === "queued" ? null : Math.max(0, job.updated_at - job.created_at));
+  const imageResolution = item.width && item.height ? `${item.width} x ${item.height}` : t("common.unknown");
+  const imageSize = item.sizeBytes ? formatBytes(item.sizeBytes) : t("common.unknown");
 
   function handleDownload() {
     downloadGalleryItem(item);
@@ -157,10 +160,33 @@ export function ImagePreviewModal({
               <div className="space-y-4 overflow-auto border-t p-4 lg:border-l lg:border-t-0">
                 <div>
                   <div className="mb-1 flex items-center gap-1 text-xs font-semibold uppercase text-muted-foreground">
-                    <Palette size={13} />
-                    {t("images.style")}
+                    <Info size={13} />
+                    {t("images.info")}
                   </div>
-                  <p className="text-sm leading-6">{styleLabel}</p>
+                  <dl className="divide-y divide-border rounded-md border text-sm">
+                    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
+                      <dt className="text-muted-foreground">{t("images.aspectRatio")}</dt>
+                      <dd className="min-w-0 truncate text-foreground">{styleParts.aspectRatio}</dd>
+                    </div>
+                    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
+                      <dt className="text-muted-foreground">{t("images.quality")}</dt>
+                      <dd className="min-w-0 truncate text-foreground">{styleParts.quality}</dd>
+                    </div>
+                    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
+                      <dt className="text-muted-foreground">{t("images.generationDuration")}</dt>
+                      <dd className="min-w-0 truncate text-foreground">
+                        {generationDuration === null ? t("common.unknown") : formatDuration(generationDuration)}
+                      </dd>
+                    </div>
+                    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
+                      <dt className="text-muted-foreground">{t("images.resolution")}</dt>
+                      <dd className="min-w-0 truncate text-foreground">{imageResolution}</dd>
+                    </div>
+                    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
+                      <dt className="text-muted-foreground">{t("images.fileSize")}</dt>
+                      <dd className="min-w-0 truncate text-foreground">{imageSize}</dd>
+                    </div>
+                  </dl>
                 </div>
                 <div>
                   <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">{t("images.prompt")}</div>

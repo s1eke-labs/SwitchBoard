@@ -35,6 +35,7 @@ from .storage import (
     _response_for_storage,
     _save_reference_file,
     _thumbnail_url_for_data,
+    image_file_metadata,
     image_file_path,
 )
 from .upstream import generate_image
@@ -63,12 +64,25 @@ def _job_summary_from_job(job: ImageGenerationJobResponse) -> ImageGenerationJob
 def _gallery_image_from_data(settings: Settings, data: ImageData | None) -> ImageGalleryImageResponse | None:
     if data is None:
         return None
+    width = data.width
+    height = data.height
+    size_bytes = data.size_bytes
+    if data.file_name and (width is None or height is None or size_bytes is None):
+        with suppress(ValueError, OSError):
+            metadata_width, metadata_height, metadata_size_bytes = image_file_metadata(image_file_path(settings, data.file_name))
+            width = width if width is not None else metadata_width
+            height = height if height is not None else metadata_height
+            size_bytes = size_bytes if size_bytes is not None else metadata_size_bytes
     return ImageGalleryImageResponse(
         url=data.file_url or data.url,
         revised_prompt=data.revised_prompt,
         file_name=data.file_name,
         file_url=data.file_url,
         thumbnail_url=_thumbnail_url_for_data(settings, data),
+        width=width,
+        height=height,
+        size_bytes=size_bytes,
+        duration_seconds=data.duration_seconds,
     )
 
 

@@ -283,6 +283,10 @@ export type ImageGenerationResponse = {
     file_url: string | null;
     thumbnail_url: string | null;
     saved_path: string | null;
+    width: number | null;
+    height: number | null;
+    size_bytes: number | null;
+    duration_seconds: number | null;
   }>;
 };
 
@@ -327,6 +331,10 @@ export type ImageGalleryImage = {
   file_name: string | null;
   file_url: string | null;
   thumbnail_url: string | null;
+  width: number | null;
+  height: number | null;
+  size_bytes: number | null;
+  duration_seconds: number | null;
 };
 
 export type ImageGalleryItem = {

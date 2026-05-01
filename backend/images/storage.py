@@ -152,6 +152,24 @@ def create_image_thumbnail(source_path: Path, thumbnail_path: Path | None = None
     return thumbnail_path
 
 
+def image_file_metadata(path: Path) -> tuple[int | None, int | None, int | None]:
+    if not path.exists() or not path.is_file():
+        return None, None, None
+    size_bytes = path.stat().st_size
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+    except (OSError, UnidentifiedImageError):
+        width = None
+        height = None
+    return width, height, size_bytes
+
+
+def _image_data_with_file_metadata(data: ImageData, path: Path) -> ImageData:
+    width, height, size_bytes = image_file_metadata(path)
+    return data.model_copy(update={"width": width, "height": height, "size_bytes": size_bytes})
+
+
 def _decode_image_base64(data: ImageData) -> bytes:
     value = data.b64_json or _base64_from_data_url(data.url or "")
     if not value:
@@ -167,6 +185,8 @@ def _save_image_file(
     data: ImageData,
     created: int,
     storage_context: ImageStorageContext,
+    generation_started_at: int | None = None,
+    generation_completed_at: int | None = None,
 ) -> ImageData:
     extension = Path(data.file_name or "image.png").suffix.lstrip(".") or "png"
     storage_context.output_index += 1
@@ -178,6 +198,9 @@ def _save_image_file(
     os.chmod(path, 0o600)
     thumbnail_relative_path = image_thumbnail_relative_path(filename)
     thumbnail_path = create_image_thumbnail(path, image_file_path(settings, thumbnail_relative_path))
+    data = _image_data_with_file_metadata(data, path)
+    if generation_started_at is not None and generation_completed_at is not None:
+        data.duration_seconds = max(0, generation_completed_at - generation_started_at)
     data.file_name = filename
     data.file_url = _image_file_url(filename)
     data.thumbnail_url = _image_file_url(thumbnail_relative_path) if thumbnail_path else None

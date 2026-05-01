@@ -147,6 +147,7 @@ async def test_generate_image_calls_responses_with_current_codex_token(tmp_path)
     assert "/direct-" in result.data[0].file_name
     assert result.data[0].file_name.endswith("/outputs/o1.png")
     assert result.data[0].saved_path
+    assert result.data[0].duration_seconds is not None
     assert Path(result.data[0].saved_path).read_bytes() == b"hello"
 
 
@@ -203,8 +204,10 @@ async def test_generate_image_reports_partial_results_while_streaming(tmp_path) 
 
     assert [len(partial.data) for partial in partials] == [1, 2]
     assert partials[0].data[0].saved_path
+    assert partials[0].data[0].duration_seconds is not None
     assert Path(partials[0].data[0].saved_path).read_bytes() == b"hello"
     assert partials[1].data[1].saved_path
+    assert partials[1].data[1].duration_seconds is not None
     assert Path(partials[1].data[1].saved_path).read_bytes() == b"world"
     assert len(result.data) == 2
     assert [item.file_url for item in result.data] == [item.file_url for item in partials[-1].data]
@@ -238,6 +241,7 @@ async def test_generate_image_runs_multi_count_as_separate_upstream_requests(tmp
     assert all("n" not in payload["tools"][0] for payload in captured_payloads)
     assert [len(partial.data) for partial in partials] == [1, 2]
     assert len(result.data) == 2
+    assert all(item.duration_seconds is not None for item in result.data)
     assert Path(result.data[0].saved_path).read_bytes() == b"hello"
     assert Path(result.data[1].saved_path).read_bytes() == b"world"
 
@@ -1165,6 +1169,9 @@ async def test_image_generation_queue_gallery_only_hydrates_visible_jobs(monkeyp
     visible_thumbnail = image_thumbnail_relative_path(visible_output)
     visible_reference = "2026/05/success-job/references/r1.png"
     visible_reference_thumbnail = image_thumbnail_relative_path(visible_reference)
+    visible_output_path = image_dir / visible_output
+    visible_output_path.parent.mkdir(parents=True, exist_ok=True)
+    visible_output_path.write_bytes(base64.b64decode(VALID_PNG_B64))
     for path in [image_dir / visible_thumbnail, image_dir / visible_reference_thumbnail]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"thumbnail")
@@ -1244,6 +1251,9 @@ async def test_image_generation_queue_gallery_only_hydrates_visible_jobs(monkeyp
     assert page.items[0].job.error == failed_error
     assert page.items[1].image is not None
     assert page.items[1].image.thumbnail_url == f"/api/images/files/{visible_thumbnail}"
+    assert page.items[1].image.width == 1
+    assert page.items[1].image.height == 1
+    assert page.items[1].image.size_bytes == visible_output_path.stat().st_size
     assert page.items[1].job.references[0].file_url == f"/api/images/files/{visible_reference}"
     assert page.items[1].job.references[0].thumbnail_url == f"/api/images/files/{visible_reference_thumbnail}"
     await queue.close()
@@ -1452,6 +1462,10 @@ def test_image_gallery_api_paginates_by_image_slots(monkeypatch, tmp_path) -> No
         "file_name": "new-0.png",
         "file_url": None,
         "thumbnail_url": None,
+        "width": None,
+        "height": None,
+        "size_bytes": None,
+        "duration_seconds": None,
     }
     assert second_page.status_code == 200
     assert [(item["job"]["id"], item["image_index"]) for item in second_page.json()["items"]] == [

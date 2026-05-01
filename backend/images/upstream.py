@@ -520,6 +520,7 @@ async def _generate_image_request(
     streamed_payloads: list[object] = []
     seen_image_results: set[str] = set()
     saved_data: list[ImageData] = []
+    request_started_at = int(time.time())
 
     async def handle_stream_payload(stream_payload: object) -> None:
         streamed_payloads.append(stream_payload)
@@ -535,7 +536,18 @@ async def _generate_image_request(
         if not new_items:
             return
         created = _created_from_payloads(streamed_payloads)
-        saved_data.extend(_save_image_file(settings, item, created, storage_context) for item in new_items)
+        completed_at = int(time.time())
+        saved_data.extend(
+            _save_image_file(
+                settings,
+                item,
+                created,
+                storage_context,
+                generation_started_at=request_started_at,
+                generation_completed_at=completed_at,
+            )
+            for item in new_items
+        )
         for item in saved_data[-len(new_items) :]:
             _debug_log(settings, "saved partial image file=%s", item.saved_path)
         await progress_callback(
@@ -599,7 +611,18 @@ async def _generate_image_request(
         raise _image_error(502, "IMAGE_UPSTREAM_ERROR", "Image upstream returned no image data")
     created = _created_from_payloads(response_payloads)
     if final_new_items:
-        saved_data.extend(_save_image_file(settings, item, created, storage_context) for item in final_new_items)
+        completed_at = int(time.time())
+        saved_data.extend(
+            _save_image_file(
+                settings,
+                item,
+                created,
+                storage_context,
+                generation_started_at=request_started_at,
+                generation_completed_at=completed_at,
+            )
+            for item in final_new_items
+        )
     for item in saved_data:
         _debug_log(settings, "saved image file=%s", item.saved_path)
     return ImageGenerationResponse(

@@ -109,6 +109,10 @@ class ImageData(BaseModel):
     file_url: str | None = None
     thumbnail_url: str | None = None
     saved_path: str | None = None
+    width: int | None = None
+    height: int | None = None
+    size_bytes: int | None = None
+    duration_seconds: int | None = None
 
 
 class ImageGenerationResponse(BaseModel):
@@ -161,6 +165,10 @@ class ImageGalleryImageResponse(BaseModel):
     file_name: str | None = None
     file_url: str | None = None
     thumbnail_url: str | None = None
+    width: int | None = None
+    height: int | None = None
+    size_bytes: int | None = None
+    duration_seconds: int | None = None
 
 
 class ImageGalleryJobResponse(BaseModel):
