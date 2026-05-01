@@ -254,6 +254,72 @@ def test_session_detail_remaps_absolute_rollout_under_codex_home(tmp_path: Path)
     assert detail.event_count == 3
 
 
+def test_session_detail_counts_events_with_single_rollout_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    rollout = settings.codex_home / "rollout.jsonl"
+    _write_rollout(rollout)
+    _create_state(settings, rollout)
+    original_open = Path.open
+    rollout_open_count = 0
+
+    def counting_open(path: Path, *args, **kwargs):
+        nonlocal rollout_open_count
+        if path == rollout:
+            rollout_open_count += 1
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", counting_open)
+
+    detail = get_session_detail(settings, "thread-1")
+
+    assert detail.raw_event_count == 3
+    assert detail.event_count == 3
+    assert rollout_open_count == 1
+
+
+def test_session_detail_resolves_rollout_from_filename_date_without_recursive_scan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    filename = "rollout-2026-04-25T00-00-00-thread-1.jsonl"
+    rollout = settings.codex_home / "sessions" / "2026" / "04" / "25" / filename
+    rollout.parent.mkdir(parents=True)
+    _write_rollout(rollout)
+    _create_state(settings, rollout, stored_rollout_path=f"/stale/codex/{filename}")
+
+    def fail_rglob(path: Path, pattern: str):
+        raise AssertionError(f"unexpected recursive rollout scan: {path} {pattern}")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    detail = get_session_detail(settings, "thread-1")
+
+    assert detail.raw_event_count == 3
+    assert detail.event_count == 3
+
+
+def test_session_detail_missing_rollout_does_not_recursive_scan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    (settings.codex_home / "sessions").mkdir()
+    missing_rollout = settings.codex_home / "missing-rollout-thread-1.jsonl"
+    _create_state(settings, missing_rollout, stored_rollout_path="/stale/codex/missing-rollout-thread-1.jsonl")
+
+    def fail_rglob(path: Path, pattern: str):
+        raise AssertionError(f"unexpected recursive rollout scan: {path} {pattern}")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    detail = get_session_detail(settings, "thread-1")
+
+    assert detail.raw_event_count == 0
+    assert detail.event_count == 0
+
+
 def test_session_event_preview_truncates_without_truncating_full_event(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     init_db(settings.db_path)
