@@ -54,6 +54,12 @@ export function PageSelector({
   const currentPage = Math.min(Math.max(1, page), pageCount);
   const items = getPaginationItems(currentPage, pageCount);
   const isDisabled = disabled || jumping;
+  const navButtonClassName =
+    size === "sm"
+      ? "size-8 min-w-0 gap-0 px-0 md:size-7"
+      : size === "lg"
+        ? "size-10 min-w-0 gap-0 px-0 md:size-9"
+        : "size-9 min-w-0 gap-0 px-0 md:size-8";
 
   function selectPage(targetPage: number) {
     if (isDisabled || targetPage === currentPage || targetPage < 1 || targetPage > pageCount) return;
@@ -66,11 +72,11 @@ export function PageSelector({
         <Pagination.Item>
           <Pagination.Previous
             aria-label={t("common.previousPage")}
+            className={navButtonClassName}
             isDisabled={isDisabled || currentPage === 1}
             onPress={() => selectPage(currentPage - 1)}
           >
             <Pagination.PreviousIcon />
-            <span>{t("common.previousPage")}</span>
           </Pagination.Previous>
         </Pagination.Item>
         {items.map((item) =>
@@ -94,10 +100,10 @@ export function PageSelector({
         <Pagination.Item>
           <Pagination.Next
             aria-label={t("common.nextPage")}
+            className={navButtonClassName}
             isDisabled={isDisabled || currentPage >= pageCount}
             onPress={() => selectPage(currentPage + 1)}
           >
-            <span>{t("common.nextPage")}</span>
             <Pagination.NextIcon />
           </Pagination.Next>
         </Pagination.Item>
