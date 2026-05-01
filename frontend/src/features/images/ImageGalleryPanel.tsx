@@ -16,7 +16,7 @@ import { useI18n } from "@/i18n";
 import type { ImageGalleryJob } from "@/lib/api";
 import { GALLERY_CARD_HEIGHT, GALLERY_GRID_GAP, STATUS_LABEL_KEYS } from "@/features/images/constants";
 import type { GalleryItem } from "@/features/images/types";
-import { formatJobTime, isActiveJob, isSelectableGalleryItem } from "@/features/images/imageUtils";
+import { formatJobTime, isSelectableGalleryItem } from "@/features/images/imageUtils";
 
 export function ImageJobStatusIcon({ job }: { job: ImageGalleryJob }) {
   if (job.status === "succeeded") return <CheckCircle2 size={15} className="text-emerald-600" />;
@@ -72,7 +72,6 @@ function ImageGallery({
     >
       {items.map((item) => {
         const statusLabel = t(STATUS_LABEL_KEYS[item.job.status]);
-        const active = isActiveJob(item.job);
         const selectable = isSelectableGalleryItem(item);
         const selected = selectedKeys.has(item.key);
         return (
@@ -119,7 +118,6 @@ function ImageGallery({
               </div>
               <div className="h-9 shrink-0 border-t px-3 py-2">
                 <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                  {active ? <ImageJobStatusIcon job={item.job} /> : null}
                   <span className="min-w-0 truncate">{formatJobTime(item.job.updated_at)}</span>
                 </div>
               </div>
