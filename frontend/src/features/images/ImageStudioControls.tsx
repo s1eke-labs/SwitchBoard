@@ -1,54 +1,62 @@
-import type { ChangeEvent, DragEvent, FormEvent, RefObject } from "react";
-import { ChevronDown, Loader2, Plus, WandSparkles, X } from "lucide-react";
+import { useState, type ChangeEvent, type DragEvent, type FormEvent, type RefObject } from "react";
+import { ChevronDown, Plus, WandSparkles, X } from "lucide-react";
 import { Button } from "@/components/heroui/button";
 import { Card, CardContent, CardHeader } from "@/components/heroui/card";
+import { Form } from "@/components/heroui/form";
+import { Spinner } from "@/components/heroui/spinner";
+import { TextArea } from "@/components/heroui/textarea";
 import { useI18n } from "@/i18n";
 import { ASPECT_RATIO_OPTIONS, IMAGE_COUNT_OPTIONS, MAX_REFERENCE_IMAGES, QUALITY_OPTIONS } from "@/features/images/constants";
-import type { ImageAspectRatio, ImageCount, ImageOptionMenuKey, ImageQuality, PendingReferenceImage } from "@/features/images/types";
+import type { ImageAspectRatio, ImageCount, ImageQuality, PendingReferenceImage } from "@/features/images/types";
+
+type ImageOptionMenuKey = "aspectRatio" | "quality" | "imageCount";
 
 function ImageOptionMenu<T extends string | number>({
+  menuKey,
   label,
   value,
   options,
-  formatOption = String,
   open,
-  placement = "down",
+  formatOption = String,
   onOpenChange,
   onChange,
 }: {
+  menuKey: ImageOptionMenuKey;
   label: string;
   value: T;
   options: readonly T[];
-  formatOption?: (value: T) => string;
   open: boolean;
-  placement?: "up" | "down";
-  onOpenChange: (open: boolean) => void;
+  formatOption?: (value: T) => string;
+  onOpenChange: (menu: ImageOptionMenuKey | null) => void;
   onChange: (value: T) => void;
 }) {
-  const menuPosition = placement === "up" ? "bottom-10" : "top-10";
   return (
     <div className="relative">
       <button
         type="button"
-        onClick={() => onOpenChange(!open)}
-        className="flex h-9 w-full items-center justify-between gap-2 rounded-md border bg-white px-3 text-left text-sm font-semibold transition-colors hover:bg-muted"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => onOpenChange(open ? null : menuKey)}
+        className="flex h-9 w-full items-center justify-between gap-2 rounded-md border bg-white px-3 text-left text-sm font-semibold leading-none transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <span className="truncate">
+        <span className="min-w-0 truncate whitespace-nowrap">
           <span className="text-muted-foreground">{label}</span>
-          <span className="mx-1">·</span>
-          {formatOption(value)}
+          <span className="text-muted-foreground"> · </span>
+          <span>{formatOption(value)}</span>
         </span>
-        <ChevronDown size={15} className={`shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown size={16} className={`shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open ? (
-        <div className={`absolute left-0 right-0 ${menuPosition} z-20 overflow-hidden rounded-md border bg-white shadow-lg`}>
+        <div className="absolute bottom-10 left-0 right-0 z-20 overflow-hidden rounded-md border bg-white py-1 shadow-lg" role="listbox" aria-label={label}>
           {options.map((option) => (
             <button
-              key={option}
+              key={String(option)}
               type="button"
+              role="option"
+              aria-selected={option === value}
               onClick={() => {
                 onChange(option);
-                onOpenChange(false);
+                onOpenChange(null);
               }}
               className={`flex h-9 w-full items-center px-3 text-left text-sm transition-colors hover:bg-muted ${
                 option === value ? "font-semibold text-primary" : "text-foreground"
@@ -71,14 +79,12 @@ export function ImageStudioControls({
   aspectRatio,
   quality,
   imageCount,
-  openMenu,
   referenceImages,
   queueing,
   onPromptChange,
   onAspectRatioChange,
   onQualityChange,
   onImageCountChange,
-  onOpenMenuChange,
   onReferenceChange,
   onReferenceDrop,
   onPreviewReference,
@@ -92,14 +98,12 @@ export function ImageStudioControls({
   aspectRatio: ImageAspectRatio;
   quality: ImageQuality;
   imageCount: ImageCount;
-  openMenu: ImageOptionMenuKey | null;
   referenceImages: PendingReferenceImage[];
   queueing: boolean;
   onPromptChange: (prompt: string) => void;
   onAspectRatioChange: (aspectRatio: ImageAspectRatio) => void;
   onQualityChange: (quality: ImageQuality) => void;
   onImageCountChange: (imageCount: ImageCount) => void;
-  onOpenMenuChange: (menu: ImageOptionMenuKey | null) => void;
   onReferenceChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onReferenceDrop: (event: DragEvent<HTMLDivElement>) => void;
   onPreviewReference: (id: string) => void;
@@ -107,6 +111,7 @@ export function ImageStudioControls({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const { t } = useI18n();
+  const [openMenu, setOpenMenu] = useState<ImageOptionMenuKey | null>(null);
 
   return (
     <Card className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -117,7 +122,7 @@ export function ImageStudioControls({
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-        <form className="flex min-h-0 flex-1 flex-col gap-3 p-4" onSubmit={onSubmit}>
+        <Form className="flex min-h-0 flex-1 flex-col gap-3 p-4" onSubmit={onSubmit}>
           <div
             onDragOver={(event) => event.preventDefault()}
             onDrop={onReferenceDrop}
@@ -125,14 +130,16 @@ export function ImageStudioControls({
           >
             <div className="mb-2 flex items-center justify-between gap-2">
               <span className="text-sm font-semibold">{t("images.prompt")}</span>
-              <button
+              <Button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 aria-label={t("images.addReference")}
-                className="flex h-8 w-8 items-center justify-center rounded-md border bg-white text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                size="icon"
+                variant="secondary"
+                className="h-8 w-8 text-muted-foreground"
               >
                 <Plus size={16} />
-              </button>
+              </Button>
             </div>
             <input
               ref={fileInputRef}
@@ -172,52 +179,52 @@ export function ImageStudioControls({
                 );
               })}
             </div>
-            <textarea
+            <TextArea
               ref={textareaRef}
               value={prompt}
               onChange={(event) => onPromptChange(event.target.value)}
               placeholder={t("images.promptPlaceholder")}
-              className="min-h-[190px] flex-1 resize-none border-0 bg-transparent p-0 text-sm leading-6 outline-none placeholder:text-muted-foreground"
+              className="min-h-[190px] flex-1 border-0 bg-transparent p-0 shadow-none"
             />
           </div>
 
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <ImageOptionMenu
+              menuKey="aspectRatio"
               label={t("images.size")}
               value={aspectRatio}
               options={ASPECT_RATIO_OPTIONS}
-              formatOption={(option) => option}
               open={openMenu === "aspectRatio"}
-              placement="up"
-              onOpenChange={(open) => onOpenMenuChange(open ? "aspectRatio" : null)}
+              formatOption={(option) => option}
+              onOpenChange={setOpenMenu}
               onChange={onAspectRatioChange}
             />
             <ImageOptionMenu
+              menuKey="quality"
               label={t("images.quality")}
               value={quality}
               options={QUALITY_OPTIONS}
-              formatOption={(option) => t(`images.quality.${option}`)}
               open={openMenu === "quality"}
-              placement="up"
-              onOpenChange={(open) => onOpenMenuChange(open ? "quality" : null)}
+              formatOption={(option) => t(`images.quality.${option}`)}
+              onOpenChange={setOpenMenu}
               onChange={onQualityChange}
             />
             <ImageOptionMenu
+              menuKey="imageCount"
               label={t("images.count")}
               value={imageCount}
               options={IMAGE_COUNT_OPTIONS}
               open={openMenu === "imageCount"}
-              placement="up"
-              onOpenChange={(open) => onOpenMenuChange(open ? "imageCount" : null)}
+              onOpenChange={setOpenMenu}
               onChange={onImageCountChange}
             />
           </div>
 
           <Button type="submit" className="w-full" disabled={!trimmedPrompt || queueing}>
-            {queueing ? <Loader2 size={16} className="animate-spin" /> : <WandSparkles size={16} />}
+            {queueing ? <Spinner /> : <WandSparkles size={16} />}
             {queueing ? t("images.queueing") : t("images.generate")}
           </Button>
-        </form>
+        </Form>
       </CardContent>
     </Card>
   );

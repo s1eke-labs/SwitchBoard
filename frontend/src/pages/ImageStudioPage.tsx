@@ -23,7 +23,6 @@ import type {
   GalleryItem,
   ImageAspectRatio,
   ImageCount,
-  ImageOptionMenuKey,
   ImageQuality,
   ImageSize,
   PendingReferenceImage,
@@ -55,7 +54,6 @@ export function ImageStudioPage() {
   const [aspectRatio, setAspectRatio] = useState<ImageAspectRatio>("1:1");
   const [quality, setQuality] = useState<ImageQuality>("low");
   const [imageCount, setImageCount] = useState<ImageCount>(1);
-  const [openMenu, setOpenMenu] = useState<ImageOptionMenuKey | null>(null);
   const [referenceImages, setReferenceImages] = useState<PendingReferenceImage[]>([]);
   const [previewReferenceId, setPreviewReferenceId] = useState<string | null>(null);
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
@@ -400,14 +398,12 @@ export function ImageStudioPage() {
           aspectRatio={aspectRatio}
           quality={quality}
           imageCount={imageCount}
-          openMenu={openMenu}
           referenceImages={referenceImages}
           queueing={createJob.isPending}
           onPromptChange={setPrompt}
           onAspectRatioChange={setAspectRatio}
           onQualityChange={setQuality}
           onImageCountChange={setImageCount}
-          onOpenMenuChange={setOpenMenu}
           onReferenceChange={handleReferenceChange}
           onReferenceDrop={handleReferenceDrop}
           onPreviewReference={setPreviewReferenceId}

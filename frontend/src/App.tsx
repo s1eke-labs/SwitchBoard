@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
 import { toast } from "@heroui/react";
 import { AppShell } from "@/app/AppShell";
 import { useRoute } from "@/app/routing";
@@ -13,6 +12,8 @@ import { ImageStudioPage } from "@/pages/ImageStudioPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { RequestLogsPage } from "@/pages/RequestLogsPage";
 import { SessionsPage } from "@/pages/SessionsPage";
+import { Alert } from "@/components/heroui/alert";
+import { Spinner } from "@/components/heroui/spinner";
 
 function errorStatus(error: unknown) {
   return typeof error === "object" && error !== null && "status" in error
@@ -70,7 +71,7 @@ export default function App() {
   if (accounts.isPending) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
-        <Loader2 className="mr-2 animate-spin" size={18} />
+        <Spinner className="mr-2" />
         {t("common.loading")}
       </main>
     );
@@ -81,7 +82,7 @@ export default function App() {
       <main className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="max-w-md rounded-lg border bg-white p-5 text-sm shadow-soft">
           <h1 className="mb-2 text-lg font-bold">SwitchBoard</h1>
-          <p className="text-destructive">{formatAppError(accounts.error)}</p>
+          <Alert tone="danger">{formatAppError(accounts.error)}</Alert>
         </div>
       </main>
     );

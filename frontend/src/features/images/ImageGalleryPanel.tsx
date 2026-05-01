@@ -1,16 +1,17 @@
-import { Checkbox } from "@heroui/react";
 import {
   CheckCircle2,
   Clock3,
   Download,
   ImageIcon,
-  Loader2,
   Trash2,
   XCircle,
 } from "lucide-react";
 import { Button } from "@/components/heroui/button";
+import { Checkbox } from "@/components/heroui/checkbox";
 import { PageSelector } from "@/components/PageSelector";
 import { Card, CardContent, CardHeader } from "@/components/heroui/card";
+import { Spinner } from "@/components/heroui/spinner";
+import { Toolbar } from "@/components/heroui/toolbar";
 import { useI18n } from "@/i18n";
 import type { ImageGalleryJob } from "@/lib/api";
 import { STATUS_LABEL_KEYS } from "@/features/images/constants";
@@ -20,7 +21,7 @@ import { formatJobTime, isActiveJob, isSelectableGalleryItem } from "@/features/
 export function ImageJobStatusIcon({ job }: { job: ImageGalleryJob }) {
   if (job.status === "succeeded") return <CheckCircle2 size={15} className="text-emerald-600" />;
   if (job.status === "failed") return <XCircle size={15} className="text-destructive" />;
-  if (job.status === "running") return <Loader2 size={15} className="animate-spin text-primary" />;
+  if (job.status === "running") return <Spinner className="text-primary" />;
   return <Clock3 size={15} className="text-muted-foreground" />;
 }
 
@@ -45,7 +46,7 @@ function ImageGallery({
   if (loading) {
     return (
       <div className="flex min-h-[456px] flex-1 items-center justify-center text-sm text-muted-foreground">
-        <Loader2 size={18} className="mr-2 animate-spin" />
+        <Spinner className="mr-2" />
         {t("common.loading")}
       </div>
     );
@@ -168,7 +169,7 @@ export function ImageGalleryPanel({
             <ImageIcon size={18} className="text-primary" />
             <h2 className="truncate text-base font-bold">{t("images.gallery")}</h2>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-1">
+          <Toolbar aria-label={t("images.gallery")} className="justify-end gap-1">
             {selecting ? (
               <>
                 <span className="px-2 text-xs font-semibold text-muted-foreground">
@@ -184,7 +185,7 @@ export function ImageGalleryPanel({
                   {t("images.download")}
                 </Button>
                 <Button variant="destructive" size="sm" disabled={selectedItems.length === 0 || deleting} onClick={onDeleteSelected}>
-                  {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                  {deleting ? <Spinner /> : <Trash2 size={15} />}
                   {t("images.delete")}
                 </Button>
               </>
@@ -201,7 +202,7 @@ export function ImageGalleryPanel({
               size="sm"
               onSelect={onSelectPage}
             />
-          </div>
+          </Toolbar>
         </div>
       </CardHeader>
       <CardContent className="min-h-[456px] flex-1 p-4">

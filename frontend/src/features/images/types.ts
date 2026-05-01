@@ -10,7 +10,6 @@ export type ImageAspectRatio = (typeof ASPECT_RATIO_OPTIONS)[number];
 export type ImageQuality = (typeof QUALITY_OPTIONS)[number];
 export type ImageSize = (typeof IMAGE_SIZE_BY_RATIO_AND_QUALITY)[ImageAspectRatio][ImageQuality];
 export type ImageCount = (typeof IMAGE_COUNT_OPTIONS)[number];
-export type ImageOptionMenuKey = "aspectRatio" | "quality" | "imageCount";
 
 export type PendingReferenceImage = {
   id: string;

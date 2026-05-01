@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Search, UserRound } from "lucide-react";
+import { UserRound } from "lucide-react";
 import { api, SessionSummary } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
@@ -8,7 +8,8 @@ import { sessionPath } from "@/app/routing";
 import { SessionEventList } from "@/features/sessions/SessionEventList";
 import { PageSelector } from "@/components/PageSelector";
 import { Card, CardHeader } from "@/components/heroui/card";
-import { Input } from "@/components/heroui/input";
+import { SearchField } from "@/components/heroui/search-field";
+import { Spinner } from "@/components/heroui/spinner";
 
 const SESSIONS_PAGE_SIZE = 7;
 
@@ -101,21 +102,20 @@ export function SessionsPage({
           <UserRound size={20} strokeWidth={1.8} />
           <h2 className="text-2xl font-bold leading-tight">{t("sessions.title")}</h2>
         </div>
-        <div className="relative w-full sm:w-96">
-          <Search className="pointer-events-none absolute left-3 top-2.5 text-muted-foreground" size={16} />
-          <Input
-            className="h-10 rounded-lg pl-9 text-sm"
-            placeholder={t("sessions.searchPlaceholder")}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </div>
+        <SearchField
+          aria-label={t("sessions.searchPlaceholder")}
+          className="w-full sm:w-96"
+          placeholder={t("sessions.searchPlaceholder")}
+          value={query}
+          onChange={setQuery}
+          onClear={() => setQuery("")}
+        />
       </div>
       <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[365px_minmax(0,1fr)]">
         <Card className="flex min-h-[380px] flex-col overflow-hidden rounded-lg shadow-none">
           {sessions.isPending ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">
-              <Loader2 className="mr-2 animate-spin" size={18} />
+              <Spinner className="mr-2" />
               {t("common.loading")}
             </div>
           ) : sessionItems.length || page > 1 ? (

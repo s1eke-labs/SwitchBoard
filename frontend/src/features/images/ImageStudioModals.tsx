@@ -1,6 +1,12 @@
-import { Modal } from "@heroui/react";
-import { Download, ImageIcon, Loader2, Palette, Pencil, Trash2, WandSparkles, X } from "lucide-react";
+import { Download, ImageIcon, Palette, Pencil, Trash2, WandSparkles } from "lucide-react";
+import { Alert } from "@/components/heroui/alert";
+import { AlertDialog } from "@/components/heroui/alert-dialog";
 import { Button } from "@/components/heroui/button";
+import { CloseButton } from "@/components/heroui/close-button";
+import { Modal } from "@/components/heroui/modal";
+import { Spinner } from "@/components/heroui/spinner";
+import { Toolbar } from "@/components/heroui/toolbar";
+import { Tooltip } from "@/components/heroui/tooltip";
 import { useI18n } from "@/i18n";
 import { STATUS_LABEL_KEYS } from "@/features/images/constants";
 import type { GalleryItem, PendingReferenceImage } from "@/features/images/types";
@@ -22,9 +28,9 @@ export function ReferencePreviewModal({
           <Modal.Dialog className="max-h-[92vh] max-w-3xl overflow-hidden rounded-md bg-background p-0">
             <Modal.Header className="flex-row items-center justify-between gap-3 border-b px-4 py-3">
               <Modal.Heading className="truncate text-sm font-semibold">{t("images.references")}</Modal.Heading>
-              <Button type="button" variant="ghost" size="icon" aria-label={t("images.closePreview")} onClick={onClose}>
-                <X size={18} />
-              </Button>
+              <Tooltip content={t("images.closePreview")}>
+                <CloseButton type="button" aria-label={t("images.closePreview")} onPress={onClose} />
+              </Tooltip>
             </Modal.Header>
             <Modal.Body className="flex min-h-[320px] items-center justify-center bg-muted p-4">
               <img src={reference.previewUrl} alt={reference.fileName} className="max-h-[78vh] max-w-full rounded-md object-contain" />
@@ -49,32 +55,28 @@ export function DeleteConfirmModal({
 }) {
   const { t } = useI18n();
   return (
-    <Modal isOpen onOpenChange={(open) => { if (!open && !deleting) onClose(); }}>
-      <Modal.Backdrop variant="opaque">
-        <Modal.Container placement="center" size="sm" className="p-3">
-          <Modal.Dialog className="overflow-hidden rounded-md bg-background p-0">
-            <Modal.Header className="flex-row items-center justify-between gap-3 border-b px-4 py-3">
-              <Modal.Heading className="truncate text-sm font-semibold">{t("images.deleteConfirmTitle")}</Modal.Heading>
-              <Button type="button" variant="ghost" size="icon" aria-label={t("common.cancel")} disabled={deleting} onClick={onClose}>
-                <X size={18} />
-              </Button>
-            </Modal.Header>
-            <Modal.Body className="px-4 py-4">
-              <p className="text-sm leading-6 text-muted-foreground">{t("images.deleteConfirm", { count })}</p>
-            </Modal.Body>
-            <Modal.Footer className="justify-end gap-2 border-t px-4 py-3">
+    <AlertDialog isOpen onOpenChange={(open) => { if (!open && !deleting) onClose(); }}>
+      <AlertDialog.Backdrop>
+        <AlertDialog.Container>
+          <AlertDialog.Dialog>
+            <AlertDialog.Header>
+              <AlertDialog.Icon status="danger" />
+              <AlertDialog.Heading>{t("images.deleteConfirmTitle")}</AlertDialog.Heading>
+            </AlertDialog.Header>
+            <AlertDialog.Body>{t("images.deleteConfirm", { count })}</AlertDialog.Body>
+            <AlertDialog.Footer>
               <Button type="button" variant="secondary" disabled={deleting} onClick={onClose}>
                 {t("common.cancel")}
               </Button>
               <Button type="button" variant="destructive" disabled={deleting} onClick={onConfirm}>
-                {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                {deleting ? <Spinner /> : <Trash2 size={15} />}
                 {t("images.deleteConfirmAction")}
               </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
-    </Modal>
+            </AlertDialog.Footer>
+          </AlertDialog.Dialog>
+        </AlertDialog.Container>
+      </AlertDialog.Backdrop>
+    </AlertDialog>
   );
 }
 
@@ -117,29 +119,29 @@ export function ImagePreviewModal({
                 <ImageJobStatusIcon job={job} />
                 <span className="truncate text-sm font-semibold">{t(STATUS_LABEL_KEYS[job.status])}</span>
               </Modal.Heading>
-              <div className="flex items-center gap-2">
+              <Toolbar aria-label={t("images.preview")}>
                 <Button variant="secondary" size="sm" disabled={!src} onClick={handleDownload}>
                   <Download size={15} />
                   {t("images.download")}
                 </Button>
                 <Button variant="secondary" size="sm" disabled={!src || editing} onClick={() => onEdit(item)}>
-                  {editing ? <Loader2 size={15} className="animate-spin" /> : <Pencil size={15} />}
+                  {editing ? <Spinner /> : <Pencil size={15} />}
                   {t("images.edit")}
                 </Button>
                 {job.status === "failed" ? (
                   <Button variant="secondary" size="sm" disabled={retrying} onClick={() => onRetry(item)}>
-                    {retrying ? <Loader2 size={15} className="animate-spin" /> : <WandSparkles size={15} />}
+                    {retrying ? <Spinner /> : <WandSparkles size={15} />}
                     {t("images.retry")}
                   </Button>
                 ) : null}
                 <Button variant="destructive" size="sm" disabled={!isSelectableGalleryItem(item) || deleting} onClick={() => onDelete(item)}>
-                  {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                  {deleting ? <Spinner /> : <Trash2 size={15} />}
                   {t("images.delete")}
                 </Button>
-                <Button type="button" variant="ghost" size="icon" aria-label={t("images.closePreview")} onClick={onClose}>
-                  <X size={18} />
-                </Button>
-              </div>
+                <Tooltip content={t("images.closePreview")}>
+                  <CloseButton type="button" aria-label={t("images.closePreview")} onPress={onClose} />
+                </Tooltip>
+              </Toolbar>
             </Modal.Header>
             <Modal.Body className="grid min-h-0 flex-1 gap-0 overflow-auto p-0 lg:grid-cols-[minmax(0,1fr)_320px]">
               <div className="flex min-h-[360px] items-center justify-center bg-muted p-4">
@@ -193,9 +195,9 @@ export function ImagePreviewModal({
                   </div>
                 ) : null}
                 {job.error ? (
-                  <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                  <Alert tone="danger" className="p-3">
                     {job.error.message}
-                  </div>
+                  </Alert>
                 ) : null}
               </div>
             </Modal.Body>

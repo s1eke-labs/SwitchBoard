@@ -8,12 +8,14 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { BarChart3, Loader2 } from "lucide-react";
+import { BarChart3 } from "lucide-react";
 import { api, UsageAggregatePointDTO } from "@/lib/api";
 import { getCurrentLocale, translate, useI18n } from "@/i18n";
 import { formatChartTime, formatNumber } from "@/lib/utils";
 import { useElementSize } from "@/hooks/useElementSize";
 import { Card, CardContent } from "@/components/heroui/card";
+import { Spinner } from "@/components/heroui/spinner";
+import { SegmentedControl } from "@/components/heroui/toggle-button-group";
 
 type RangeKey = "24h" | "7d" | "30d" | "90d";
 
@@ -99,23 +101,18 @@ export function UsagePanel() {
           <BarChart3 size={20} />
           <h2 className="text-2xl font-bold">{translate("usage.title")}</h2>
         </div>
-        <div className="inline-flex rounded-md border bg-white p-1">
-          {(Object.keys(ranges) as RangeKey[]).map((key) => (
-            <button
-              key={key}
-              onClick={() => setRange(key)}
-              className={`h-8 min-w-12 rounded-sm px-3 text-sm font-semibold ${range === key ? "bg-foreground text-white" : "text-muted-foreground hover:bg-muted"}`}
-            >
-              {ranges[key].label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          aria-label={translate("usage.title")}
+          value={range}
+          options={(Object.keys(ranges) as RangeKey[]).map((key) => ({ value: key, label: ranges[key].label }))}
+          onChange={setRange}
+        />
       </div>
       <Card className="min-h-0 flex-1 overflow-hidden shadow-none">
         <CardContent className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
           {usageAggregates.isPending ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-              <Loader2 className="mr-2 animate-spin" size={18} />
+              <Spinner className="mr-2" />
               {translate("common.loading")}
             </div>
           ) : hasUsage ? (

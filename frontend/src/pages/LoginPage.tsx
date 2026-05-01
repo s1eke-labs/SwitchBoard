@@ -1,12 +1,16 @@
 import { FormEvent, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Activity, ArrowRight, KeyRound, Loader2, LockKeyhole, ShieldCheck } from "lucide-react";
+import { Activity, ArrowRight, KeyRound, LockKeyhole, ShieldCheck } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { api } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { formatAppError } from "@/lib/errors";
+import { Alert } from "@/components/heroui/alert";
 import { Button } from "@/components/heroui/button";
+import { Form } from "@/components/heroui/form";
 import { Input } from "@/components/heroui/input";
+import { Label } from "@/components/heroui/label";
+import { Spinner } from "@/components/heroui/spinner";
 
 export function LoginPage({ onDone }: { onDone: () => void }) {
   const [password, setPassword] = useState("");
@@ -92,7 +96,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
         </section>
 
         <section className="order-1 lg:order-2">
-          <form
+          <Form
             onSubmit={submit}
             className="mx-auto w-full max-w-md rounded-lg border border-black/10 bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.01),0_3px_7px_rgba(0,0,0,0.02),0_7px_15px_rgba(0,0,0,0.02),0_14px_28px_rgba(0,0,0,0.04),0_23px_52px_rgba(0,0,0,0.05)] sm:p-6"
           >
@@ -109,10 +113,10 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
               <LanguageSwitcher />
             </div>
 
-            <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#31302e]" htmlFor="switchboard-password">
+            <Label className="mb-2 flex items-center gap-2 text-[#31302e]" htmlFor="switchboard-password">
               <LockKeyhole size={16} />
               {t("login.passwordLabel")}
-            </label>
+            </Label>
             <Input
               id="switchboard-password"
               autoFocus
@@ -123,12 +127,12 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
               className="h-11 rounded bg-white text-base"
             />
             {login.error ? (
-              <p className="mt-3 rounded-md bg-orange-50 px-3 py-2 text-sm font-medium text-destructive" role="alert">
+              <Alert tone="danger" className="mt-3 font-medium" role="alert">
                 {formatAppError(login.error)}
-              </p>
+              </Alert>
             ) : null}
             <Button className="mt-5 h-11 w-full rounded bg-[#0075de] text-[15px] hover:bg-[#005bab]" disabled={!password || login.isPending}>
-              {login.isPending ? <Loader2 className="animate-spin" size={17} /> : <ArrowRight size={17} />}
+              {login.isPending ? <Spinner /> : <ArrowRight size={17} />}
               {t("login.signIn")}
             </Button>
 
@@ -136,7 +140,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
               <ShieldCheck className="mt-0.5 shrink-0 text-[#2a9d99]" size={17} />
               <span>{t("login.securityNote")}</span>
             </div>
-          </form>
+          </Form>
         </section>
       </div>
     </main>

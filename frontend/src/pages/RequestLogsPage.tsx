@@ -1,6 +1,6 @@
 import { ReactNode, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ChevronDown, Database, DollarSign, Layers3, Loader2, ReceiptText, UserRound } from "lucide-react";
+import { Activity, Database, DollarSign, Layers3, ReceiptText, UserRound } from "lucide-react";
 import { AccountDTO, api, UsageRequestLogDTO, UsageRequestLogsResponse } from "@/lib/api";
 import { getCurrentLocale, translate, useI18n } from "@/i18n";
 import { formatAppError } from "@/lib/errors";
@@ -9,6 +9,9 @@ import { PageSelector } from "@/components/PageSelector";
 import { Card, CardContent, CardHeader } from "@/components/heroui/card";
 import { Badge } from "@/components/heroui/badge";
 import { Table } from "@/components/heroui/table";
+import { Select } from "@/components/heroui/select";
+import { Spinner } from "@/components/heroui/spinner";
+import { SegmentedControl } from "@/components/heroui/toggle-button-group";
 
 const REQUEST_LOG_PAGE_SIZE = 30;
 const ALL_ACCOUNTS_FILTER = "__all__";
@@ -43,29 +46,6 @@ function formatCompactThousands(value: number | null | undefined) {
   return `${new Intl.NumberFormat(getCurrentLocale(), { maximumFractionDigits: 1 }).format(safeValue / 1000)}k`;
 }
 
-function RangeButton({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "h-8 min-w-12 rounded-sm px-3 text-sm font-semibold transition-colors",
-        active ? "bg-foreground text-white" : "text-muted-foreground hover:bg-muted",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
 function AccountFilter({
   accounts,
   value,
@@ -78,7 +58,6 @@ function AccountFilter({
   onChange: (value: AccountFilterValue) => void;
 }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
   const selectedAccount = accounts.find((account) => account.account_id === value);
   const label =
     value === ALL_ACCOUNTS_FILTER
@@ -93,49 +72,33 @@ function AccountFilter({
   ];
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        className="inline-flex h-9 min-w-48 max-w-64 items-center justify-between gap-2 rounded-md border bg-white px-3 text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-        onClick={() => setOpen((value) => !value)}
-        disabled={disabled}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-      >
+    <Select
+      aria-label={t("requestLogs.accountFilter")}
+      className="w-64 max-w-full"
+      fullWidth={false}
+      selectedKey={value}
+      isDisabled={disabled}
+      onSelectionChange={(key) => {
+        if (typeof key === "string") onChange(key);
+      }}
+    >
+      <Select.Trigger>
         <span className="inline-flex min-w-0 items-center gap-2">
           <UserRound size={15} className="shrink-0 text-muted-foreground" />
           <span className="truncate">{label}</span>
         </span>
-        <ChevronDown size={15} className="shrink-0 text-muted-foreground" />
-      </button>
-      {open ? (
-        <div className="absolute right-0 top-11 z-20 max-h-72 w-64 overflow-auto rounded-lg border bg-white p-2 shadow-soft">
-          <div className="space-y-1" role="listbox" aria-label={t("requestLogs.accountFilter")}>
-            {options.map((option) => {
-              const active = option.value === value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={cn(
-                    "flex h-8 w-full items-center rounded-md px-2 text-left text-sm font-semibold transition-colors hover:bg-muted",
-                    active ? "bg-foreground text-white hover:bg-foreground" : "text-foreground",
-                  )}
-                  onClick={() => {
-                    setOpen(false);
-                    onChange(option.value);
-                  }}
-                  role="option"
-                  aria-selected={active}
-                >
-                  <span className="truncate">{option.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-    </div>
+        <Select.Indicator />
+      </Select.Trigger>
+      <Select.Popover>
+        <Select.ListBox aria-label={t("requestLogs.accountFilter")}>
+          {options.map((option) => (
+            <Select.Item key={option.value} id={option.value}>
+              <span className="truncate">{option.label}</span>
+            </Select.Item>
+          ))}
+        </Select.ListBox>
+      </Select.Popover>
+    </Select>
   );
 }
 
@@ -305,11 +268,13 @@ export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <AccountFilter accounts={accounts} value={accountFilter} disabled={requestLogs.isFetching} onChange={selectAccountFilter} />
-          <div className="inline-flex rounded-md border bg-white p-1">
-            {(Object.keys(ranges) as RangeKey[]).map((key) => (
-              <RangeButton key={key} active={range === key} label={ranges[key].label} onClick={() => selectRange(key)} />
-            ))}
-          </div>
+          <SegmentedControl
+            aria-label={t("requestLogs.title")}
+            value={range}
+            options={(Object.keys(ranges) as RangeKey[]).map((key) => ({ value: key, label: ranges[key].label }))}
+            disabled={requestLogs.isFetching}
+            onChange={selectRange}
+          />
         </div>
       </div>
       <RequestLogSummaryCards data={requestLogs.data} />
@@ -323,7 +288,7 @@ export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
                 : t("requestLogs.rows", { count: formatNumber(requestLogs.data?.total_count ?? 0) })}
             </p>
           </div>
-          {requestLogs.isFetching ? <Loader2 className="shrink-0 animate-spin text-muted-foreground" size={18} /> : null}
+          {requestLogs.isFetching ? <Spinner className="text-muted-foreground" /> : null}
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
           {requestLogs.error ? (
@@ -332,7 +297,7 @@ export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
             </div>
           ) : requestLogs.isPending ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-              <Loader2 className="mr-2 animate-spin" size={18} />
+              <Spinner className="mr-2" />
               {t("common.loading")}
             </div>
           ) : logs.length ? (
