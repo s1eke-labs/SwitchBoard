@@ -9,6 +9,7 @@ import { PageSelector } from "@/components/PageSelector";
 import { Button } from "@/components/heroui/button";
 import { Card, CardContent, CardHeader } from "@/components/heroui/card";
 import { Badge } from "@/components/heroui/badge";
+import { Table } from "@/components/heroui/table";
 
 const REQUEST_LOG_PAGE_SIZE = 30;
 const ALL_ACCOUNTS_FILTER = "__all__";
@@ -219,36 +220,36 @@ function RequestLogSummaryCards({ data }: { data: UsageRequestLogsResponse | und
 
 function RequestLogRow({ log }: { log: UsageRequestLogDTO }) {
   return (
-    <tr className="border-b last:border-b-0">
-      <td className="whitespace-nowrap px-4 py-3 align-top text-sm font-medium text-foreground">
+    <Table.Row id={log.id} className="border-b last:border-b-0">
+      <Table.Cell className="whitespace-nowrap px-4 py-3 align-top text-sm font-medium text-foreground">
         {formatTime(log.occurred_at)}
-      </td>
-      <td className="px-4 py-3 align-top">
+      </Table.Cell>
+      <Table.Cell className="px-4 py-3 align-top">
         <Badge className="max-w-full truncate" tone={log.account_id ? "blue" : "neutral"}>
           {log.account_display_name ?? translate("requestLogs.unassigned")}
         </Badge>
-      </td>
-      <td className="px-4 py-3 align-top">
+      </Table.Cell>
+      <Table.Cell className="px-4 py-3 align-top">
         <Badge className="max-w-full truncate" tone="neutral">
           {log.billing_model ?? translate("common.unknown")}
         </Badge>
-      </td>
-      <td className="px-4 py-3 align-top text-right tabular-nums">
+      </Table.Cell>
+      <Table.Cell className="px-4 py-3 align-top text-right tabular-nums">
         <div className="font-semibold text-foreground">{formatNumber(log.input_tokens)}</div>
-      </td>
-      <td className="px-4 py-3 align-top text-right tabular-nums">
+      </Table.Cell>
+      <Table.Cell className="px-4 py-3 align-top text-right tabular-nums">
         <div className="font-semibold text-foreground">{formatNumber(log.cache_hit_tokens)}</div>
-      </td>
-      <td className="px-4 py-3 align-top text-right tabular-nums">
+      </Table.Cell>
+      <Table.Cell className="px-4 py-3 align-top text-right tabular-nums">
         <div className="font-semibold text-foreground">{formatNumber(log.output_tokens)}</div>
-      </td>
-      <td className="whitespace-nowrap px-4 py-3 text-right align-top tabular-nums">
+      </Table.Cell>
+      <Table.Cell className="whitespace-nowrap px-4 py-3 text-right align-top tabular-nums">
         <div className="font-semibold text-foreground">{formatUsd(log.total_cost_usd, log.cost_known)}</div>
         <div className="mt-1 text-xs text-muted-foreground">
           {translate("requestLogs.tokensWithCount", { count: formatNumber(log.total_tokens) })}
         </div>
-      </td>
-    </tr>
+      </Table.Cell>
+    </Table.Row>
   );
 }
 
@@ -337,33 +338,40 @@ export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
             </div>
           ) : logs.length ? (
             <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full min-w-[1080px] table-fixed border-collapse text-sm">
-                <colgroup>
-                  <col className="w-[170px]" />
-                  <col className="w-[180px]" />
-                  <col className="w-[210px]" />
-                  <col className="w-[130px]" />
-                  <col className="w-[150px]" />
-                  <col className="w-[120px]" />
-                  <col className="w-[170px]" />
-                </colgroup>
-                <thead className="sticky top-0 z-10 border-b bg-white text-xs font-bold uppercase text-muted-foreground">
-                  <tr>
-                    <th className="px-4 py-3 text-left">{t("requestLogs.time")}</th>
-                    <th className="px-4 py-3 text-left">{t("requestLogs.account")}</th>
-                    <th className="px-4 py-3 text-left">{t("requestLogs.billingModel")}</th>
-                    <th className="px-4 py-3 text-right">{t("usage.input")}</th>
-                    <th className="px-4 py-3 text-right">{t("usage.cacheHit")}</th>
-                    <th className="px-4 py-3 text-right">{t("usage.output")}</th>
-                    <th className="px-4 py-3 text-right">{t("requestLogs.totalCostColumn")}</th>
-                  </tr>
-                </thead>
-                <tbody className={cn("bg-white transition-opacity", requestLogs.isFetching ? "opacity-70" : "")}>
-                  {logs.map((log) => (
-                    <RequestLogRow key={log.id} log={log} />
-                  ))}
-                </tbody>
-              </table>
+              <Table variant="secondary" className="min-w-[1080px] bg-white">
+                <Table.ScrollContainer className="overflow-visible">
+                  <Table.Content aria-label={t("requestLogs.requestsTitle")} className="w-full table-fixed border-collapse text-sm">
+                    <Table.Header className="sticky top-0 z-10 border-b bg-white text-xs font-bold uppercase text-muted-foreground">
+                      <Table.Column id="time" isRowHeader className="w-[170px] px-4 py-3 text-left">
+                        {t("requestLogs.time")}
+                      </Table.Column>
+                      <Table.Column id="account" className="w-[180px] px-4 py-3 text-left">
+                        {t("requestLogs.account")}
+                      </Table.Column>
+                      <Table.Column id="billingModel" className="w-[210px] px-4 py-3 text-left">
+                        {t("requestLogs.billingModel")}
+                      </Table.Column>
+                      <Table.Column id="input" className="w-[130px] px-4 py-3 text-right">
+                        {t("usage.input")}
+                      </Table.Column>
+                      <Table.Column id="cacheHit" className="w-[150px] px-4 py-3 text-right">
+                        {t("usage.cacheHit")}
+                      </Table.Column>
+                      <Table.Column id="output" className="w-[120px] px-4 py-3 text-right">
+                        {t("usage.output")}
+                      </Table.Column>
+                      <Table.Column id="totalCost" className="w-[170px] px-4 py-3 text-right">
+                        {t("requestLogs.totalCostColumn")}
+                      </Table.Column>
+                    </Table.Header>
+                    <Table.Body className={cn("bg-white transition-opacity", requestLogs.isFetching ? "opacity-70" : "")}>
+                      {logs.map((log) => (
+                        <RequestLogRow key={log.id} log={log} />
+                      ))}
+                    </Table.Body>
+                  </Table.Content>
+                </Table.ScrollContainer>
+              </Table>
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
