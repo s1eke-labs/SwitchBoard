@@ -17,7 +17,7 @@ def clear_settings_cache() -> None:
 def _base_env(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
 
 
 def test_get_settings_parses_cookie_secure_env(monkeypatch, tmp_path) -> None:
@@ -29,18 +29,21 @@ def test_get_settings_parses_cookie_secure_env(monkeypatch, tmp_path) -> None:
     settings = get_settings()
 
     assert settings.cookie_secure is True
-    assert settings.auth_vault_dir == tmp_path / "auth-vault"
+    assert settings.data_dir == tmp_path / "switchboard-data"
+    assert settings.db_path == tmp_path / "switchboard-data" / "switchboard.sqlite"
+    assert settings.auth_vault_dir == tmp_path / "switchboard-data" / "auth-vault"
 
 
-def test_get_settings_parses_auth_vault_env(monkeypatch, tmp_path) -> None:
+def test_get_settings_derives_data_paths(monkeypatch, tmp_path) -> None:
     codex_home = tmp_path / "codex"
     codex_home.mkdir()
     _base_env(monkeypatch, tmp_path)
-    monkeypatch.setenv("SWITCHBOARD_AUTH_VAULT", str(tmp_path / "custom-vault"))
 
     settings = get_settings()
 
-    assert settings.auth_vault_dir == tmp_path / "custom-vault"
+    assert settings.db_path == tmp_path / "switchboard-data" / "switchboard.sqlite"
+    assert settings.auth_vault_dir == tmp_path / "switchboard-data" / "auth-vault"
+    assert settings.image_output_dir == tmp_path / "switchboard-data" / "images"
 
 
 def test_get_settings_parses_image_env(monkeypatch, tmp_path) -> None:
@@ -52,7 +55,6 @@ def test_get_settings_parses_image_env(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("SWITCHBOARD_IMAGE_RESPONSES_PATH", "custom/responses")
     monkeypatch.setenv("SWITCHBOARD_IMAGE_TIMEOUT_SECONDS", "120")
     monkeypatch.setenv("SWITCHBOARD_IMAGE_MAX_PROMPT_CHARS", "1200")
-    monkeypatch.setenv("SWITCHBOARD_IMAGE_OUTPUT_DIR", str(tmp_path / "custom-images"))
     monkeypatch.setenv("SWITCHBOARD_IMAGE_DEBUG", "true")
 
     settings = get_settings()
@@ -62,7 +64,7 @@ def test_get_settings_parses_image_env(monkeypatch, tmp_path) -> None:
     assert settings.image_responses_path == "/custom/responses"
     assert settings.image_timeout_seconds == 120.0
     assert settings.image_max_prompt_chars == 1200
-    assert settings.image_output_dir == tmp_path / "custom-images"
+    assert settings.image_output_dir == tmp_path / "switchboard-data" / "images"
     assert settings.image_debug is True
 
 
@@ -74,7 +76,7 @@ def test_get_settings_defaults_image_responses_path(monkeypatch, tmp_path) -> No
     settings = get_settings()
 
     assert settings.image_responses_path == "/codex/responses"
-    assert settings.image_output_dir == tmp_path / "images"
+    assert settings.image_output_dir == tmp_path / "switchboard-data" / "images"
 
 
 def test_get_settings_rejects_invalid_cookie_secure_env(monkeypatch, tmp_path) -> None:
@@ -82,6 +84,18 @@ def test_get_settings_rejects_invalid_cookie_secure_env(monkeypatch, tmp_path) -
     monkeypatch.setenv("SWITCHBOARD_COOKIE_SECURE", "sometimes")
 
     with pytest.raises(RuntimeError, match="SWITCHBOARD_COOKIE_SECURE must be a boolean value"):
+        get_settings()
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["SWITCHBOARD_DB", "SWITCHBOARD_AUTH_VAULT", "SWITCHBOARD_IMAGE_OUTPUT_DIR"],
+)
+def test_get_settings_rejects_removed_data_path_env_vars(monkeypatch, tmp_path, name: str) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv(name, str(tmp_path / "old-path"))
+
+    with pytest.raises(RuntimeError, match=f"{name}.*SWITCHBOARD_DATA_DIR"):
         get_settings()
 
 

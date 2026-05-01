@@ -39,7 +39,7 @@ Terminal 1, start the backend API:
 cd backend
 APP_PASSWORD=switchboard \
 CODEX_HOME="$HOME/.codex" \
-SWITCHBOARD_DB=./data/switchboard-dev.sqlite \
+SWITCHBOARD_DATA_DIR=./data/dev \
 uv run uvicorn main:app --host 127.0.0.1 --port 8080 --reload
 ```
 
@@ -67,8 +67,7 @@ The backend reads configuration from environment variables. It also loads a `.en
 | --- | --- | --- |
 | `APP_PASSWORD` | Yes | Password used to sign in to SwitchBoard. |
 | `CODEX_HOME` | No | Codex home directory. Defaults to `/host-codex` in Docker-like environments when present, otherwise `~/.codex`. It must exist at startup. |
-| `SWITCHBOARD_DB` | No | SQLite database path. Defaults to `/data/switchboard.sqlite` when `/data` exists, otherwise `backend/data/switchboard.sqlite` when run from `backend/`. |
-| `SWITCHBOARD_AUTH_VAULT` | No | Directory for saved account `auth.json` files. Defaults to `auth-vault` next to `SWITCHBOARD_DB`, for example `/data/auth-vault` in Docker. |
+| `SWITCHBOARD_DATA_DIR` | No | Persistent SwitchBoard data directory. Defaults to `/data` when it exists, otherwise `backend/data` when run from `backend/`. SwitchBoard stores `switchboard.sqlite`, `auth-vault/`, and `images/` under this directory. |
 | `SWITCHBOARD_STATIC_DIR` | No | Built frontend directory served by the backend, usually `frontend/dist`. |
 | `SWITCHBOARD_COOKIE_SECURE` | No | Controls the session cookie `Secure` flag. Defaults to `false` for local HTTP development; set it to `true` behind HTTPS. |
 | `CHATGPT_BACKEND_BASE` | No | ChatGPT backend base URL used when scanning account limits. Defaults to `https://chatgpt.com/backend-api`. |
@@ -77,10 +76,9 @@ The backend reads configuration from environment variables. It also loads a `.en
 | `SWITCHBOARD_IMAGE_RESPONSES_PATH` | No | Path appended to `CHATGPT_BACKEND_BASE` for image Responses calls. Defaults to `/codex/responses`. Full URLs are also accepted. |
 | `SWITCHBOARD_IMAGE_TIMEOUT_SECONDS` | No | Image generation timeout. Defaults to `300`. |
 | `SWITCHBOARD_IMAGE_MAX_PROMPT_CHARS` | No | Maximum prompt length accepted by the backend. Defaults to `4000`. |
-| `SWITCHBOARD_IMAGE_OUTPUT_DIR` | No | Directory where generated images are saved. Defaults to an `images` directory next to `SWITCHBOARD_DB`. |
 | `SWITCHBOARD_IMAGE_DEBUG` | No | Logs image request/response debugging details. Defaults to `false`; access tokens are still not logged. |
 
-For local development, `./data/switchboard-dev.sqlite` is a convenient disposable database path.
+For local development, `SWITCHBOARD_DATA_DIR=./data/dev` is a convenient disposable data directory.
 
 If `CODEX_HOME` is missing or points to a file instead of a directory, SwitchBoard fails fast during startup with a clear error.
 
@@ -112,7 +110,7 @@ POST /api/images/generations
 
 Open the Images page from the app header after signing in. No image-specific upstream key is stored or sent to the browser.
 
-Generated images and saved reference images are stored on the backend under `SWITCHBOARD_IMAGE_OUTPUT_DIR` and served back through authenticated `/api/images/files/{filename}` URLs. Image session metadata, queue job status, reference metadata, returned upstream response IDs, results, and errors are stored in SQLite. Deleting an image session removes its SQLite history plus referenced generated and reference image files. If SwitchBoard restarts while a job is running, that job is restored to queued state.
+Generated images and saved reference images are stored under `SWITCHBOARD_DATA_DIR/images` and served back through authenticated `/api/images/files/{filename}` URLs. Image session metadata, queue job status, reference metadata, returned upstream response IDs, results, and errors are stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`. Deleting an image session removes its SQLite history plus referenced generated and reference image files. If SwitchBoard restarts while a job is running, that job is restored to queued state.
 
 ## Development Commands
 
@@ -121,7 +119,7 @@ Run backend commands from `backend/`:
 ```bash
 uv run pylint --rcfile=.pylintrc .
 uv run pytest
-APP_PASSWORD=switchboard CODEX_HOME="$HOME/.codex" SWITCHBOARD_DB=./data/switchboard-dev.sqlite uv run uvicorn main:app --host 127.0.0.1 --port 8080 --reload
+APP_PASSWORD=switchboard CODEX_HOME="$HOME/.codex" SWITCHBOARD_DATA_DIR=./data/dev uv run uvicorn main:app --host 127.0.0.1 --port 8080 --reload
 ```
 
 Run frontend commands from `frontend/`:
@@ -152,7 +150,7 @@ Then serve the API and built frontend from the backend:
 cd ../backend
 APP_PASSWORD=switchboard \
 CODEX_HOME="$HOME/.codex" \
-SWITCHBOARD_DB=./data/switchboard-dev.sqlite \
+SWITCHBOARD_DATA_DIR=./data/dev \
 SWITCHBOARD_STATIC_DIR="$PWD/../frontend/dist" \
 uv run uvicorn main:app --host 127.0.0.1 --port 8080
 ```
@@ -173,7 +171,8 @@ Create `.env` in the repository root:
 
 ```bash
 APP_PASSWORD=change-me
-HOST_CODEX_HOME=/home/you/.codex
+CODEX_HOME=/home/you/.codex
+DATA_DIR=./backend/data
 ```
 
 Then run:
@@ -184,9 +183,11 @@ docker compose up --build
 
 Open `http://127.0.0.1:8080` unless you set a different `PORT`.
 
-The Codex directory is mounted read-write at `/host-codex` so account switching can update `auth.json`. SwitchBoard stores its SQLite data and private auth vault in the `switchboard_data` volume.
+Compose reads these values from `.env` for interpolation only. `CODEX_HOME` is the host Codex directory mounted read-write into the container at `/host-codex`, and `DATA_DIR` is the host SwitchBoard data directory mounted into the container at `/data`. The container's internal `CODEX_HOME=/host-codex` and `SWITCHBOARD_DATA_DIR=/data` are fixed in the Docker image.
 
-The container process may run as root, but SwitchBoard preserves the existing owner and group of `CODEX_HOME/auth.json` when replacing it. Saved account credentials are written outside `CODEX_HOME` by default under `SWITCHBOARD_AUTH_VAULT` with private directory and file permissions. If you change the Codex mount to read-only, Docker mode is limited to viewing accounts, sessions, and usage.
+SwitchBoard stores `switchboard.sqlite`, private `auth-vault/`, and generated `images/` under `DATA_DIR` on the host.
+
+The container process may run as root, but SwitchBoard preserves the existing owner and group of `CODEX_HOME/auth.json` when replacing it. Saved account credentials are written outside `CODEX_HOME` by default under the mounted data directory's `auth-vault/` with private directory and file permissions. If you change the Codex mount to read-only, Docker mode is limited to viewing accounts, sessions, and usage.
 
 ## Repository Layout
 
@@ -221,7 +222,7 @@ Existing usage events that were collected before account attribution was availab
 
 - SwitchBoard reads `auth.json` and local Codex session/state files from `CODEX_HOME`.
 - ChatGPT tokens are not stored in SwitchBoard's SQLite database.
-- Saved account credentials live in `SWITCHBOARD_AUTH_VAULT` as private `auth.json` files, not under `CODEX_HOME` by default.
+- Saved account credentials live in `SWITCHBOARD_DATA_DIR/auth-vault` as private `auth.json` files, not under `CODEX_HOME` by default.
 - Account switching rewrites the local Codex `auth.json`; restart Codex for the change to take effect.
 - Docker account switching preserves the existing `auth.json` owner/group and writes the file with `0600` permissions.
 - Hidden accounts and custom names are SwitchBoard-local metadata.

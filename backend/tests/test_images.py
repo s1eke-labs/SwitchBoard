@@ -734,7 +734,7 @@ async def test_image_generation_queue_lists_jobs_by_conversation(tmp_path) -> No
 def test_image_api_requires_auth_and_reports_missing_auth(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -760,7 +760,7 @@ def test_image_api_requires_auth_and_reports_missing_auth(monkeypatch, tmp_path)
 def test_image_job_api_requires_auth_and_validates_payload(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -790,7 +790,7 @@ def test_image_job_api_requires_auth_and_validates_payload(monkeypatch, tmp_path
 def test_image_conversation_api_requires_auth_and_lists_jobs(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -835,7 +835,7 @@ def test_image_conversation_api_requires_auth_and_lists_jobs(monkeypatch, tmp_pa
 def test_image_conversation_api_paginates(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -877,7 +877,7 @@ def test_image_conversation_api_paginates(monkeypatch, tmp_path) -> None:
 def test_image_conversation_delete_api_removes_history_and_files(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -893,7 +893,7 @@ def test_image_conversation_delete_api_removes_history_and_files(monkeypatch, tm
     assert client.delete("/api/images/conversations/gone").status_code == 404
 
     settings = client.app.state.settings
-    image_dir = tmp_path / "images"
+    image_dir = tmp_path / "switchboard-data" / "images"
     image_dir.mkdir(exist_ok=True)
     generated_path = image_dir / "generated.png"
     reference_path = image_dir / "reference.png"
@@ -951,7 +951,7 @@ def test_image_conversation_delete_api_removes_history_and_files(monkeypatch, tm
 def test_image_conversation_delete_api_rejects_active_jobs(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -997,10 +997,10 @@ def test_image_conversation_delete_api_rejects_active_jobs(monkeypatch, tmp_path
 def test_image_file_api_requires_auth_and_serves_saved_file(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
+    image_dir = tmp_path / "switchboard-data" / "images"
+    image_dir.mkdir(parents=True)
     (image_dir / "sample.png").write_bytes(b"image-bytes")
 
     import config

@@ -16,6 +16,6 @@ COPY backend ./
 COPY --from=frontend /app/frontend/dist /app/frontend/dist
 ENV SWITCHBOARD_STATIC_DIR=/app/frontend/dist \
     CODEX_HOME=/host-codex \
-    SWITCHBOARD_DB=/data/switchboard.sqlite
+    SWITCHBOARD_DATA_DIR=/data
 EXPOSE 8080
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
