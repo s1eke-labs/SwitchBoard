@@ -1,7 +1,9 @@
 import type { ImageGalleryJob } from "@/lib/api";
 import type { TranslationKey } from "@/i18n";
 
-export const ASPECT_RATIO_OPTIONS = ["1:1", "3:4", "4:3", "9:16", "16:9", "21:9"] as const;
+export const AUTO_IMAGE_SIZE = "auto";
+export const PRESET_ASPECT_RATIO_OPTIONS = ["1:1", "3:4", "4:3", "9:16", "16:9", "21:9"] as const;
+export const ASPECT_RATIO_OPTIONS = [AUTO_IMAGE_SIZE, ...PRESET_ASPECT_RATIO_OPTIONS] as const;
 export const QUALITY_OPTIONS = ["low", "medium", "high"] as const;
 export const IMAGE_COUNT_OPTIONS = [1, 2, 4] as const;
 export const IMAGE_SIZE_BY_RATIO_AND_QUALITY = {

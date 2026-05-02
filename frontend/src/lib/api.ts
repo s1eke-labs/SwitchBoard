@@ -228,25 +228,7 @@ export type UsageRequestLogsParams = {
 export type ImageGenerationRequest = {
   prompt: string;
   model?: string;
-  size?:
-    | "1024x1024"
-    | "1536x1536"
-    | "2880x2880"
-    | "768x1024"
-    | "1536x2048"
-    | "2448x3264"
-    | "1024x768"
-    | "2048x1536"
-    | "3264x2448"
-    | "720x1280"
-    | "1152x2048"
-    | "2160x3840"
-    | "1280x720"
-    | "2048x1152"
-    | "3840x2160"
-    | "1344x576"
-    | "2688x1152"
-    | "3360x1440";
+  size?: string;
   quality?: "auto";
   n?: 1 | 2 | 4;
   response_format?: "b64_json" | "url";
@@ -296,7 +278,7 @@ export type ImageGenerationJob = {
   id: string;
   conversation_id: string | null;
   prompt: string;
-  size: NonNullable<ImageGenerationRequest["size"]> | "auto" | "1024x1536" | "1536x1024";
+  size: NonNullable<ImageGenerationRequest["size"]>;
   quality: "auto" | "low" | "medium" | "high";
   n: 1 | 2 | 4;
   status: ImageGenerationJobStatus;

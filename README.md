@@ -158,7 +158,7 @@ Typical workflow:
 
 Operational notes:
 
-- Supported aspect ratios are `1:1`, `3:4`, `4:3`, `9:16`, `16:9`, and `21:9`, mapped to low, medium, and high pixel sizes.
+- The Images page offers `auto` plus `1:1`, `3:4`, `4:3`, `9:16`, `16:9`, and `21:9` presets mapped to low, medium, and high pixel sizes. Backend requests may pass `auto` or any `WIDTHxHEIGHT` size that satisfies the resolution constraints: positive dimensions, both sides divisible by 16, longest side no greater than 3840 px, aspect ratio no wider than 3:1, and total pixels between 655,360 and 8,294,400.
 - Multi-image jobs are stored and displayed as separate gallery items.
 - Upstream image requests use `store: false`; follow-up prompts should include the needed context or reference images.
 - Generated images and saved references live under `SWITCHBOARD_DATA_DIR/images` and are served through authenticated `/api/images/files/{file_path}` URLs.

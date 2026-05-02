@@ -9,7 +9,6 @@ from .models import (
     ALLOWED_IMAGE_COUNTS,
     ALLOWED_IMAGE_QUALITIES,
     ALLOWED_IMAGE_RESPONSE_FORMATS,
-    ALLOWED_IMAGE_SIZES,
     ALLOWED_REFERENCE_MIME_TYPES,
     IMAGE_MAX_ASPECT_RATIO,
     IMAGE_MAX_SIDE_PX,
@@ -119,7 +118,7 @@ def _validate_payload(settings: Settings, payload: ImageGenerationRequest) -> No
         raise _image_error(400, "IMAGE_PROMPT_REQUIRED", "Prompt is required")
     if len(prompt) > settings.image_max_prompt_chars:
         raise _image_error(400, "IMAGE_PROMPT_TOO_LONG", "Prompt is too long")
-    if not _image_size_satisfies_constraints(payload.size) or payload.size not in ALLOWED_IMAGE_SIZES:
+    if payload.size != "auto" and not _image_size_satisfies_constraints(payload.size):
         raise _image_error(400, "IMAGE_INVALID_SIZE", "Invalid image size")
     if payload.quality not in ALLOWED_IMAGE_QUALITIES:
         raise _image_error(400, "IMAGE_INVALID_QUALITY", "Invalid image quality")

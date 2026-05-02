@@ -6,9 +6,10 @@ import type {
 } from "@/lib/api";
 import type { TranslationKey } from "@/i18n";
 import {
-  ASPECT_RATIO_OPTIONS,
+  AUTO_IMAGE_SIZE,
   IMAGE_SIZE_BY_RATIO_AND_QUALITY,
   MAX_REFERENCE_IMAGE_BYTES,
+  PRESET_ASPECT_RATIO_OPTIONS,
   QUALITY_OPTIONS,
   REFERENCE_IMAGE_TYPES,
 } from "@/features/images/constants";
@@ -90,7 +91,7 @@ export function downloadGalleryItem(item: GalleryItem) {
 }
 
 export function imageSettingsFromSize(size: string): { aspectRatio: ImageAspectRatio; quality: ImageQuality } | null {
-  for (const aspectRatio of ASPECT_RATIO_OPTIONS) {
+  for (const aspectRatio of PRESET_ASPECT_RATIO_OPTIONS) {
     for (const quality of QUALITY_OPTIONS) {
       if (IMAGE_SIZE_BY_RATIO_AND_QUALITY[aspectRatio][quality] === size) {
         return { aspectRatio, quality };
@@ -101,6 +102,12 @@ export function imageSettingsFromSize(size: string): { aspectRatio: ImageAspectR
 }
 
 export function imageStyleParts(size: string, quality: ImageGalleryJob["quality"], t: (key: TranslationKey) => string) {
+  if (size === AUTO_IMAGE_SIZE) {
+    return {
+      aspectRatio: t("images.size.auto"),
+      quality: t("images.quality.auto"),
+    };
+  }
   const settings = imageSettingsFromSize(size);
   if (settings) {
     return {

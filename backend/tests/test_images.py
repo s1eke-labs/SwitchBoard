@@ -385,8 +385,28 @@ def test_build_upstream_payload_adds_reference_images_without_forcing_generate(t
     assert payload["store"] is False
 
 
-def test_allowed_image_sizes_satisfy_resolution_constraints() -> None:
-    for size in images_module.ALLOWED_IMAGE_SIZES:
+def test_common_frontend_image_sizes_satisfy_resolution_constraints() -> None:
+    common_frontend_sizes = {
+        "1024x1024",
+        "1536x1536",
+        "2880x2880",
+        "768x1024",
+        "1536x2048",
+        "2448x3264",
+        "1024x768",
+        "2048x1536",
+        "3264x2448",
+        "720x1280",
+        "1152x2048",
+        "2160x3840",
+        "1280x720",
+        "2048x1152",
+        "3840x2160",
+        "1344x576",
+        "2688x1152",
+        "3360x1440",
+    }
+    for size in common_frontend_sizes:
         assert images_module._image_size_satisfies_constraints(size)
 
 
@@ -406,6 +426,19 @@ def test_build_upstream_payload_uses_resolution_size_auto_quality_and_count_inst
         "Use the image_generation tool to create an image from the user's prompt. "
         "Create exactly 4 separate images."
     )
+
+
+def test_build_upstream_payload_supports_auto_size(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    payload = build_upstream_payload(
+        settings,
+        ImageGenerationRequest(prompt="poster", size="auto", quality="auto"),
+    )
+
+    tool = payload["tools"][0]
+    assert tool["size"] == "auto"
+    assert tool["quality"] == "auto"
 
 
 def test_build_upstream_payload_adds_previous_response_id(tmp_path) -> None:
@@ -431,9 +464,7 @@ def test_build_upstream_payload_adds_previous_response_id(tmp_path) -> None:
         "3840x2176",
     ],
 )
-async def test_generate_image_enforces_resolution_constraints_even_if_size_is_allowed(monkeypatch, tmp_path, size: str) -> None:
-    monkeypatch.setattr(images_module, "ALLOWED_IMAGE_SIZES", {size})
-
+async def test_generate_image_enforces_resolution_constraints(tmp_path, size: str) -> None:
     with pytest.raises(ImageGenerationError) as exc_info:
         await generate_image(
             _settings(tmp_path),
@@ -446,11 +477,52 @@ async def test_generate_image_enforces_resolution_constraints_even_if_size_is_al
 
 
 @pytest.mark.asyncio
+async def test_generate_image_accepts_custom_size_that_satisfies_resolution_constraints(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    _write_auth(settings)
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.read())
+        return _sse_response({"output": [{"type": "image_generation_call", "result": VALID_PNG_B64}]})
+
+    await generate_image(
+        settings,
+        ImageGenerationRequest(prompt="poster", size="2048x2048"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    tool = captured["payload"]["tools"][0]
+    assert tool["size"] == "2048x2048"
+
+
+@pytest.mark.asyncio
+async def test_generate_image_accepts_auto_size(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    _write_auth(settings)
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.read())
+        return _sse_response({"output": [{"type": "image_generation_call", "result": VALID_PNG_B64}]})
+
+    await generate_image(
+        settings,
+        ImageGenerationRequest(prompt="poster", size="auto", quality="auto"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    tool = captured["payload"]["tools"][0]
+    assert tool["size"] == "auto"
+    assert tool["quality"] == "auto"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("payload", "code"),
     [
         (ImageGenerationRequest(prompt=" "), "IMAGE_PROMPT_REQUIRED"),
-        (ImageGenerationRequest(prompt="x", size="2048x2048"), "IMAGE_INVALID_SIZE"),
+        (ImageGenerationRequest(prompt="x", size="4096x4096"), "IMAGE_INVALID_SIZE"),
         (ImageGenerationRequest(prompt="x", quality="ultra"), "IMAGE_INVALID_QUALITY"),
         (ImageGenerationRequest(prompt="x", quality="high"), "IMAGE_INVALID_QUALITY"),
         (ImageGenerationRequest(prompt="x", n=3), "IMAGE_INVALID_COUNT"),

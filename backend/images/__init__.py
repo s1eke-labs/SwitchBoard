@@ -7,7 +7,6 @@ from .models import (
     ALLOWED_IMAGE_COUNTS,
     ALLOWED_IMAGE_QUALITIES,
     ALLOWED_IMAGE_RESPONSE_FORMATS,
-    ALLOWED_IMAGE_SIZES,
     ALLOWED_REFERENCE_MIME_TYPES,
     CODEX_ORIGINATOR,
     CODEX_USER_AGENT,
@@ -41,7 +40,6 @@ from .models import (
     ImageReferenceData,
     ImageReferenceInput,
     ImageResponseFormat,
-    ImageSize,
     _image_error,
 )
 from .queue import ImageGenerationQueue

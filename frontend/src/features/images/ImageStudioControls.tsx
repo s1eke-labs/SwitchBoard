@@ -14,14 +14,14 @@ import { Form } from "@/components/heroui/form";
 import { Spinner } from "@/components/heroui/spinner";
 import { TextArea } from "@/components/heroui/textarea";
 import { useI18n } from "@/i18n";
-import { ASPECT_RATIO_OPTIONS, IMAGE_COUNT_OPTIONS, MAX_REFERENCE_IMAGES, QUALITY_OPTIONS } from "@/features/images/constants";
-import type { ImageAspectRatio, ImageCount, ImageQuality, PendingReferenceImage } from "@/features/images/types";
+import { ASPECT_RATIO_OPTIONS, AUTO_IMAGE_SIZE, IMAGE_COUNT_OPTIONS, MAX_REFERENCE_IMAGES, QUALITY_OPTIONS } from "@/features/images/constants";
+import type { ImageAspectRatio, ImageCount, ImageQuality, PendingReferenceImage, PresetImageAspectRatio } from "@/features/images/types";
 
 type ImageOptionMenuKey = "aspectRatio" | "quality" | "imageCount";
 
 const ASPECT_RATIO_SHAPE_BOUNDS = { width: 24, height: 18 };
 
-const ASPECT_RATIO_SHAPE_SIZE: Record<ImageAspectRatio, { width: number; height: number }> = {
+const ASPECT_RATIO_SHAPE_SIZE: Record<PresetImageAspectRatio, { width: number; height: number }> = {
   "1:1": { width: 16, height: 16 },
   "3:4": { width: 12, height: 16 },
   "4:3": { width: 21, height: 15.75 },
@@ -36,7 +36,25 @@ const QUALITY_LEVEL_COUNT: Record<ImageQuality, number> = {
   high: 3,
 };
 
+function AutoSizeIcon({ selected = false }: { selected?: boolean }) {
+  return (
+    <span aria-hidden="true" className="flex h-[18px] w-6 shrink-0 items-center justify-center">
+      <span className={`relative h-[14px] w-[21px] rounded-[3px] border-2 ${selected ? "border-primary" : "border-foreground"}`}>
+        <span
+          className={`absolute bottom-[2px] left-[2px] h-[5px] w-[9px] rounded-[2px] border-2 border-l-0 border-b-0 ${
+            selected ? "border-primary" : "border-foreground"
+          }`}
+        />
+      </span>
+    </span>
+  );
+}
+
 function AspectRatioShape({ aspectRatio, selected = false }: { aspectRatio: ImageAspectRatio; selected?: boolean }) {
+  if (aspectRatio === AUTO_IMAGE_SIZE) {
+    return <AutoSizeIcon selected={selected} />;
+  }
+
   const size = ASPECT_RATIO_SHAPE_SIZE[aspectRatio];
 
   return (
@@ -51,6 +69,10 @@ function AspectRatioShape({ aspectRatio, selected = false }: { aspectRatio: Imag
       />
     </span>
   );
+}
+
+function formatAspectRatioOption(aspectRatio: ImageAspectRatio, t: (key: "images.size.auto") => string) {
+  return aspectRatio === AUTO_IMAGE_SIZE ? t("images.size.auto") : aspectRatio;
 }
 
 function QualityLevelIcon({ quality, selected = false }: { quality: ImageQuality; selected?: boolean }) {
@@ -306,10 +328,15 @@ export function ImageStudioControls({
               renderSelectedValue={(option) => (
                 <>
                   <AspectRatioShape aspectRatio={option} selected />
-                  <span>{option}</span>
+                  <span>{formatAspectRatioOption(option, t)}</span>
                 </>
               )}
-              renderOptionAccessory={(option, selected) => <AspectRatioShape aspectRatio={option} selected={selected} />}
+              renderOptionContent={(option, selected) => (
+                <span className="flex min-w-0 items-center gap-2">
+                  <AspectRatioShape aspectRatio={option} selected={selected} />
+                  <span className="truncate">{formatAspectRatioOption(option, t)}</span>
+                </span>
+              )}
               onOpenChange={setOpenMenu}
               onChange={onAspectRatioChange}
             />

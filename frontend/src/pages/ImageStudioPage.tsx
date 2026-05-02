@@ -13,6 +13,7 @@ import {
   GALLERY_GRID_GAP,
   GALLERY_MAX_PAGE_SIZE,
   GALLERY_MIN_COLUMN_WIDTH,
+  AUTO_IMAGE_SIZE,
   IMAGE_SIZE_BY_RATIO_AND_QUALITY,
   MAX_REFERENCE_IMAGE_BYTES,
   MAX_REFERENCE_IMAGES,
@@ -404,7 +405,7 @@ export function ImageStudioPage() {
       mime_type: reference.mimeType,
       b64_json: reference.b64Json,
     }));
-    const selectedSize: ImageSize = IMAGE_SIZE_BY_RATIO_AND_QUALITY[aspectRatio][quality];
+    const selectedSize: ImageSize = aspectRatio === AUTO_IMAGE_SIZE ? AUTO_IMAGE_SIZE : IMAGE_SIZE_BY_RATIO_AND_QUALITY[aspectRatio][quality];
     createJob.mutate({
       prompt: trimmedPrompt,
       size: selectedSize,

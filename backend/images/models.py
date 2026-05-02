@@ -9,50 +9,10 @@ from issues import IssueDetail, issue_detail
 CODEX_USER_AGENT = "codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)"
 CODEX_ORIGINATOR = "codex-tui"
 
-ImageSize = Literal[
-    "1024x1024",
-    "1536x1536",
-    "2880x2880",
-    "768x1024",
-    "1536x2048",
-    "2448x3264",
-    "1024x768",
-    "2048x1536",
-    "3264x2448",
-    "720x1280",
-    "1152x2048",
-    "2160x3840",
-    "1280x720",
-    "2048x1152",
-    "3840x2160",
-    "1344x576",
-    "2688x1152",
-    "3360x1440",
-]
 ImageQuality = Literal["auto"]
 ImageResponseFormat = Literal["b64_json", "url"]
 ImageJobStatus = Literal["queued", "running", "succeeded", "failed"]
 
-ALLOWED_IMAGE_SIZES = {
-    "1024x1024",
-    "1536x1536",
-    "2880x2880",
-    "768x1024",
-    "1536x2048",
-    "2448x3264",
-    "1024x768",
-    "2048x1536",
-    "3264x2448",
-    "720x1280",
-    "1152x2048",
-    "2160x3840",
-    "1280x720",
-    "2048x1152",
-    "3840x2160",
-    "1344x576",
-    "2688x1152",
-    "3360x1440",
-}
 IMAGE_MAX_SIDE_PX = 3840
 IMAGE_SIZE_MULTIPLE_PX = 16
 IMAGE_MAX_ASPECT_RATIO = 3
