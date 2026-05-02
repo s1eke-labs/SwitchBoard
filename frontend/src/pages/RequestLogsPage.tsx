@@ -13,7 +13,7 @@ import { Select } from "@/components/heroui/select";
 import { Spinner } from "@/components/heroui/spinner";
 import { SegmentedControl } from "@/components/heroui/toggle-button-group";
 
-const REQUEST_LOG_PAGE_SIZE = 30;
+const REQUEST_LOG_PAGE_SIZE = 50;
 const ALL_ACCOUNTS_FILTER = "__all__";
 const UNASSIGNED_ACCOUNT_FILTER = "__unassigned__";
 
@@ -116,14 +116,14 @@ function SummaryCard({
   children?: ReactNode;
 }) {
   return (
-    <Card className="min-h-44 rounded-lg shadow-none">
-      <CardContent className="flex h-full flex-col p-5">
-        <div className="flex items-start justify-between gap-4">
-          <h3 className="text-base font-bold text-muted-foreground">{title}</h3>
-          <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl", iconClassName)}>{icon}</div>
+    <Card className="rounded-lg shadow-none">
+      <CardContent className="flex h-full min-h-24 flex-col p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="truncate text-sm font-bold text-muted-foreground">{title}</h3>
+          <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg", iconClassName)}>{icon}</div>
         </div>
-        <div className="mt-7 text-3xl font-bold tabular-nums text-foreground">{value}</div>
-        {children ? <div className="mt-5 border-t pt-4 text-sm text-muted-foreground">{children}</div> : null}
+        <div className="mt-3 text-2xl font-bold leading-none tabular-nums text-foreground">{value}</div>
+        {children ? <div className="mt-3 text-xs text-muted-foreground">{children}</div> : null}
       </CardContent>
     </Card>
   );
@@ -141,26 +141,26 @@ function SummaryMetricLine({ label, value }: { label: string; value: string }) {
 function RequestLogSummaryCards({ data }: { data: UsageRequestLogsResponse | undefined }) {
   const summary = data?.summary;
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <SummaryCard
         title={translate("requestLogs.totalRequests")}
         value={formatNumber(summary?.request_count ?? 0)}
-        icon={<Activity size={24} />}
+        icon={<Activity size={20} />}
         iconClassName="bg-blue-50 text-blue-600"
       />
       <SummaryCard
         title={translate("requestLogs.totalCost")}
         value={formatUsd(summary?.total_cost_usd ?? null, Boolean(summary?.cost_known))}
-        icon={<DollarSign size={25} />}
+        icon={<DollarSign size={21} />}
         iconClassName="bg-emerald-50 text-emerald-600"
       />
       <SummaryCard
         title={translate("requestLogs.totalTokens")}
         value={formatNumber(summary?.total_tokens ?? 0)}
-        icon={<Layers3 size={25} />}
+        icon={<Layers3 size={21} />}
         iconClassName="bg-purple-50 text-purple-600"
       >
-        <div className="space-y-1.5">
+        <div className="space-y-1">
           <SummaryMetricLine label={translate("usage.input")} value={formatCompactThousands(summary?.input_tokens)} />
           <SummaryMetricLine label={translate("usage.output")} value={formatCompactThousands(summary?.output_tokens)} />
         </div>
@@ -168,10 +168,10 @@ function RequestLogSummaryCards({ data }: { data: UsageRequestLogsResponse | und
       <SummaryCard
         title={translate("requestLogs.cacheTokens")}
         value={formatNumber(summary?.cache_hit_tokens ?? 0)}
-        icon={<Database size={25} />}
+        icon={<Database size={21} />}
         iconClassName="bg-orange-50 text-orange-600"
       >
-        <div className="space-y-1.5">
+        <div className="space-y-1">
           <SummaryMetricLine label={translate("usage.cacheCreated")} value={formatCompactThousands(summary?.cache_creation_tokens)} />
           <SummaryMetricLine label={translate("usage.cacheHit")} value={formatCompactThousands(summary?.cache_hit_tokens)} />
         </div>
@@ -183,31 +183,31 @@ function RequestLogSummaryCards({ data }: { data: UsageRequestLogsResponse | und
 function RequestLogRow({ log }: { log: UsageRequestLogDTO }) {
   return (
     <Table.Row id={log.id} className="border-b last:border-b-0">
-      <Table.Cell className="whitespace-nowrap px-4 py-3 align-top text-sm font-medium text-foreground">
+      <Table.Cell className="whitespace-nowrap px-4 py-2 align-middle text-sm font-medium text-foreground">
         {formatTime(log.occurred_at)}
       </Table.Cell>
-      <Table.Cell className="px-4 py-3 align-top">
+      <Table.Cell className="px-4 py-2 align-middle">
         <Badge className="max-w-full truncate" tone={log.account_id ? "blue" : "neutral"}>
           {log.account_display_name ?? translate("requestLogs.unassigned")}
         </Badge>
       </Table.Cell>
-      <Table.Cell className="px-4 py-3 align-top">
+      <Table.Cell className="px-4 py-2 align-middle">
         <Badge className="max-w-full truncate" tone="neutral">
           {log.billing_model ?? translate("common.unknown")}
         </Badge>
       </Table.Cell>
-      <Table.Cell className="px-4 py-3 align-top text-right tabular-nums">
+      <Table.Cell className="px-4 py-2 align-middle text-right tabular-nums">
         <div className="font-semibold text-foreground">{formatNumber(log.input_tokens)}</div>
       </Table.Cell>
-      <Table.Cell className="px-4 py-3 align-top text-right tabular-nums">
+      <Table.Cell className="px-4 py-2 align-middle text-right tabular-nums">
         <div className="font-semibold text-foreground">{formatNumber(log.cache_hit_tokens)}</div>
       </Table.Cell>
-      <Table.Cell className="px-4 py-3 align-top text-right tabular-nums">
+      <Table.Cell className="px-4 py-2 align-middle text-right tabular-nums">
         <div className="font-semibold text-foreground">{formatNumber(log.output_tokens)}</div>
       </Table.Cell>
-      <Table.Cell className="whitespace-nowrap px-4 py-3 text-right align-top tabular-nums">
+      <Table.Cell className="whitespace-nowrap px-4 py-2 text-right align-middle tabular-nums">
         <div className="font-semibold text-foreground">{formatUsd(log.total_cost_usd, log.cost_known)}</div>
-        <div className="mt-1 text-xs text-muted-foreground">
+        <div className="text-xs leading-4 text-muted-foreground">
           {translate("requestLogs.tokensWithCount", { count: formatNumber(log.total_tokens) })}
         </div>
       </Table.Cell>
@@ -260,7 +260,7 @@ export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
   }
 
   return (
-    <section className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
+    <section className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 px-1">
         <div className="flex items-center gap-2">
           <ReceiptText size={20} strokeWidth={1.8} />
@@ -279,10 +279,10 @@ export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
       </div>
       <RequestLogSummaryCards data={requestLogs.data} />
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg shadow-none">
-        <CardHeader className="flex flex-row items-center justify-between gap-3 px-5 py-4">
+        <CardHeader className="flex flex-row items-center justify-between gap-3 px-5 py-3">
           <div className="min-w-0">
-            <h3 className="truncate text-base font-bold leading-6">{t("requestLogs.requestsTitle")}</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <h3 className="truncate text-base font-bold leading-5">{t("requestLogs.requestsTitle")}</h3>
+            <p className="text-xs text-muted-foreground">
               {requestLogs.isPending
                 ? t("common.loading")
                 : t("requestLogs.rows", { count: formatNumber(requestLogs.data?.total_count ?? 0) })}
@@ -306,25 +306,25 @@ export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
                 <Table.ScrollContainer className="overflow-visible">
                   <Table.Content aria-label={t("requestLogs.requestsTitle")} className="w-full table-fixed border-collapse text-sm">
                     <Table.Header className="sticky top-0 z-10 border-b bg-white text-xs font-bold uppercase text-muted-foreground">
-                      <Table.Column id="time" isRowHeader className="w-[170px] px-4 py-3 text-left">
+                      <Table.Column id="time" isRowHeader className="w-[170px] px-4 py-2.5 text-left">
                         {t("requestLogs.time")}
                       </Table.Column>
-                      <Table.Column id="account" className="w-[180px] px-4 py-3 text-left">
+                      <Table.Column id="account" className="w-[180px] px-4 py-2.5 text-left">
                         {t("requestLogs.account")}
                       </Table.Column>
-                      <Table.Column id="billingModel" className="w-[210px] px-4 py-3 text-left">
+                      <Table.Column id="billingModel" className="w-[210px] px-4 py-2.5 text-left">
                         {t("requestLogs.billingModel")}
                       </Table.Column>
-                      <Table.Column id="input" className="w-[130px] px-4 py-3 text-right">
+                      <Table.Column id="input" className="w-[130px] px-4 py-2.5 text-right">
                         {t("usage.input")}
                       </Table.Column>
-                      <Table.Column id="cacheHit" className="w-[150px] px-4 py-3 text-right">
+                      <Table.Column id="cacheHit" className="w-[150px] px-4 py-2.5 text-right">
                         {t("usage.cacheHit")}
                       </Table.Column>
-                      <Table.Column id="output" className="w-[120px] px-4 py-3 text-right">
+                      <Table.Column id="output" className="w-[120px] px-4 py-2.5 text-right">
                         {t("usage.output")}
                       </Table.Column>
-                      <Table.Column id="totalCost" className="w-[170px] px-4 py-3 text-right">
+                      <Table.Column id="totalCost" className="w-[170px] px-4 py-2.5 text-right">
                         {t("requestLogs.totalCostColumn")}
                       </Table.Column>
                     </Table.Header>
@@ -342,7 +342,7 @@ export function RequestLogsPage({ accounts }: { accounts: AccountDTO[] }) {
               {t("requestLogs.noLogsInRange")}
             </div>
           )}
-          <div className="flex shrink-0 items-center justify-center border-t p-3">
+          <div className="flex shrink-0 items-center justify-center border-t p-2">
             <PageSelector
               page={page}
               totalPages={totalPages}
