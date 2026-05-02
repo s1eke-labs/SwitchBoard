@@ -391,11 +391,15 @@ export function ImageStudioPage() {
 
   function deleteSelectedImages() {
     if (selectedGalleryItems.length === 0 || deleteImages.isPending) return;
+    setSelectedItemKey(null);
+    setPreviewReferenceId(null);
     setPendingDeleteItems(selectedGalleryItems);
   }
 
   function deletePreviewImage(item: GalleryItem) {
     if (!isSelectableGalleryItem(item) || deleteImages.isPending) return;
+    setSelectedItemKey(null);
+    setPreviewReferenceId(null);
     setPendingDeleteItems([item]);
   }
 
@@ -438,6 +442,20 @@ export function ImageStudioPage() {
     if (targetPage === galleryPage || targetPage < 1 || targetPage > galleryTotalPages || gallery.isFetching) return;
     setGalleryPage(targetPage);
     setSelectedItemKey(null);
+    setPreviewReferenceId(null);
+    setPendingDeleteItems(null);
+  }
+
+  function openImagePreview(key: string) {
+    setPreviewReferenceId(null);
+    setPendingDeleteItems(null);
+    setSelectedItemKey(key);
+  }
+
+  function openReferencePreview(id: string) {
+    setSelectedItemKey(null);
+    setPendingDeleteItems(null);
+    setPreviewReferenceId(id);
   }
 
   return (
@@ -460,7 +478,7 @@ export function ImageStudioPage() {
           onReferenceChange={handleReferenceChange}
           onReferenceDrop={handleReferenceDrop}
           onReferencePaste={handleReferencePaste}
-          onPreviewReference={setPreviewReferenceId}
+          onPreviewReference={openReferencePreview}
           onRemoveReference={removeReference}
           onSubmit={handleSubmit}
         />
@@ -482,7 +500,7 @@ export function ImageStudioPage() {
           onDeleteSelected={deleteSelectedImages}
           onToggleSelecting={toggleSelectingGallery}
           onSelectPage={selectGalleryPage}
-          onOpenPreview={setSelectedItemKey}
+          onOpenPreview={openImagePreview}
           onToggleSelected={toggleGallerySelection}
         />
       </div>

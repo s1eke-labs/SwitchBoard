@@ -1,11 +1,15 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Toast } from "@heroui/react";
+import { Toast, toastQueue } from "@heroui/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { I18nProvider, initializeLocale } from "./i18n";
 import "./index.css";
+
+type ToastQueueWithWrapUpdate = {
+  wrapUpdate?: (fn: () => void) => void;
+};
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -15,6 +19,9 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+const heroUIToastQueue = toastQueue.getQueue() as unknown as ToastQueueWithWrapUpdate;
+heroUIToastQueue.wrapUpdate = (fn) => fn();
 
 initializeLocale();
 
