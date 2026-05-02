@@ -1,6 +1,19 @@
 import { defineConfig } from "vite";
+import type { ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
+import { Agent as HttpAgent } from "node:http";
 import path from "node:path";
+
+const apiProxyAgent = new HttpAgent({
+  keepAlive: true,
+});
+
+const apiProxy: Record<string, ProxyOptions> = {
+  "/api": {
+    target: "http://127.0.0.1:8080",
+    agent: apiProxyAgent,
+  },
+};
 
 export default defineConfig({
   plugins: [react()],
@@ -32,8 +45,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: {
-      "/api": "http://127.0.0.1:8080",
-    },
+    proxy: apiProxy,
+  },
+  preview: {
+    proxy: apiProxy,
   },
 });
