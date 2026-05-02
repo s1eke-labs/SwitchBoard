@@ -92,7 +92,7 @@ function AccountFilter({
       <Select.Popover>
         <Select.ListBox aria-label={t("requestLogs.accountFilter")}>
           {options.map((option) => (
-            <Select.Item key={option.value} id={option.value}>
+            <Select.Item key={option.value} id={option.value} textValue={option.label}>
               <span className="truncate">{option.label}</span>
             </Select.Item>
           ))}
