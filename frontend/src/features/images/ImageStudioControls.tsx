@@ -37,14 +37,12 @@ const QUALITY_LEVEL_COUNT: Record<ImageQuality, number> = {
 };
 
 function AutoSizeIcon({ selected = false }: { selected?: boolean }) {
+  const tone = selected ? "border-primary bg-primary/10" : "border-muted-foreground/70 bg-muted/40";
+
   return (
     <span aria-hidden="true" className="flex h-[18px] w-6 shrink-0 items-center justify-center">
-      <span className={`relative h-[14px] w-[21px] rounded-[3px] border-2 ${selected ? "border-primary" : "border-foreground"}`}>
-        <span
-          className={`absolute bottom-[2px] left-[2px] h-[5px] w-[9px] rounded-[2px] border-2 border-l-0 border-b-0 ${
-            selected ? "border-primary" : "border-foreground"
-          }`}
-        />
+      <span className={`relative h-[14px] w-[21px] rounded-[3px] border ${tone}`}>
+        <span className={`absolute bottom-[2px] left-[2px] h-[5px] w-[9px] rounded-[2px] border border-l-0 border-b-0 ${tone}`} />
       </span>
     </span>
   );
