@@ -5,7 +5,7 @@ import { AppShell } from "@/app/AppShell";
 import { useRoute } from "@/app/routing";
 import { useI18n } from "@/i18n";
 import { api } from "@/lib/api";
-import type { ImageGenerationJobSummary } from "@/lib/api";
+import type { ImageGenerationJobStatusSummary } from "@/lib/api";
 import { formatAppError } from "@/lib/errors";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { ImageStudioPage } from "@/pages/ImageStudioPage";
@@ -21,36 +21,54 @@ function errorStatus(error: unknown) {
     : 0;
 }
 
-function isActiveImageJob(job: ImageGenerationJobSummary) {
-  return job.status === "queued" || job.status === "running";
-}
-
 function ImageJobNotifier() {
   const { t } = useI18n();
-  const statusesRef = useRef(new Map<string, ImageGenerationJobSummary["status"]>());
+  const queryClient = useQueryClient();
+  const statusesRef = useRef(new Map<string, ImageGenerationJobStatusSummary["status"]>());
+  const trackedJobIdsRef = useRef(new Set<string>());
+  const hasSeenInitialStatusesRef = useRef(false);
   const jobs = useQuery({
-    queryKey: ["imageJobs", "notifier"],
-    queryFn: () => api.imageJobs({ limit: 50 }),
+    queryKey: ["imageJobStatuses", "notifier"],
+    queryFn: () => api.imageJobStatuses({ ids: [...trackedJobIdsRef.current] }),
     refetchInterval: (query) => {
-      const data = query.state.data?.items;
-      return data?.some(isActiveImageJob) ? 3000 : false;
+      return query.state.data?.active_count ? 3000 : false;
     },
   });
 
   useEffect(() => {
+    const hasSeenInitialStatuses = hasSeenInitialStatusesRef.current;
+    let shouldRefreshGallery = false;
     for (const job of jobs.data?.items ?? []) {
       const previous = statusesRef.current.get(job.id);
-      if (previous && previous !== job.status && job.status === "succeeded") {
-        toast.success(t("images.generated"));
+      const isActive = job.status === "queued" || job.status === "running";
+      if (isActive) {
+        trackedJobIdsRef.current.add(job.id);
+      } else {
+        trackedJobIdsRef.current.delete(job.id);
       }
-      if (previous && previous !== job.status && job.status === "failed") {
-        toast.danger(t("images.generateFailed"), {
-          description: job.error?.message,
-        });
+      if (previous && previous !== job.status) {
+        shouldRefreshGallery = true;
+        if (job.status === "succeeded") {
+          toast.success(t("images.generated"));
+        }
+        if (job.status === "failed") {
+          toast.danger(t("images.generateFailed"), {
+            description: job.error?.message,
+          });
+        }
+      }
+      if (!previous && hasSeenInitialStatuses) {
+        shouldRefreshGallery = true;
       }
       statusesRef.current.set(job.id, job.status);
     }
-  }, [jobs.data, t]);
+    if (jobs.data) {
+      hasSeenInitialStatusesRef.current = true;
+    }
+    if (shouldRefreshGallery) {
+      queryClient.invalidateQueries({ queryKey: ["imageGallery"] });
+    }
+  }, [jobs.data, queryClient, t]);
 
   return null;
 }

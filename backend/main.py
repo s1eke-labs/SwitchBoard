@@ -21,6 +21,7 @@ from images import (
     ImageGenerationError,
     ImageGenerationJobListResponse,
     ImageGenerationJobResponse,
+    ImageGenerationJobStatusListResponse,
     ImageGenerationQueue,
     ImageGenerationRequest,
     ImageGenerationResponse,
@@ -319,6 +320,11 @@ def create_app() -> FastAPI:
             return await image_queue.list_recent(page=page, limit=max(1, min(limit, 50)))
         except ImageGenerationError as exc:
             raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
+    @app.get("/api/images/jobs/statuses", response_model=ImageGenerationJobStatusListResponse, dependencies=authed)
+    async def image_job_statuses(ids: Annotated[list[str] | None, Query()] = None) -> ImageGenerationJobStatusListResponse:
+        tracked_ids = [job_id for job_id in dict.fromkeys(ids or []) if job_id][:100]
+        return await image_queue.list_statuses(tracked_job_ids=tracked_ids)
 
     @app.get("/api/images/gallery", response_model=ImageGalleryListResponse, dependencies=authed)
     async def image_gallery(page: int = 1, limit: int = 20) -> ImageGalleryListResponse:

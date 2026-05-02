@@ -340,6 +340,14 @@ export type ImageGenerationJobListResponse = {
   total_count: number;
 };
 
+export type ImageGenerationJobStatusSummary = Pick<ImageGenerationJob, "id" | "status" | "updated_at" | "position" | "error">;
+
+export type ImageGenerationJobStatusListResponse = {
+  items: ImageGenerationJobStatusSummary[];
+  total_count: number;
+  active_count: number;
+};
+
 export type ImageGalleryJob = Pick<
   ImageGenerationJob,
   "id" | "prompt" | "size" | "quality" | "n" | "status" | "created_at" | "updated_at" | "position" | "references" | "upstream_metadata" | "error"
@@ -565,6 +573,12 @@ export const api = {
     }),
   imageJobs: ({ page = 1, limit = 20 }: { page?: number; limit?: number } = {}) =>
     request<ImageGenerationJobListResponse>(`/api/images/jobs?page=${page}&limit=${limit}`),
+  imageJobStatuses: ({ ids = [] }: { ids?: string[] } = {}) => {
+    const params = new URLSearchParams();
+    for (const id of ids) params.append("ids", id);
+    const query = params.toString();
+    return request<ImageGenerationJobStatusListResponse>(`/api/images/jobs/statuses${query ? `?${query}` : ""}`);
+  },
   imageGalleryItems: ({ page = 1, limit = 20 }: { page?: number; limit?: number } = {}) =>
     request<ImageGalleryListResponse>(`/api/images/gallery?page=${page}&limit=${limit}`),
   imageJob: (jobId: string) => request<ImageGenerationJob>(`/api/images/jobs/${jobId}`),

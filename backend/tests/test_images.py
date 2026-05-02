@@ -1045,6 +1045,72 @@ async def test_image_generation_queue_keeps_partial_results_when_restart_interru
 
 
 @pytest.mark.asyncio
+async def test_image_generation_queue_restart_only_fails_running_slot_and_continues_queued_slots(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    with connect(settings.db_path) as conn:
+        for job_id, status_value, created_at, result_json in [
+            (
+                "done-slot",
+                "succeeded",
+                10,
+                ImageGenerationResponse(
+                    created=1776000000,
+                    model="gpt-image-2",
+                    data=[ImageData(file_name="done.png")],
+                ).model_dump_json(),
+            ),
+            ("running-slot", "running", 11, None),
+            ("queued-slot-1", "queued", 12, None),
+            ("queued-slot-2", "queued", 13, None),
+        ]:
+            conn.execute(
+                """
+                INSERT INTO image_jobs (
+                    id, prompt, model, size, quality, response_format, status, n,
+                    result_json, created_at, updated_at
+                )
+                VALUES (?, 'poster', NULL, '1024x1024', 'auto', 'b64_json', ?, 1, ?, ?, ?)
+                """,
+                (job_id, status_value, result_json, created_at, created_at),
+            )
+
+    generated: list[int] = []
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        generated.append(payload.n)
+        return ImageGenerationResponse(
+            created=1776000000,
+            model="gpt-image-2",
+            data=[ImageData(b64_json="aGVsbG8=", file_name=f"slot-{len(generated)}.png")],
+        )
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    await queue.start()
+    for _ in range(20):
+        first = await queue.get("queued-slot-1")
+        second = await queue.get("queued-slot-2")
+        if first is not None and first.status == "succeeded" and second is not None and second.status == "succeeded":
+            break
+        await asyncio.sleep(0.01)
+
+    done = await queue.get("done-slot")
+    interrupted = await queue.get("running-slot")
+    first = await queue.get("queued-slot-1")
+    second = await queue.get("queued-slot-2")
+
+    assert done is not None and done.status == "succeeded"
+    assert interrupted is not None
+    assert interrupted.status == "failed"
+    assert interrupted.error is not None
+    assert interrupted.error.code == "IMAGE_JOB_INTERRUPTED"
+    assert first is not None and first.status == "succeeded"
+    assert second is not None and second.status == "succeeded"
+    assert generated == [1, 1]
+    await queue.close()
+
+
+@pytest.mark.asyncio
 async def test_image_generation_queue_deletes_result_images(tmp_path) -> None:
     settings = _settings(tmp_path)
     image_dir = settings.db_path.parent / "images"
@@ -1314,8 +1380,10 @@ async def test_image_generation_queue_paginates_recent_jobs(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_image_generation_queue_paginates_gallery_items_by_image_slots(tmp_path) -> None:
     settings = _settings(tmp_path)
+    generated_counts: list[int] = []
 
     async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        generated_counts.append(payload.n)
         return ImageGenerationResponse(
             created=1776000000,
             model="gpt-image-2",
@@ -1339,15 +1407,16 @@ async def test_image_generation_queue_paginates_gallery_items_by_image_slots(tmp
     second_page = await queue.list_gallery_items(page=2, limit=3)
 
     assert first_page.total_count == 5
-    assert [(item.job.id, item.image_index) for item in first_page.items] == [
-        (second.id, 0),
-        (first.id, 0),
-        (first.id, 1),
-    ]
-    assert [(item.job.id, item.image_index) for item in second_page.items] == [
-        (first.id, 2),
-        (first.id, 3),
-    ]
+    items = first_page.items + second_page.items
+    first_items = [item for item in items if item.job.prompt == "first"]
+    second_items = [item for item in items if item.job.prompt == "second"]
+    assert len(first_items) == 4
+    assert len({item.job.id for item in first_items}) == 4
+    assert all(item.image_index == 0 for item in first_items)
+    assert all(item.job.n == 1 for item in first_items)
+    assert [(item.job.id, item.image_index) for item in second_items] == [(second.id, 0)]
+    assert first.id in {item.job.id for item in first_items}
+    assert generated_counts == [1, 1, 1, 1, 1]
     await queue.close()
 
 
@@ -1590,6 +1659,66 @@ def test_image_job_api_paginates_global_jobs(monkeypatch, tmp_path) -> None:
     assert bad_page.json() == {
         "detail": {"code": "IMAGE_JOB_INVALID_PAGE", "message": "Image job page is invalid"}
     }
+
+
+def test_image_job_status_api_returns_tracked_jobs_and_active_jobs(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("APP_PASSWORD", "secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
+    (tmp_path / "codex").mkdir()
+
+    import config
+
+    config.get_settings.cache_clear()
+    import main
+
+    importlib.reload(main)
+    client = TestClient(main.create_app())
+    assert client.post("/api/auth/login", json={"password": "secret"}).status_code == 200
+    settings = client.app.state.settings
+    failed_detail = issue_detail("IMAGE_GENERATION_FAILED", "Generation failed")
+    with connect(settings.db_path) as conn:
+        for job_id, status_value, created_at, error_json in [
+            ("queued-old", "queued", 1, None),
+            ("running-job", "running", 2, None),
+            ("queued-new", "queued", 3, None),
+            ("untracked-failed", "failed", 4, failed_detail.model_dump_json()),
+            ("tracked-failed", "failed", 5, failed_detail.model_dump_json()),
+        ]:
+            conn.execute(
+                """
+                INSERT INTO image_jobs (
+                    id, prompt, model, size, quality, response_format, status,
+                    created_at, updated_at, error_json
+                )
+                VALUES (?, 'Prompt', NULL, '1024x1024', 'auto', 'b64_json', ?, ?, ?, ?)
+                """,
+                (job_id, status_value, created_at, created_at + 10, error_json),
+            )
+
+    response = client.get(
+        "/api/images/jobs/statuses",
+        params=[("ids", "tracked-failed"), ("ids", "queued-old")],
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_count"] == 5
+    assert payload["active_count"] == 3
+    assert [item["id"] for item in payload["items"]] == ["tracked-failed", "queued-new", "running-job", "queued-old"]
+    assert payload["items"][0] == {
+        "id": "tracked-failed",
+        "status": "failed",
+        "updated_at": 15,
+        "position": None,
+        "error": {"code": "IMAGE_GENERATION_FAILED", "message": "Generation failed"},
+    }
+    assert payload["items"][1]["position"] == 2
+    assert payload["items"][3]["position"] == 1
+    assert "untracked-failed" not in {item["id"] for item in payload["items"]}
+    assert "prompt" not in payload["items"][0]
+    assert "result" not in payload["items"][0]
+    assert "references" not in payload["items"][0]
 
 
 def test_image_gallery_api_paginates_by_image_slots(monkeypatch, tmp_path) -> None:

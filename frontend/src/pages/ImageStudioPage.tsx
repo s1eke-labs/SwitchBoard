@@ -36,7 +36,6 @@ import {
   fileToReference,
   galleryApiItemsFromJob,
   galleryItemsFromApiItems,
-  isActiveJob,
   isSelectableGalleryItem,
   sourceToReference,
 } from "@/features/images/imageUtils";
@@ -99,10 +98,6 @@ export function ImageStudioPage() {
     queryKey: ["imageGallery", galleryPage, galleryPageSize],
     queryFn: () => api.imageGalleryItems({ page: galleryPage, limit: galleryPageSize }),
     placeholderData: (previousData) => previousData,
-    refetchInterval: (query) => {
-      const data = query.state.data?.items;
-      return data?.some((item) => isActiveJob(item.job)) ? 3000 : false;
-    },
   });
   const galleryItems = useMemo(() => galleryItemsFromApiItems(gallery.data?.items ?? []), [gallery.data?.items]);
   const galleryTotalPages = Math.max(1, Math.ceil((gallery.data?.total_count ?? 0) / galleryPageSize));
@@ -188,7 +183,7 @@ export function ImageStudioPage() {
         };
       });
       queryClient.invalidateQueries({ queryKey: ["imageGallery"] });
-      queryClient.invalidateQueries({ queryKey: ["imageJobs"] });
+      queryClient.invalidateQueries({ queryKey: ["imageJobStatuses"] });
       for (const reference of referenceImagesRef.current) {
         URL.revokeObjectURL(reference.previewUrl);
       }
@@ -229,7 +224,7 @@ export function ImageStudioPage() {
       setGalleryPage(1);
       setSelectedItemKey(null);
       queryClient.invalidateQueries({ queryKey: ["imageGallery"] });
-      queryClient.invalidateQueries({ queryKey: ["imageJobs"] });
+      queryClient.invalidateQueries({ queryKey: ["imageJobStatuses"] });
       toast.success(t("images.jobQueued"));
     },
     onError: (error) => {
@@ -259,7 +254,7 @@ export function ImageStudioPage() {
       setSelectedGalleryKeys(new Set());
       setSelectingGallery(false);
       queryClient.invalidateQueries({ queryKey: ["imageGallery"] });
-      queryClient.invalidateQueries({ queryKey: ["imageJobs"] });
+      queryClient.invalidateQueries({ queryKey: ["imageJobStatuses"] });
       toast.success(t("images.deleted"));
     },
     onError: (error) => {

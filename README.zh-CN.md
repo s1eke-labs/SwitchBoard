@@ -159,11 +159,11 @@ CHATGPT_BACKEND_BASE=https://chatgpt.com/backend-api
 运行约定：
 
 - “作图”页面提供 `auto` 以及 `1:1`、`3:4`、`4:3`、`9:16`、`16:9` 和 `21:9` 预设，并映射到低、中、高三档像素尺寸。后端请求可以传入 `auto` 或任意 `宽x高` 尺寸，只要满足分辨率约束：宽高为正数、两边都能被 16 整除、最长边不超过 3840 px、宽高比不超过 3:1、总像素数在 655,360 到 8,294,400 之间。
-- 多图任务会保存并展示为多张独立游廊卡片。
+- 多图请求会拆成每张图一个队列任务。SwitchBoard 仍然顺序生成，但每张图都有独立状态、重试、元数据和游廊卡片。
 - 图片详情会在可用时展示脱敏后的上游元数据，包括实际上游尺寸、Host 模型、图片模型、token 总量和上游耗时。
 - 上游图片请求使用 `store: false`；后续提示词需要自行写明上下文或附上参考图。
 - 生成图片和参考图保存在 `SWITCHBOARD_DATA_DIR/images`，并通过需要登录的 `/api/images/files/{file_path}` 返回。
-- 任务元数据保存在 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`。如果 SwitchBoard 在任务运行中重启，该任务会标记为失败以避免重复生成；需要时请手动重试。
+- 任务元数据保存在 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`。如果 SwitchBoard 在某张图运行中重启，只有这一个单图任务会标记为失败；同批次里仍在排队的图片会在服务恢复后继续生成。
 
 浏览器使用的图片接口：
 
@@ -171,7 +171,8 @@ CHATGPT_BACKEND_BASE=https://chatgpt.com/backend-api
 | --- | --- |
 | `POST /api/images/jobs` | 提交图片生成任务。 |
 | `GET /api/images/gallery?page=1&limit={page_size}` | 获取轻量游廊卡片。 |
-| `GET /api/images/jobs?page=1&limit=20` | 获取轻量任务摘要，用于状态轮询。 |
+| `GET /api/images/jobs/statuses?ids={job_id}` | 获取轻量 active/tracked 任务状态，用于状态轮询。 |
+| `GET /api/images/jobs?page=1&limit=20` | 获取轻量任务摘要。 |
 | `GET /api/images/jobs/{job_id}` | 获取单个任务完整详情。 |
 | `DELETE /api/images/jobs/{job_id}/images/{image_index}` | 删除单张生成结果。 |
 | `DELETE /api/images/jobs/{job_id}` | 删除整个任务。 |

@@ -32,6 +32,8 @@ from .models import (
     ImageGenerationError,
     ImageGenerationJobListResponse,
     ImageGenerationJobResponse,
+    ImageGenerationJobStatusListResponse,
+    ImageGenerationJobStatusResponse,
     ImageGenerationJobSummaryResponse,
     ImageGenerationRequest,
     ImageGenerationResponse,

@@ -159,11 +159,11 @@ Typical workflow:
 Operational notes:
 
 - The Images page offers `auto` plus `1:1`, `3:4`, `4:3`, `9:16`, `16:9`, and `21:9` presets mapped to low, medium, and high pixel sizes. Backend requests may pass `auto` or any `WIDTHxHEIGHT` size that satisfies the resolution constraints: positive dimensions, both sides divisible by 16, longest side no greater than 3840 px, aspect ratio no wider than 3:1, and total pixels between 655,360 and 8,294,400.
-- Multi-image jobs are stored and displayed as separate gallery items.
+- Multi-image requests are split into one queued job per image. SwitchBoard still runs them sequentially, but each image has its own status, retry, metadata, and gallery tile.
 - Image details include sanitized upstream metadata when available, including resolved size, host model, image model, token totals, and upstream duration.
 - Upstream image requests use `store: false`; follow-up prompts should include the needed context or reference images.
 - Generated images and saved references live under `SWITCHBOARD_DATA_DIR/images` and are served through authenticated `/api/images/files/{file_path}` URLs.
-- Job metadata is stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`. If SwitchBoard restarts while a job is running, that job is marked failed to avoid duplicate generation; retry it manually if needed.
+- Job metadata is stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`. If SwitchBoard restarts while an image is running, only that single-image job is marked failed; queued sibling images continue after the service starts again.
 
 Browser-facing image endpoints:
 
@@ -171,7 +171,8 @@ Browser-facing image endpoints:
 | --- | --- |
 | `POST /api/images/jobs` | Queue an image generation job. |
 | `GET /api/images/gallery?page=1&limit={page_size}` | Fetch lightweight gallery tiles. |
-| `GET /api/images/jobs?page=1&limit=20` | Fetch lightweight job summaries for polling. |
+| `GET /api/images/jobs/statuses?ids={job_id}` | Fetch lightweight active and tracked job statuses for polling. |
+| `GET /api/images/jobs?page=1&limit=20` | Fetch lightweight job summaries. |
 | `GET /api/images/jobs/{job_id}` | Fetch full details for one job. |
 | `DELETE /api/images/jobs/{job_id}/images/{image_index}` | Delete one generated output. |
 | `DELETE /api/images/jobs/{job_id}` | Delete a whole job. |

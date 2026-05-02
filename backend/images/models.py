@@ -157,6 +157,20 @@ class ImageGenerationJobListResponse(BaseModel):
     total_count: int
 
 
+class ImageGenerationJobStatusResponse(BaseModel):
+    id: str
+    status: ImageJobStatus
+    updated_at: int
+    position: int | None = None
+    error: IssueDetail | None = None
+
+
+class ImageGenerationJobStatusListResponse(BaseModel):
+    items: list[ImageGenerationJobStatusResponse]
+    total_count: int
+    active_count: int
+
+
 class ImageGalleryImageResponse(BaseModel):
     url: str | None = None
     revised_prompt: str | None = None

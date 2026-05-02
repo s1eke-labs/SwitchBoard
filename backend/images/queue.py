@@ -23,6 +23,8 @@ from .models import (
     ImageGenerationError,
     ImageGenerationJobListResponse,
     ImageGenerationJobResponse,
+    ImageGenerationJobStatusListResponse,
+    ImageGenerationJobStatusResponse,
     ImageGenerationJobSummaryResponse,
     ImageGenerationRequest,
     ImageGenerationResponse,
@@ -135,60 +137,60 @@ class ImageGenerationQueue:
         _validate_payload(self._settings, payload)
         references = _validated_reference_images(payload)
         now = int(time.time())
-        job_id = uuid.uuid4().hex
+        job_ids = [uuid.uuid4().hex for _ in range(payload.n)]
         async with self._lock:
             previous_response_id = payload.previous_response_id
-            storage_context = ImageStorageContext(task_dir=_image_job_task_dir(job_id, now))
-            saved_references = [
-                _save_reference_file(self._settings, storage_context, reference, mime_type, data, now)
-                for reference, mime_type, data in references
-            ]
             with connect(self._settings.db_path) as conn:
-                conn.execute(
-                    """
-                    INSERT INTO image_jobs (
-                        id, conversation_id, prompt, model, size, quality, n, response_format, status,
-                        created_at, updated_at, previous_response_id
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)
-                    """,
-                    (
-                        job_id,
-                        None,
-                        payload.prompt.strip(),
-                        payload.model,
-                        payload.size,
-                        payload.quality,
-                        payload.n,
-                        payload.response_format,
-                        now,
-                        now,
-                        previous_response_id,
-                    ),
-                )
-                conn.executemany(
-                    """
-                    INSERT INTO image_job_references (
-                        id, job_id, position, original_file_name, mime_type, size_bytes, file_name, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            reference.id,
-                            job_id,
-                            index,
-                            reference.original_file_name,
-                            reference.mime_type,
-                            reference.size_bytes,
-                            reference.file_name,
-                            now,
+                for job_id in job_ids:
+                    storage_context = ImageStorageContext(task_dir=_image_job_task_dir(job_id, now))
+                    saved_references = [
+                        _save_reference_file(self._settings, storage_context, reference, mime_type, data, now)
+                        for reference, mime_type, data in references
+                    ]
+                    conn.execute(
+                        """
+                        INSERT INTO image_jobs (
+                            id, conversation_id, prompt, model, size, quality, n, response_format, status,
+                            created_at, updated_at, previous_response_id
                         )
-                        for index, reference in enumerate(saved_references)
-                    ],
-                )
+                        VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'queued', ?, ?, ?)
+                        """,
+                        (
+                            job_id,
+                            None,
+                            payload.prompt.strip(),
+                            payload.model,
+                            payload.size,
+                            payload.quality,
+                            payload.response_format,
+                            now,
+                            now,
+                            previous_response_id,
+                        ),
+                    )
+                    conn.executemany(
+                        """
+                        INSERT INTO image_job_references (
+                            id, job_id, position, original_file_name, mime_type, size_bytes, file_name, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            (
+                                reference.id,
+                                job_id,
+                                index,
+                                reference.original_file_name,
+                                reference.mime_type,
+                                reference.size_bytes,
+                                reference.file_name,
+                                now,
+                            )
+                            for index, reference in enumerate(saved_references)
+                        ],
+                    )
             self._ensure_worker_locked()
-            job = self._job_response_from_db(job_id)
+            job = self._job_response_from_db(job_ids[0])
             if job is None:
                 raise _image_error(500, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
             return job
@@ -289,6 +291,69 @@ class ImageGenerationQueue:
                     if (job := self._job_response_from_db(job_id)) is not None
                 ],
                 total_count=total_count,
+            )
+
+    async def list_statuses(self, tracked_job_ids: list[str] | None = None) -> ImageGenerationJobStatusListResponse:
+        tracked_job_ids = list(dict.fromkeys(tracked_job_ids or []))
+        async with self._lock:
+            with connect(self._settings.db_path) as conn:
+                total_count = int(conn.execute("SELECT COUNT(*) AS count FROM image_jobs").fetchone()["count"])
+                active_count = int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*) AS count
+                        FROM image_jobs
+                        WHERE status IN ('queued', 'running')
+                        """
+                    ).fetchone()["count"]
+                )
+                tracked_filter = ""
+                params: tuple[str, ...] = ()
+                if tracked_job_ids:
+                    placeholders = ", ".join("?" for _ in tracked_job_ids)
+                    tracked_filter = f" OR id IN ({placeholders})"
+                    params = tuple(tracked_job_ids)
+                rows = list(
+                    conn.execute(
+                        f"""
+                        WITH queued_positions AS (
+                            SELECT
+                                id,
+                                ROW_NUMBER() OVER (ORDER BY created_at ASC, rowid ASC) AS position
+                            FROM image_jobs
+                            WHERE status = 'queued'
+                        ),
+                        watched_jobs AS (
+                            SELECT id, status, updated_at, error_json, created_at, rowid
+                            FROM image_jobs
+                            WHERE status IN ('queued', 'running') {tracked_filter}
+                        )
+                        SELECT
+                            watched_jobs.id,
+                            watched_jobs.status,
+                            watched_jobs.updated_at,
+                            watched_jobs.error_json,
+                            queued_positions.position
+                        FROM watched_jobs
+                        LEFT JOIN queued_positions ON queued_positions.id = watched_jobs.id
+                        ORDER BY watched_jobs.created_at DESC, watched_jobs.rowid DESC
+                        """,
+                        params,
+                    )
+                )
+            return ImageGenerationJobStatusListResponse(
+                items=[
+                    ImageGenerationJobStatusResponse(
+                        id=str(row["id"]),
+                        status=row["status"],
+                        updated_at=int(row["updated_at"]),
+                        position=int(row["position"]) if row["position"] is not None else None,
+                        error=IssueDetail.model_validate_json(row["error_json"]) if row["error_json"] else None,
+                    )
+                    for row in rows
+                ],
+                total_count=total_count,
+                active_count=active_count,
             )
 
     async def list_gallery_items(self, page: int = 1, limit: int = 20) -> ImageGalleryListResponse:

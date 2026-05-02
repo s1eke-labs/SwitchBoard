@@ -54,28 +54,26 @@ export function DeleteConfirmModal({
 }) {
   const { t } = useI18n();
   return (
-    <AlertDialog isOpen onOpenChange={(open) => { if (!open && !deleting) onClose(); }}>
-      <AlertDialog.Backdrop>
-        <AlertDialog.Container>
-          <AlertDialog.Dialog>
-            <AlertDialog.Header>
-              <AlertDialog.Icon status="danger" />
-              <AlertDialog.Heading>{t("images.deleteConfirmTitle")}</AlertDialog.Heading>
-            </AlertDialog.Header>
-            <AlertDialog.Body>{t("images.deleteConfirm", { count })}</AlertDialog.Body>
-            <AlertDialog.Footer>
-              <Button type="button" variant="secondary" disabled={deleting} onClick={onClose}>
-                {t("common.cancel")}
-              </Button>
-              <Button type="button" variant="destructive" disabled={deleting} onClick={onConfirm}>
-                {deleting ? <Spinner /> : <Trash2 size={15} />}
-                {t("images.deleteConfirmAction")}
-              </Button>
-            </AlertDialog.Footer>
-          </AlertDialog.Dialog>
-        </AlertDialog.Container>
-      </AlertDialog.Backdrop>
-    </AlertDialog>
+    <AlertDialog.Backdrop isOpen onOpenChange={(open) => { if (!open && !deleting) onClose(); }}>
+      <AlertDialog.Container>
+        <AlertDialog.Dialog>
+          <AlertDialog.Header>
+            <AlertDialog.Icon status="danger" />
+            <AlertDialog.Heading>{t("images.deleteConfirmTitle")}</AlertDialog.Heading>
+          </AlertDialog.Header>
+          <AlertDialog.Body>{t("images.deleteConfirm", { count })}</AlertDialog.Body>
+          <AlertDialog.Footer>
+            <Button type="button" variant="secondary" disabled={deleting} onClick={onClose}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="button" variant="destructive" disabled={deleting} onClick={onConfirm}>
+              {deleting ? <Spinner /> : <Trash2 size={15} />}
+              {t("images.deleteConfirmAction")}
+            </Button>
+          </AlertDialog.Footer>
+        </AlertDialog.Dialog>
+      </AlertDialog.Container>
+    </AlertDialog.Backdrop>
   );
 }
 
