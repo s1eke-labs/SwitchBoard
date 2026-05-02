@@ -255,7 +255,8 @@ def _response_for_storage(result: ImageGenerationResponse) -> ImageGenerationRes
             "data": [
                 item.model_copy(update={"b64_json": None}) if item.file_url or item.saved_path else item
                 for item in result.data
-            ]
+            ],
+            "upstream_metadata": [],
         }
     )
 

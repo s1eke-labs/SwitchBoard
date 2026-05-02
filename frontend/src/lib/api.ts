@@ -270,9 +270,46 @@ export type ImageGenerationResponse = {
     size_bytes: number | null;
     duration_seconds: number | null;
   }>;
+  upstream_metadata: ImageUpstreamMetadata[];
 };
 
 export type ImageGenerationJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export type ImageUsageSummary = {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  cached_tokens: number | null;
+  reasoning_tokens: number | null;
+};
+
+export type ImageToolUsageSummary = {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  input_image_tokens: number | null;
+  input_text_tokens: number | null;
+  output_image_tokens: number | null;
+  output_text_tokens: number | null;
+};
+
+export type ImageUpstreamMetadata = {
+  response_id: string | null;
+  response_model: string | null;
+  image_model: string | null;
+  requested_size: string | null;
+  resolved_size: string | null;
+  quality: string | null;
+  output_format: string | null;
+  background: string | null;
+  moderation: string | null;
+  output_compression: number | null;
+  created_at: number | null;
+  completed_at: number | null;
+  duration_seconds: number | null;
+  usage: ImageUsageSummary | null;
+  image_usage: ImageToolUsageSummary | null;
+};
 
 export type ImageGenerationJob = {
   id: string;
@@ -286,6 +323,7 @@ export type ImageGenerationJob = {
   updated_at: number;
   previous_response_id: string | null;
   upstream_response_id: string | null;
+  upstream_metadata: ImageUpstreamMetadata[];
   position: number | null;
   references: ImageReferenceData[];
   result: ImageGenerationResponse | null;
@@ -304,7 +342,7 @@ export type ImageGenerationJobListResponse = {
 
 export type ImageGalleryJob = Pick<
   ImageGenerationJob,
-  "id" | "prompt" | "size" | "quality" | "n" | "status" | "created_at" | "updated_at" | "position" | "references" | "error"
+  "id" | "prompt" | "size" | "quality" | "n" | "status" | "created_at" | "updated_at" | "position" | "references" | "upstream_metadata" | "error"
 >;
 
 export type ImageGalleryImage = {

@@ -18,6 +18,9 @@ from .models import (
     ImageGenerationError,
     ImageGenerationRequest,
     ImageGenerationResponse,
+    ImageToolUsageSummary,
+    ImageUpstreamMetadata,
+    ImageUsageSummary,
     _image_error,
 )
 from .storage import ImageStorageContext, _save_image_file
@@ -382,6 +385,102 @@ def _response_id_from_payloads(payloads: list[object]) -> str | None:
     return None
 
 
+def _int_value(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _str_value(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _response_completed_payload(payloads: list[object]) -> dict[str, object] | None:
+    for payload in reversed(payloads):
+        if not isinstance(payload, dict) or payload.get("type") != "response.completed":
+            continue
+        response = payload.get("response")
+        if isinstance(response, dict):
+            return response
+    return None
+
+
+def _image_tool_from_response(response: dict[str, object]) -> dict[str, object] | None:
+    tools = response.get("tools")
+    if not isinstance(tools, list):
+        return None
+    for tool in tools:
+        if isinstance(tool, dict) and tool.get("type") == "image_generation":
+            return tool
+    return None
+
+
+def _usage_summary(value: object) -> ImageUsageSummary | None:
+    if not isinstance(value, dict):
+        return None
+    input_details = value.get("input_tokens_details")
+    output_details = value.get("output_tokens_details")
+    input_details = input_details if isinstance(input_details, dict) else {}
+    output_details = output_details if isinstance(output_details, dict) else {}
+    return ImageUsageSummary(
+        input_tokens=_int_value(value.get("input_tokens")),
+        output_tokens=_int_value(value.get("output_tokens")),
+        total_tokens=_int_value(value.get("total_tokens")),
+        cached_tokens=_int_value(input_details.get("cached_tokens")),
+        reasoning_tokens=_int_value(output_details.get("reasoning_tokens")),
+    )
+
+
+def _image_tool_usage_summary(value: object) -> ImageToolUsageSummary | None:
+    if not isinstance(value, dict):
+        return None
+    image_gen = value.get("image_gen")
+    if not isinstance(image_gen, dict):
+        return None
+    input_details = image_gen.get("input_tokens_details")
+    output_details = image_gen.get("output_tokens_details")
+    input_details = input_details if isinstance(input_details, dict) else {}
+    output_details = output_details if isinstance(output_details, dict) else {}
+    return ImageToolUsageSummary(
+        input_tokens=_int_value(image_gen.get("input_tokens")),
+        output_tokens=_int_value(image_gen.get("output_tokens")),
+        total_tokens=_int_value(image_gen.get("total_tokens")),
+        input_image_tokens=_int_value(input_details.get("image_tokens")),
+        input_text_tokens=_int_value(input_details.get("text_tokens")),
+        output_image_tokens=_int_value(output_details.get("image_tokens")),
+        output_text_tokens=_int_value(output_details.get("text_tokens")),
+    )
+
+
+def _upstream_metadata_from_payloads(payloads: list[object], requested_size: str) -> ImageUpstreamMetadata | None:
+    response = _response_completed_payload(payloads)
+    if response is None:
+        return None
+    tool = _image_tool_from_response(response) or {}
+    created_at = _int_value(response.get("created_at"))
+    completed_at = _int_value(response.get("completed_at"))
+    duration_seconds = (
+        max(0, completed_at - created_at)
+        if created_at is not None and completed_at is not None
+        else None
+    )
+    return ImageUpstreamMetadata(
+        response_id=_str_value(response.get("id")) or _response_id_from_payloads(payloads),
+        response_model=_str_value(response.get("model")),
+        image_model=_str_value(tool.get("model")),
+        requested_size=requested_size,
+        resolved_size=_str_value(tool.get("size")),
+        quality=_str_value(tool.get("quality")),
+        output_format=_str_value(tool.get("output_format")),
+        background=_str_value(tool.get("background")),
+        moderation=_str_value(tool.get("moderation")),
+        output_compression=_int_value(tool.get("output_compression")),
+        created_at=created_at,
+        completed_at=completed_at,
+        duration_seconds=duration_seconds,
+        usage=_usage_summary(response.get("usage")),
+        image_usage=_image_tool_usage_summary(response.get("tool_usage")),
+    )
+
+
 def _failed_response_error_from_payloads(payloads: list[object]) -> IssueDetail | None:
     for payload in payloads:
         if not isinstance(payload, dict):
@@ -432,6 +531,8 @@ async def generate_image(
 
     accumulated: list[ImageData] = []
     seen_data: set[str] = set()
+    accumulated_metadata: list[ImageUpstreamMetadata] = []
+    seen_metadata: set[str] = set()
     created = int(time.time())
     response_id: str | None = None
 
@@ -440,15 +541,21 @@ async def generate_image(
         if not accumulated:
             created = result.created
         response_id = result.response_id or response_id
-        changed = False
+        image_changed = False
         for item in result.data:
             data_key = _image_data_key(item)
             if not data_key or data_key in seen_data:
                 continue
             seen_data.add(data_key)
             accumulated.append(item)
-            changed = True
-        return changed
+            image_changed = True
+        for metadata in result.upstream_metadata:
+            metadata_key = metadata.response_id or metadata.model_dump_json()
+            if metadata_key in seen_metadata:
+                continue
+            seen_metadata.add(metadata_key)
+            accumulated_metadata.append(metadata)
+        return image_changed
 
     async def publish_progress() -> None:
         if progress_callback is None or not accumulated:
@@ -459,6 +566,7 @@ async def generate_image(
                 model=_image_tool_model(settings, payload),
                 data=list(accumulated),
                 response_id=response_id,
+                upstream_metadata=list(accumulated_metadata),
             )
         )
 
@@ -485,6 +593,7 @@ async def generate_image(
         model=_image_tool_model(settings, payload),
         data=accumulated,
         response_id=response_id,
+        upstream_metadata=accumulated_metadata,
     )
 
 
@@ -623,6 +732,8 @@ async def _generate_image_request(
             )
             for item in final_new_items
         )
+    upstream_metadata = _upstream_metadata_from_payloads(response_payloads, payload.size)
+    metadata_items = [upstream_metadata] if upstream_metadata is not None else []
     for item in saved_data:
         _debug_log(settings, "saved image file=%s", item.saved_path)
     return ImageGenerationResponse(
@@ -630,4 +741,5 @@ async def _generate_image_request(
         model=_image_tool_model(settings, payload),
         data=saved_data,
         response_id=_response_id_from_payloads(response_payloads),
+        upstream_metadata=metadata_items,
     )

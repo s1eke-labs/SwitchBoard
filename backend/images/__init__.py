@@ -40,6 +40,9 @@ from .models import (
     ImageReferenceData,
     ImageReferenceInput,
     ImageResponseFormat,
+    ImageToolUsageSummary,
+    ImageUpstreamMetadata,
+    ImageUsageSummary,
     _image_error,
 )
 from .queue import ImageGenerationQueue
@@ -88,6 +91,7 @@ from .upstream import (
     _payloads_from_text,
     _redact_sensitive,
     _response_id_from_payloads,
+    _upstream_metadata_from_payloads,
     _responses_url,
     _sse_json_payloads,
     _upstream_error_message,

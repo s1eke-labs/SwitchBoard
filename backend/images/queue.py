@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import sqlite3
 import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+
+from pydantic import ValidationError
 
 from config import Settings
 from db import connect, init_db
@@ -24,6 +27,7 @@ from .models import (
     ImageGenerationRequest,
     ImageGenerationResponse,
     ImageReferenceInput,
+    ImageUpstreamMetadata,
     _image_error,
 )
 from .storage import (
@@ -59,6 +63,35 @@ def _job_summary_from_job(job: ImageGenerationJobResponse) -> ImageGenerationJob
         position=job.position,
         error=job.error,
     )
+
+
+def _upstream_metadata_json(result: ImageGenerationResponse) -> str | None:
+    if not result.upstream_metadata:
+        return None
+    return json.dumps(
+        [item.model_dump(mode="json", exclude_none=True) for item in result.upstream_metadata],
+        ensure_ascii=False,
+    )
+
+
+def _upstream_metadata_from_json(value: str | None) -> list[ImageUpstreamMetadata]:
+    if not value:
+        return []
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    metadata_items: list[ImageUpstreamMetadata] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        try:
+            metadata_items.append(ImageUpstreamMetadata.model_validate(item))
+        except ValidationError:
+            continue
+    return metadata_items
 
 
 def _gallery_image_from_data(settings: Settings, data: ImageData | None) -> ImageGalleryImageResponse | None:
@@ -371,6 +404,7 @@ class ImageGenerationQueue:
                     continue
                 result = ImageGenerationResponse.model_validate_json(job["result_json"]) if job["result_json"] else None
                 error = IssueDetail.model_validate_json(job["error_json"]) if job["error_json"] else None
+                upstream_metadata = _upstream_metadata_from_json(job["upstream_metadata_json"])
                 gallery_job = ImageGalleryJobResponse(
                     id=job_id,
                     prompt=str(job["prompt"]),
@@ -385,6 +419,7 @@ class ImageGenerationQueue:
                         _reference_from_row(self._settings, reference_row)
                         for reference_row in references_by_job_id[job_id]
                     ],
+                    upstream_metadata=upstream_metadata,
                     error=error,
                 )
                 slot_start = int(row["slot_start"])
@@ -475,6 +510,7 @@ class ImageGenerationQueue:
                 position = queued_ids.index(job_id) + 1
         result = ImageGenerationResponse.model_validate_json(job["result_json"]) if job["result_json"] else None
         error = IssueDetail.model_validate_json(job["error_json"]) if job["error_json"] else None
+        upstream_metadata = _upstream_metadata_from_json(job["upstream_metadata_json"])
         return ImageGenerationJobResponse(
             id=str(job["id"]),
             conversation_id=str(job["conversation_id"]) if job["conversation_id"] else None,
@@ -487,6 +523,7 @@ class ImageGenerationQueue:
             updated_at=int(job["updated_at"]),
             previous_response_id=str(job["previous_response_id"]) if job["previous_response_id"] else None,
             upstream_response_id=str(job["upstream_response_id"]) if job["upstream_response_id"] else None,
+            upstream_metadata=upstream_metadata,
             position=position,
             references=[_reference_from_row(self._settings, row) for row in reference_rows],
             result=result,
@@ -564,29 +601,31 @@ class ImageGenerationQueue:
     def _finish_job(self, job_id: str, result: ImageGenerationResponse) -> None:
         now = int(time.time())
         stored_result = _response_for_storage(result)
+        upstream_metadata_json = _upstream_metadata_json(result)
         with connect(self._settings.db_path) as conn:
             conn.execute(
                 """
                 UPDATE image_jobs
                 SET status = 'succeeded', result_json = ?, error_json = NULL,
-                    upstream_response_id = ?, updated_at = ?
+                    upstream_response_id = ?, upstream_metadata_json = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (stored_result.model_dump_json(), stored_result.response_id, now, job_id),
+                (stored_result.model_dump_json(), stored_result.response_id, upstream_metadata_json, now, job_id),
             )
 
     def _update_job_result(self, job_id: str, result: ImageGenerationResponse) -> None:
         now = int(time.time())
         stored_result = _response_for_storage(result)
+        upstream_metadata_json = _upstream_metadata_json(result)
         with connect(self._settings.db_path) as conn:
             conn.execute(
                 """
                 UPDATE image_jobs
                 SET result_json = ?, error_json = NULL,
-                    upstream_response_id = ?, updated_at = ?
+                    upstream_response_id = ?, upstream_metadata_json = COALESCE(?, upstream_metadata_json), updated_at = ?
                 WHERE id = ? AND status = 'running'
                 """,
-                (stored_result.model_dump_json(), stored_result.response_id, now, job_id),
+                (stored_result.model_dump_json(), stored_result.response_id, upstream_metadata_json, now, job_id),
             )
 
     def _fail_job(self, job_id: str, detail: IssueDetail) -> None:

@@ -21,6 +21,7 @@ from images import (
     ImageGenerationRequest,
     ImageGenerationResponse,
     ImageReferenceInput,
+    ImageUpstreamMetadata,
     build_upstream_payload,
     generate_image,
     image_thumbnail_filename,
@@ -214,17 +215,117 @@ async def test_generate_image_reports_partial_results_while_streaming(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_generate_image_extracts_sanitized_upstream_metadata(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    _write_auth(settings)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return _sse_response(
+            {
+                "id": "resp_meta",
+                "type": "response.image_generation_call.completed",
+                "created": 1776000001,
+                "output": [{"type": "image_generation_call", "result": VALID_PNG_B64, "output_format": "png"}],
+            },
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_meta",
+                    "model": "gpt-5.4-mini-2026-03-17",
+                    "created_at": 1776000000,
+                    "completed_at": 1776000068,
+                    "safety_identifier": "user-secret",
+                    "prompt_cache_key": "cache-secret",
+                    "usage": {
+                        "input_tokens": 6409,
+                        "input_tokens_details": {"cached_tokens": 2176},
+                        "output_tokens": 269,
+                        "output_tokens_details": {"reasoning_tokens": 0},
+                        "total_tokens": 6678,
+                    },
+                    "tool_usage": {
+                        "image_gen": {
+                            "input_tokens": 1733,
+                            "input_tokens_details": {"image_tokens": 1476, "text_tokens": 257},
+                            "output_tokens": 1413,
+                            "output_tokens_details": {"image_tokens": 1413, "text_tokens": 0},
+                            "total_tokens": 3146,
+                        }
+                    },
+                    "tools": [
+                        {
+                            "type": "image_generation",
+                            "model": "gpt-image-2",
+                            "size": "1152x2048",
+                            "quality": "auto",
+                            "output_format": "png",
+                            "background": "auto",
+                            "moderation": "auto",
+                            "output_compression": 100,
+                        }
+                    ],
+                },
+            },
+        )
+
+    result = await generate_image(
+        settings,
+        ImageGenerationRequest(prompt="poster", size="auto"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert len(result.upstream_metadata) == 1
+    metadata = result.upstream_metadata[0]
+    assert metadata.response_id == "resp_meta"
+    assert metadata.response_model == "gpt-5.4-mini-2026-03-17"
+    assert metadata.image_model == "gpt-image-2"
+    assert metadata.requested_size == "auto"
+    assert metadata.resolved_size == "1152x2048"
+    assert metadata.duration_seconds == 68
+    assert metadata.usage is not None
+    assert metadata.usage.total_tokens == 6678
+    assert metadata.usage.cached_tokens == 2176
+    assert metadata.image_usage is not None
+    assert metadata.image_usage.input_image_tokens == 1476
+    assert metadata.image_usage.total_tokens == 3146
+    metadata_json = metadata.model_dump_json()
+    assert "user-secret" not in metadata_json
+    assert "cache-secret" not in metadata_json
+
+
+@pytest.mark.asyncio
 async def test_generate_image_runs_multi_count_as_separate_upstream_requests(tmp_path) -> None:
     settings = _settings(tmp_path)
     _write_auth(settings)
     captured_payloads: list[dict[str, object]] = []
     partials: list[ImageGenerationResponse] = []
     results = ["aGVsbG8=", "d29ybGQ="]
+    resolved_sizes = ["1024x1024", "1536x1536"]
 
     async def handler(request: httpx.Request) -> httpx.Response:
         captured_payloads.append(json.loads(request.read()))
+        index = len(captured_payloads)
         result = results[len(captured_payloads) - 1]
-        return _sse_response({"output": [{"type": "image_generation_call", "result": result, "output_format": "png"}]})
+        return _sse_response(
+            {"output": [{"type": "image_generation_call", "result": result, "output_format": "png"}]},
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": f"resp_multi_{index}",
+                    "model": "gpt-5.4-mini-2026-03-17",
+                    "created_at": 1776000000 + index,
+                    "completed_at": 1776000010 + index,
+                    "tools": [
+                            {
+                                "type": "image_generation",
+                                "model": "gpt-image-2",
+                                "size": resolved_sizes[index - 1],
+                                "quality": "auto",
+                            }
+                    ],
+                },
+            },
+        )
 
     async def capture_partial(result: ImageGenerationResponse) -> None:
         partials.append(result)
@@ -241,6 +342,8 @@ async def test_generate_image_runs_multi_count_as_separate_upstream_requests(tmp
     assert all("n" not in payload["tools"][0] for payload in captured_payloads)
     assert [len(partial.data) for partial in partials] == [1, 2]
     assert len(result.data) == 2
+    assert [metadata.response_id for metadata in result.upstream_metadata] == ["resp_multi_1", "resp_multi_2"]
+    assert [metadata.resolved_size for metadata in result.upstream_metadata] == resolved_sizes
     assert all(item.duration_seconds is not None for item in result.data)
     assert Path(result.data[0].saved_path).read_bytes() == b"hello"
     assert Path(result.data[1].saved_path).read_bytes() == b"world"
@@ -1100,8 +1203,10 @@ def test_image_migration_keeps_legacy_jobs_visible_without_conversation(tmp_path
 
     with connect(db_path) as conn:
         job = conn.execute("SELECT conversation_id FROM image_jobs WHERE id = 'old-job'").fetchone()
+        columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(image_jobs)")}
 
     assert job["conversation_id"] is None
+    assert "upstream_metadata_json" in columns
 
 
 @pytest.mark.asyncio
@@ -1118,6 +1223,15 @@ async def test_image_generation_queue_keeps_jobs_without_auto_chaining_responses
             model="gpt-image-2",
             data=[ImageData(b64_json="aGVsbG8=", file_name=f"{payload.prompt}.png")],
             response_id=f"resp-{payload.prompt.replace(' ', '-')}",
+            upstream_metadata=[
+                ImageUpstreamMetadata(
+                    response_id=f"resp-{payload.prompt.replace(' ', '-')}",
+                    response_model="gpt-5.4-mini-2026-03-17",
+                    image_model="gpt-image-2",
+                    requested_size=payload.size,
+                    resolved_size="1024x1024",
+                )
+            ],
         )
 
     queue = ImageGenerationQueue(settings, generator=generator)
@@ -1132,6 +1246,11 @@ async def test_image_generation_queue_keeps_jobs_without_auto_chaining_responses
     assert first_done is not None
     assert first_done.conversation_id is None
     assert first_done.upstream_response_id == "resp-base-image"
+    assert first_done.upstream_metadata[0].response_model == "gpt-5.4-mini-2026-03-17"
+    with connect(settings.db_path) as conn:
+        stored_metadata = conn.execute("SELECT upstream_metadata_json FROM image_jobs WHERE id = ?", (first.id,)).fetchone()
+    assert stored_metadata is not None
+    assert "gpt-5.4-mini-2026-03-17" in stored_metadata["upstream_metadata_json"]
 
     second = await queue.enqueue(ImageGenerationRequest(prompt="failed edit", conversation_id="ignored-conversation"))
     for _ in range(20):

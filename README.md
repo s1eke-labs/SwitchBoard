@@ -160,6 +160,7 @@ Operational notes:
 
 - The Images page offers `auto` plus `1:1`, `3:4`, `4:3`, `9:16`, `16:9`, and `21:9` presets mapped to low, medium, and high pixel sizes. Backend requests may pass `auto` or any `WIDTHxHEIGHT` size that satisfies the resolution constraints: positive dimensions, both sides divisible by 16, longest side no greater than 3840 px, aspect ratio no wider than 3:1, and total pixels between 655,360 and 8,294,400.
 - Multi-image jobs are stored and displayed as separate gallery items.
+- Image details include sanitized upstream metadata when available, including resolved size, host model, image model, token totals, and upstream duration.
 - Upstream image requests use `store: false`; follow-up prompts should include the needed context or reference images.
 - Generated images and saved references live under `SWITCHBOARD_DATA_DIR/images` and are served through authenticated `/api/images/files/{file_path}` URLs.
 - Job metadata is stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`. If SwitchBoard restarts while a job is running, that job is marked failed to avoid duplicate generation; retry it manually if needed.
@@ -322,7 +323,7 @@ docs/images/          Logo source and dashboard screenshot
 - Hidden accounts and custom names are SwitchBoard-local metadata.
 - Config export includes only SwitchBoard-local account display state and never includes credentials.
 - Image generation reads the current access token only in memory; tokens are never returned to the frontend.
-- Image debug logging never prints the access token, Authorization header value, or image base64 payloads.
+- Image debug logging and stored upstream metadata never include the access token, Authorization header value, image base64 payloads, safety identifiers, or prompt cache keys.
 - Do not commit `.env`, SQLite databases, generated private data, or local Codex credentials.
 - Usage cost estimates use a local pricing table for known model names; unknown model costs remain null.
 

@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS image_jobs (
     updated_at INTEGER NOT NULL,
     previous_response_id TEXT,
     upstream_response_id TEXT,
+    upstream_metadata_json TEXT,
     result_json TEXT,
     error_json TEXT,
     FOREIGN KEY(conversation_id) REFERENCES image_conversations(id) ON DELETE SET NULL
@@ -210,6 +211,8 @@ def _migrate_images(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE image_jobs ADD COLUMN previous_response_id TEXT")
     if "upstream_response_id" not in columns:
         conn.execute("ALTER TABLE image_jobs ADD COLUMN upstream_response_id TEXT")
+    if "upstream_metadata_json" not in columns:
+        conn.execute("ALTER TABLE image_jobs ADD COLUMN upstream_metadata_json TEXT")
     if "n" not in columns:
         conn.execute("ALTER TABLE image_jobs ADD COLUMN n INTEGER NOT NULL DEFAULT 1")
     conn.execute(

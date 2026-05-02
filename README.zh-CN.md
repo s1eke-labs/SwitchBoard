@@ -160,6 +160,7 @@ CHATGPT_BACKEND_BASE=https://chatgpt.com/backend-api
 
 - “作图”页面提供 `auto` 以及 `1:1`、`3:4`、`4:3`、`9:16`、`16:9` 和 `21:9` 预设，并映射到低、中、高三档像素尺寸。后端请求可以传入 `auto` 或任意 `宽x高` 尺寸，只要满足分辨率约束：宽高为正数、两边都能被 16 整除、最长边不超过 3840 px、宽高比不超过 3:1、总像素数在 655,360 到 8,294,400 之间。
 - 多图任务会保存并展示为多张独立游廊卡片。
+- 图片详情会在可用时展示脱敏后的上游元数据，包括实际上游尺寸、Host 模型、图片模型、token 总量和上游耗时。
 - 上游图片请求使用 `store: false`；后续提示词需要自行写明上下文或附上参考图。
 - 生成图片和参考图保存在 `SWITCHBOARD_DATA_DIR/images`，并通过需要登录的 `/api/images/files/{file_path}` 返回。
 - 任务元数据保存在 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`。如果 SwitchBoard 在任务运行中重启，该任务会标记为失败以避免重复生成；需要时请手动重试。
@@ -322,7 +323,7 @@ docs/images/          Logo 源图和仪表盘截图
 - 隐藏账号和自定义名称都是 SwitchBoard 本地元数据。
 - 配置导出只包含 SwitchBoard 本地账号展示状态，绝不会包含凭据。
 - 图片生成只在内存中读取当前 access token；token 永远不会返回给前端。
-- 图片 debug 日志不会打印 access token、Authorization header 的真实值或图片 base64 内容。
+- 图片 debug 日志和已存储的上游元数据不会包含 access token、Authorization header 的真实值、图片 base64 内容、safety identifier 或 prompt cache key。
 - 不要提交 `.env`、SQLite 数据库、生成的私有数据或本地 Codex 凭据。
 - 用量成本估算使用本地价格表匹配已知模型名；未知模型的成本会保持为 null。
 

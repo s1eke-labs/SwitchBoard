@@ -10,8 +10,9 @@ import { Tooltip } from "@/components/heroui/tooltip";
 import { useI18n } from "@/i18n";
 import { STATUS_LABEL_KEYS } from "@/features/images/constants";
 import type { GalleryItem, PendingReferenceImage } from "@/features/images/types";
-import { downloadGalleryItem, formatBytes, formatDuration, imageStyleParts, isSelectableGalleryItem } from "@/features/images/imageUtils";
+import { downloadGalleryItem, formatBytes, formatDuration, isSelectableGalleryItem } from "@/features/images/imageUtils";
 import { ImageJobStatusIcon } from "@/features/images/ImageGalleryPanel";
+import type { ImageUpstreamMetadata } from "@/lib/api";
 
 export function ReferencePreviewModal({
   reference,
@@ -80,6 +81,22 @@ export function DeleteConfirmModal({
   );
 }
 
+function formatDimensionText(value: string | null | undefined, autoLabel: string, unknownLabel: string) {
+  if (!value) return unknownLabel;
+  if (value === "auto") return autoLabel;
+  const dimensions = value.match(/^(\d+)x(\d+)$/);
+  if (dimensions) return `${dimensions[1]} x ${dimensions[2]}`;
+  return value;
+}
+
+function formatToken(value: number | null | undefined, unknownLabel: string) {
+  return value == null ? unknownLabel : value.toLocaleString();
+}
+
+function hasTokenMetadata(metadata: ImageUpstreamMetadata | null) {
+  return Boolean(metadata?.image_usage);
+}
+
 export function ImagePreviewModal({
   item,
   editing,
@@ -103,10 +120,18 @@ export function ImagePreviewModal({
   const { job } = item;
   const src = item.fullSrc;
   const revisedPrompt = item.revisedPrompt;
-  const styleParts = imageStyleParts(job.size, job.quality, t);
-  const generationDuration = item.durationSeconds ?? (job.status === "queued" ? null : Math.max(0, job.updated_at - job.created_at));
-  const imageResolution = item.width && item.height ? `${item.width} x ${item.height}` : t("common.unknown");
+  const upstreamMetadata = job.upstream_metadata[item.index] ?? job.upstream_metadata[0] ?? null;
+  const generationDuration = upstreamMetadata?.duration_seconds ?? item.durationSeconds ?? (job.status === "queued" ? null : Math.max(0, job.updated_at - job.created_at));
+  const imageResolution = upstreamMetadata?.resolved_size
+    ? formatDimensionText(upstreamMetadata.resolved_size, t("images.size.auto"), t("common.unknown"))
+    : item.width && item.height
+      ? `${item.width} x ${item.height}`
+      : t("common.unknown");
   const imageSize = item.sizeBytes ? formatBytes(item.sizeBytes) : t("common.unknown");
+  const promptModel = upstreamMetadata?.response_model ?? null;
+  const imageModel = upstreamMetadata?.image_model ?? t("common.unknown");
+  const showTokens = hasTokenMetadata(upstreamMetadata);
+  const infoRowClass = "grid grid-cols-[76px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5";
 
   function handleDownload() {
     downloadGalleryItem(item);
@@ -164,28 +189,36 @@ export function ImagePreviewModal({
                     {t("images.info")}
                   </div>
                   <dl className="divide-y divide-border rounded-md border text-sm">
-                    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
-                      <dt className="text-muted-foreground">{t("images.aspectRatio")}</dt>
-                      <dd className="min-w-0 truncate text-foreground">{styleParts.aspectRatio}</dd>
-                    </div>
-                    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
-                      <dt className="text-muted-foreground">{t("images.quality")}</dt>
-                      <dd className="min-w-0 truncate text-foreground">{styleParts.quality}</dd>
-                    </div>
-                    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
+                    <div className={infoRowClass}>
                       <dt className="text-muted-foreground">{t("images.generationDuration")}</dt>
                       <dd className="min-w-0 truncate text-foreground">
                         {generationDuration === null ? t("common.unknown") : formatDuration(generationDuration)}
                       </dd>
                     </div>
-                    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
+                    <div className={infoRowClass}>
                       <dt className="text-muted-foreground">{t("images.resolution")}</dt>
                       <dd className="min-w-0 truncate text-foreground">{imageResolution}</dd>
                     </div>
-                    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
+                    <div className={infoRowClass}>
                       <dt className="text-muted-foreground">{t("images.fileSize")}</dt>
                       <dd className="min-w-0 truncate text-foreground">{imageSize}</dd>
                     </div>
+                    <div className={infoRowClass}>
+                      <dt className="text-muted-foreground">{t("images.imageModel")}</dt>
+                      <dd className="min-w-0 truncate text-foreground">{imageModel}</dd>
+                    </div>
+                    {showTokens ? (
+                      <>
+                        <div className={infoRowClass}>
+                          <dt className="text-muted-foreground">{t("images.tokenInputImage")}</dt>
+                          <dd className="min-w-0 truncate text-foreground">{formatToken(upstreamMetadata?.image_usage?.input_image_tokens, t("common.unknown"))}</dd>
+                        </div>
+                        <div className={infoRowClass}>
+                          <dt className="text-muted-foreground">{t("images.tokenOutputImage")}</dt>
+                          <dd className="min-w-0 truncate text-foreground">{formatToken(upstreamMetadata?.image_usage?.output_image_tokens, t("common.unknown"))}</dd>
+                        </div>
+                      </>
+                    ) : null}
                   </dl>
                 </div>
                 <div>
@@ -195,6 +228,22 @@ export function ImagePreviewModal({
                 {revisedPrompt ? (
                   <div>
                     <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">{t("images.revisedPrompt")}</div>
+                    {(promptModel || upstreamMetadata?.image_usage?.input_text_tokens != null) ? (
+                      <dl className="mb-2 divide-y divide-border rounded-md border text-xs">
+                        {promptModel ? (
+                          <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
+                            <dt className="text-muted-foreground">{t("images.promptModel")}</dt>
+                            <dd className="min-w-0 truncate text-foreground">{promptModel}</dd>
+                          </div>
+                        ) : null}
+                        {upstreamMetadata?.image_usage?.input_text_tokens != null ? (
+                          <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-3 px-3 py-1.5">
+                            <dt className="text-muted-foreground">{t("images.promptTokens")}</dt>
+                            <dd className="min-w-0 truncate text-foreground">{formatToken(upstreamMetadata.image_usage.input_text_tokens, t("common.unknown"))}</dd>
+                          </div>
+                        ) : null}
+                      </dl>
+                    ) : null}
                     <p className="whitespace-pre-wrap break-words text-sm leading-6">{revisedPrompt}</p>
                   </div>
                 ) : null}

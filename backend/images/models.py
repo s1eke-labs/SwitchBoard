@@ -75,11 +75,48 @@ class ImageData(BaseModel):
     duration_seconds: int | None = None
 
 
+class ImageUsageSummary(BaseModel):
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    cached_tokens: int | None = None
+    reasoning_tokens: int | None = None
+
+
+class ImageToolUsageSummary(BaseModel):
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    input_image_tokens: int | None = None
+    input_text_tokens: int | None = None
+    output_image_tokens: int | None = None
+    output_text_tokens: int | None = None
+
+
+class ImageUpstreamMetadata(BaseModel):
+    response_id: str | None = None
+    response_model: str | None = None
+    image_model: str | None = None
+    requested_size: str | None = None
+    resolved_size: str | None = None
+    quality: str | None = None
+    output_format: str | None = None
+    background: str | None = None
+    moderation: str | None = None
+    output_compression: int | None = None
+    created_at: int | None = None
+    completed_at: int | None = None
+    duration_seconds: int | None = None
+    usage: ImageUsageSummary | None = None
+    image_usage: ImageToolUsageSummary | None = None
+
+
 class ImageGenerationResponse(BaseModel):
     created: int
     model: str
     data: list[ImageData]
     response_id: str | None = None
+    upstream_metadata: list[ImageUpstreamMetadata] = Field(default_factory=list)
 
 
 class ImageGenerationJobResponse(BaseModel):
@@ -94,6 +131,7 @@ class ImageGenerationJobResponse(BaseModel):
     updated_at: int
     previous_response_id: str | None = None
     upstream_response_id: str | None = None
+    upstream_metadata: list[ImageUpstreamMetadata] = Field(default_factory=list)
     position: int | None = None
     references: list[ImageReferenceData] = Field(default_factory=list)
     result: ImageGenerationResponse | None = None
@@ -142,6 +180,7 @@ class ImageGalleryJobResponse(BaseModel):
     updated_at: int
     position: int | None = None
     references: list[ImageReferenceData] = Field(default_factory=list)
+    upstream_metadata: list[ImageUpstreamMetadata] = Field(default_factory=list)
     error: IssueDetail | None = None
 
 
