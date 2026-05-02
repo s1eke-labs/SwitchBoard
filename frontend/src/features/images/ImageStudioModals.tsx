@@ -23,8 +23,7 @@ export function ReferencePreviewModal({
 }) {
   const { t } = useI18n();
   return (
-    <Modal isOpen onOpenChange={(open) => { if (!open) onClose(); }}>
-      <Modal.Backdrop variant="opaque">
+    <Modal.Backdrop isOpen variant="opaque" onOpenChange={(open) => { if (!open) onClose(); }}>
         <Modal.Container placement="center" size="cover" className="p-3 sm:p-6">
           <Modal.Dialog className="max-h-[92vh] max-w-3xl overflow-hidden rounded-md bg-background p-0">
             <Modal.Header className="flex-row items-center justify-between gap-3 border-b px-4 py-3">
@@ -38,8 +37,7 @@ export function ReferencePreviewModal({
             </Modal.Body>
           </Modal.Dialog>
         </Modal.Container>
-      </Modal.Backdrop>
-    </Modal>
+    </Modal.Backdrop>
   );
 }
 
@@ -138,8 +136,7 @@ export function ImagePreviewModal({
   }
 
   return (
-    <Modal isOpen onOpenChange={(open) => { if (!open) onClose(); }}>
-      <Modal.Backdrop variant="opaque">
+    <Modal.Backdrop isOpen variant="opaque" onOpenChange={(open) => { if (!open) onClose(); }}>
         <Modal.Container placement="center" size="cover" className="p-3 sm:p-6">
           <Modal.Dialog className="max-h-[92vh] max-w-5xl overflow-hidden rounded-md bg-background p-0">
             <Modal.Header className="flex-row items-center justify-between gap-3 border-b px-4 py-3">
@@ -278,7 +275,6 @@ export function ImagePreviewModal({
             </Modal.Body>
           </Modal.Dialog>
         </Modal.Container>
-      </Modal.Backdrop>
-    </Modal>
+    </Modal.Backdrop>
   );
 }
