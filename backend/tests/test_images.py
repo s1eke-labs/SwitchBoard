@@ -846,7 +846,7 @@ async def test_generate_image_requires_image_generation_output(tmp_path) -> None
 
 @pytest.mark.asyncio
 async def test_image_generation_queue_runs_jobs_sequentially(tmp_path) -> None:
-    settings = _settings(tmp_path)
+    settings = _settings(tmp_path, image_concurrency=1)
     started: list[str] = []
     release_first = asyncio.Event()
 
@@ -1483,6 +1483,71 @@ async def test_image_generation_queue_paginates_gallery_items_by_image_slots(tmp
     assert [(item.job.id, item.image_index) for item in second_items] == [(second.id, 0)]
     assert first.id in {item.job.id for item in first_items}
     assert generated_counts == [1, 1, 1, 1, 1]
+    await queue.close()
+
+
+@pytest.mark.asyncio
+async def test_image_generation_queue_runs_with_configured_concurrency(tmp_path) -> None:
+    settings = _settings(tmp_path, image_concurrency=2)
+    counter_lock = asyncio.Lock()
+    first_pair_started = asyncio.Event()
+    all_started = asyncio.Event()
+    release_first_pair = asyncio.Event()
+    release_all = asyncio.Event()
+    active_count = 0
+    max_active_count = 0
+    started_count = 0
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        nonlocal active_count, max_active_count, started_count
+        async with counter_lock:
+            active_count += 1
+            started_count += 1
+            max_active_count = max(max_active_count, active_count)
+            current_started_count = started_count
+            if started_count == 2:
+                first_pair_started.set()
+            if started_count == 4:
+                all_started.set()
+        try:
+            if current_started_count <= 2:
+                await release_first_pair.wait()
+            else:
+                await release_all.wait()
+            return ImageGenerationResponse(
+                created=1776000000,
+                model="gpt-image-2",
+                data=[ImageData(b64_json="aGVsbG8=", file_name=f"job-{current_started_count}.png")],
+            )
+        finally:
+            async with counter_lock:
+                active_count -= 1
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    first = await queue.enqueue(ImageGenerationRequest(prompt="poster", n=4))
+    await asyncio.wait_for(first_pair_started.wait(), timeout=1)
+    await asyncio.sleep(0.01)
+
+    assert started_count == 2
+    assert max_active_count == 2
+
+    release_first_pair.set()
+    await asyncio.wait_for(all_started.wait(), timeout=1)
+    await asyncio.sleep(0.01)
+
+    assert started_count == 4
+    assert max_active_count == 2
+
+    release_all.set()
+    for _ in range(20):
+        gallery = await queue.list_gallery_items(page=1, limit=4)
+        if len(gallery.items) == 4 and all(item.job.status == "succeeded" for item in gallery.items):
+            break
+        await asyncio.sleep(0.01)
+    first_done = await queue.get(first.id)
+
+    assert first_done is not None
+    assert first_done.status == "succeeded"
     await queue.close()
 
 

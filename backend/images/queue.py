@@ -129,7 +129,7 @@ class ImageGenerationQueue:
         self._settings = settings
         self._generator = generator
         self._lock = asyncio.Lock()
-        self._worker_task: asyncio.Task[None] | None = None
+        self._worker_tasks: set[asyncio.Task[None]] = set()
         init_db(settings.db_path)
         self._reset_running_jobs()
 
@@ -525,20 +525,26 @@ class ImageGenerationQueue:
             return ImageGalleryListResponse(items=items, total_count=total_count)
 
     async def close(self) -> None:
-        task = self._worker_task
-        if task is None or task.done():
+        if not self._worker_tasks:
             return
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        tasks = list(self._worker_tasks)
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with suppress(asyncio.CancelledError):
+                await task
+        self._worker_tasks.difference_update(tasks)
 
     async def start(self) -> None:
         async with self._lock:
             self._ensure_worker_locked()
 
     def _ensure_worker_locked(self) -> None:
-        if self._worker_task is None or self._worker_task.done():
-            self._worker_task = asyncio.create_task(self._run())
+        self._worker_tasks = {task for task in self._worker_tasks if not task.done()}
+        while len(self._worker_tasks) < self._settings.image_concurrency:
+            task = asyncio.create_task(self._run())
+            self._worker_tasks.add(task)
+            task.add_done_callback(lambda done_task: self._worker_tasks.discard(done_task))
 
     def _reset_running_jobs(self) -> None:
         now = int(time.time())

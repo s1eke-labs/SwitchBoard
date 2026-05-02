@@ -131,6 +131,7 @@ npm install
 | `SWITCHBOARD_IMAGE_RESPONSES_PATH` | 否 | 图片 Responses 调用路径或完整 URL，默认是 `/codex/responses`。 |
 | `SWITCHBOARD_IMAGE_TIMEOUT_SECONDS` | 否 | 图片生成超时时间，默认是 `300`。 |
 | `SWITCHBOARD_IMAGE_MAX_PROMPT_CHARS` | 否 | 后端允许的最大提示词长度，默认是 `4000`。 |
+| `SWITCHBOARD_IMAGE_CONCURRENCY` | 否 | 同时运行的单图任务上限，默认是 `2`；设为 `1` 可恢复串行生成。 |
 | `SWITCHBOARD_IMAGE_DEBUG` | 否 | 开启图片请求/响应调试日志，默认是 `false`；token 和图片 base64 仍不会写入日志。 |
 
 根目录 `.env.example` 面向 Docker Compose：
@@ -159,7 +160,7 @@ CHATGPT_BACKEND_BASE=https://chatgpt.com/backend-api
 运行约定：
 
 - “作图”页面提供 `auto` 以及 `1:1`、`3:4`、`4:3`、`9:16`、`16:9` 和 `21:9` 预设，并映射到低、中、高三档像素尺寸。后端请求可以传入 `auto` 或任意 `宽x高` 尺寸，只要满足分辨率约束：宽高为正数、两边都能被 16 整除、最长边不超过 3840 px、宽高比不超过 3:1、总像素数在 655,360 到 8,294,400 之间。
-- 多图请求会拆成每张图一个队列任务。SwitchBoard 仍然顺序生成，但每张图都有独立状态、重试、元数据和游廊卡片。
+- 多图请求会拆成每张图一个队列任务。SwitchBoard 默认最多同时生成 2 张图，每张图都有独立状态、重试、元数据和游廊卡片。
 - 图片详情会在可用时展示脱敏后的上游元数据，包括实际上游尺寸、Host 模型、图片模型、token 总量和上游耗时。
 - 上游图片请求使用 `store: false`；后续提示词需要自行写明上下文或附上参考图。
 - 生成图片和参考图保存在 `SWITCHBOARD_DATA_DIR/images`，并通过需要登录的 `/api/images/files/{file_path}` 返回。

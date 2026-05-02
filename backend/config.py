@@ -89,6 +89,7 @@ class Settings:
     image_responses_path: str = "/codex/responses"
     image_timeout_seconds: float = 300.0
     image_max_prompt_chars: int = 4000
+    image_concurrency: int = 2
     image_output_dir: Path | None = None
     image_debug: bool = False
 
@@ -155,6 +156,7 @@ def get_settings() -> Settings:
         image_responses_path=image_responses_path,
         image_timeout_seconds=_parse_float_env("SWITCHBOARD_IMAGE_TIMEOUT_SECONDS", 300.0),
         image_max_prompt_chars=_parse_int_env("SWITCHBOARD_IMAGE_MAX_PROMPT_CHARS", 4000),
+        image_concurrency=_parse_int_env("SWITCHBOARD_IMAGE_CONCURRENCY", 2),
         image_output_dir=_default_image_output_dir(data_dir),
         image_debug=_parse_bool_env("SWITCHBOARD_IMAGE_DEBUG", default=False),
     )

@@ -131,6 +131,7 @@ The backend reads environment variables and also loads a `.env` file from the ba
 | `SWITCHBOARD_IMAGE_RESPONSES_PATH` | No | Path or full URL for image Responses calls. Defaults to `/codex/responses`. |
 | `SWITCHBOARD_IMAGE_TIMEOUT_SECONDS` | No | Image generation timeout. Defaults to `300`. |
 | `SWITCHBOARD_IMAGE_MAX_PROMPT_CHARS` | No | Maximum accepted prompt length. Defaults to `4000`. |
+| `SWITCHBOARD_IMAGE_CONCURRENCY` | No | Maximum number of single-image jobs running at once. Defaults to `2`; set `1` for serial generation. |
 | `SWITCHBOARD_IMAGE_DEBUG` | No | Enables image request/response debug logging. Defaults to `false`; tokens and image base64 payloads are still not logged. |
 
 Root-level `.env.example` is intended for Docker Compose:
@@ -159,7 +160,7 @@ Typical workflow:
 Operational notes:
 
 - The Images page offers `auto` plus `1:1`, `3:4`, `4:3`, `9:16`, `16:9`, and `21:9` presets mapped to low, medium, and high pixel sizes. Backend requests may pass `auto` or any `WIDTHxHEIGHT` size that satisfies the resolution constraints: positive dimensions, both sides divisible by 16, longest side no greater than 3840 px, aspect ratio no wider than 3:1, and total pixels between 655,360 and 8,294,400.
-- Multi-image requests are split into one queued job per image. SwitchBoard still runs them sequentially, but each image has its own status, retry, metadata, and gallery tile.
+- Multi-image requests are split into one queued job per image. SwitchBoard runs up to 2 images concurrently by default, and each image has its own status, retry, metadata, and gallery tile.
 - Image details include sanitized upstream metadata when available, including resolved size, host model, image model, token totals, and upstream duration.
 - Upstream image requests use `store: false`; follow-up prompts should include the needed context or reference images.
 - Generated images and saved references live under `SWITCHBOARD_DATA_DIR/images` and are served through authenticated `/api/images/files/{file_path}` URLs.
