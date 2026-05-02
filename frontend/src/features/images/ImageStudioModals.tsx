@@ -1,4 +1,4 @@
-import { Download, ImageIcon, Info, Pencil, Trash2, WandSparkles } from "lucide-react";
+import { Download, ImageIcon, Info, Pencil, Square, Trash2, WandSparkles } from "lucide-react";
 import { Alert } from "@/components/heroui/alert";
 import { AlertDialog } from "@/components/heroui/alert-dialog";
 import { Button } from "@/components/heroui/button";
@@ -98,18 +98,22 @@ export function ImagePreviewModal({
   editing,
   deleting,
   retrying,
+  stopping,
   onEdit,
   onDelete,
   onRetry,
+  onStop,
   onClose,
 }: {
   item: GalleryItem;
   editing: boolean;
   deleting: boolean;
   retrying: boolean;
+  stopping: boolean;
   onEdit: (item: GalleryItem) => void;
   onDelete: (item: GalleryItem) => void;
   onRetry: (item: GalleryItem) => void;
+  onStop: (item: GalleryItem) => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -155,6 +159,12 @@ export function ImagePreviewModal({
                   <Button variant="secondary" size="sm" disabled={retrying} onClick={() => onRetry(item)}>
                     {retrying ? <Spinner /> : <WandSparkles size={15} />}
                     {t("images.retry")}
+                  </Button>
+                ) : null}
+                {job.status === "queued" || job.status === "running" ? (
+                  <Button variant="secondary" size="sm" disabled={stopping} onClick={() => onStop(item)}>
+                    {stopping ? <Spinner /> : <Square size={15} />}
+                    {t("images.stop")}
                   </Button>
                 ) : null}
                 <Button variant="destructive" size="sm" disabled={!isSelectableGalleryItem(item) || deleting} onClick={() => onDelete(item)}>

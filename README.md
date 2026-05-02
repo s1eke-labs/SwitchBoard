@@ -154,7 +154,7 @@ Typical workflow:
 2. Optionally attach up to 4 PNG, JPEG, or WebP reference images, each up to 10 MB.
 3. Submit the job. SwitchBoard queues it, polls for progress, and shows a toast when it finishes or fails.
 4. Browse results in the gallery. Pages are counted by image tile, and page size adapts to the gallery viewport.
-5. Preview, download, retry, delete individual outputs, or delete a whole job.
+5. Preview, download, stop active jobs, retry failed jobs, delete individual outputs, or delete a whole job.
 
 Operational notes:
 
@@ -174,6 +174,7 @@ Browser-facing image endpoints:
 | `GET /api/images/jobs/statuses?ids={job_id}` | Fetch lightweight active and tracked job statuses for polling. |
 | `GET /api/images/jobs?page=1&limit=20` | Fetch lightweight job summaries. |
 | `GET /api/images/jobs/{job_id}` | Fetch full details for one job. |
+| `POST /api/images/jobs/{job_id}/stop` | Stop a queued or running image job. |
 | `DELETE /api/images/jobs/{job_id}/images/{image_index}` | Delete one generated output. |
 | `DELETE /api/images/jobs/{job_id}` | Delete a whole job. |
 | `POST /api/images/generations` | Run the direct synchronous generation endpoint. |

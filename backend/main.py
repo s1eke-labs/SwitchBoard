@@ -348,6 +348,14 @@ def create_app() -> FastAPI:
             raise http_error_from_detail(exc.status_code, exc.detail) from exc
         return {"ok": True}
 
+    @app.post("/api/images/jobs/{job_id}/stop", response_model=dict[str, bool], dependencies=authed)
+    async def stop_image_job(job_id: str) -> dict[str, bool]:
+        try:
+            await image_queue.stop_job(job_id)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+        return {"ok": True}
+
     @app.delete("/api/images/jobs/{job_id}", response_model=dict[str, bool], dependencies=authed)
     async def delete_image_job(job_id: str) -> dict[str, bool]:
         try:

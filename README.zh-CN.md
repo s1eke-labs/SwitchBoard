@@ -154,7 +154,7 @@ CHATGPT_BACKEND_BASE=https://chatgpt.com/backend-api
 2. 可选附加最多 4 张 PNG、JPEG 或 WebP 参考图，每张不超过 10 MB。
 3. 提交任务。SwitchBoard 会加入队列、轮询进度，并在完成或失败时弹出通知。
 4. 在游廊中浏览结果。页码按图片卡片计数，页大小会根据游廊视口自适应。
-5. 预览、下载、重试、删除单张输出，或删除整个任务。
+5. 预览、下载、停止活跃任务、重试失败任务、删除单张输出，或删除整个任务。
 
 运行约定：
 
@@ -174,6 +174,7 @@ CHATGPT_BACKEND_BASE=https://chatgpt.com/backend-api
 | `GET /api/images/jobs/statuses?ids={job_id}` | 获取轻量 active/tracked 任务状态，用于状态轮询。 |
 | `GET /api/images/jobs?page=1&limit=20` | 获取轻量任务摘要。 |
 | `GET /api/images/jobs/{job_id}` | 获取单个任务完整详情。 |
+| `POST /api/images/jobs/{job_id}/stop` | 停止排队中或运行中的图片任务。 |
 | `DELETE /api/images/jobs/{job_id}/images/{image_index}` | 删除单张生成结果。 |
 | `DELETE /api/images/jobs/{job_id}` | 删除整个任务。 |
 | `POST /api/images/generations` | 直接同步调用图片生成接口。 |

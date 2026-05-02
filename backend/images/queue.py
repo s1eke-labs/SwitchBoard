@@ -265,6 +265,27 @@ class ImageGenerationQueue:
                 _delete_image_file(self._settings, file_name=str(row["file_name"]))
             _delete_image_task_dir(self._settings, job_id, job_created_at)
 
+    async def stop_job(self, job_id: str) -> None:
+        detail = issue_detail(
+            "IMAGE_JOB_STOPPED",
+            "Image generation was stopped by the user. Retry the job to generate again.",
+        )
+        async with self._lock:
+            with connect(self._settings.db_path) as conn:
+                job = conn.execute("SELECT status FROM image_jobs WHERE id = ?", (job_id,)).fetchone()
+                if job is None:
+                    raise _image_error(404, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
+                if job["status"] not in {"queued", "running"}:
+                    raise _image_error(409, "IMAGE_JOB_NOT_ACTIVE", "Image generation job is not active")
+                conn.execute(
+                    """
+                    UPDATE image_jobs
+                    SET status = 'failed', error_json = ?, updated_at = ?
+                    WHERE id = ? AND status IN ('queued', 'running')
+                    """,
+                    (detail.model_dump_json(), int(time.time()), job_id),
+                )
+
     async def list_recent(self, page: int = 1, limit: int = 20) -> ImageGenerationJobListResponse:
         if page < 1:
             raise _image_error(400, "IMAGE_JOB_INVALID_PAGE", "Image job page is invalid")
@@ -673,7 +694,7 @@ class ImageGenerationQueue:
                 UPDATE image_jobs
                 SET status = 'succeeded', result_json = ?, error_json = NULL,
                     upstream_response_id = ?, upstream_metadata_json = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'running'
                 """,
                 (stored_result.model_dump_json(), stored_result.response_id, upstream_metadata_json, now, job_id),
             )
@@ -699,7 +720,7 @@ class ImageGenerationQueue:
                 """
                 UPDATE image_jobs
                 SET status = 'failed', error_json = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'running'
                 """,
                 (detail.model_dump_json(), int(time.time()), job_id),
             )

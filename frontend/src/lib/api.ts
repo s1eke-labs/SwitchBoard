@@ -582,6 +582,10 @@ export const api = {
   imageGalleryItems: ({ page = 1, limit = 20 }: { page?: number; limit?: number } = {}) =>
     request<ImageGalleryListResponse>(`/api/images/gallery?page=${page}&limit=${limit}`),
   imageJob: (jobId: string) => request<ImageGenerationJob>(`/api/images/jobs/${jobId}`),
+  stopImageJob: (jobId: string) =>
+    request<{ ok: boolean }>(`/api/images/jobs/${jobId}/stop`, {
+      method: "POST",
+    }),
   deleteImageJobResult: (jobId: string, imageIndex: number) =>
     request<{ ok: boolean }>(`/api/images/jobs/${jobId}/images/${imageIndex}`, {
       method: "DELETE",

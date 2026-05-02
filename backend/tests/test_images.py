@@ -1111,6 +1111,72 @@ async def test_image_generation_queue_restart_only_fails_running_slot_and_contin
 
 
 @pytest.mark.asyncio
+async def test_image_generation_queue_stops_queued_job(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        raise AssertionError("Stopped queued jobs must not run")
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO image_jobs (
+                id, prompt, model, size, quality, response_format, status, n, created_at, updated_at
+            )
+            VALUES ('queued-job', 'poster', NULL, '1024x1024', 'auto', 'b64_json', 'queued', 1, 10, 10)
+            """
+        )
+
+    await queue.stop_job("queued-job")
+    await queue.start()
+    await asyncio.sleep(0)
+    job = await queue.get("queued-job")
+
+    assert job is not None
+    assert job.status == "failed"
+    assert job.error is not None
+    assert job.error.code == "IMAGE_JOB_STOPPED"
+    await queue.close()
+
+
+@pytest.mark.asyncio
+async def test_image_generation_queue_stop_running_job_is_not_overwritten_by_late_result(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    running = asyncio.Event()
+    release = asyncio.Event()
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        running.set()
+        await release.wait()
+        return ImageGenerationResponse(
+            created=1776000000,
+            model="gpt-image-2",
+            data=[ImageData(b64_json="aGVsbG8=", file_name="late.png")],
+        )
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    job = await queue.enqueue(ImageGenerationRequest(prompt="poster"))
+    await asyncio.wait_for(running.wait(), timeout=1)
+
+    await queue.stop_job(job.id)
+    release.set()
+    for _ in range(20):
+        stopped = await queue.get(job.id)
+        if stopped is not None and stopped.error is not None and stopped.error.code == "IMAGE_JOB_STOPPED":
+            break
+        await asyncio.sleep(0.01)
+    stopped = await queue.get(job.id)
+
+    assert stopped is not None
+    assert stopped.status == "failed"
+    assert stopped.error is not None
+    assert stopped.error.code == "IMAGE_JOB_STOPPED"
+    assert stopped.result is None
+    await queue.close()
+
+
+@pytest.mark.asyncio
 async def test_image_generation_queue_deletes_result_images(tmp_path) -> None:
     settings = _settings(tmp_path)
     image_dir = settings.db_path.parent / "images"

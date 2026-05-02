@@ -234,6 +234,23 @@ export function ImageStudioPage() {
     },
   });
 
+  const stopJob = useMutation({
+    mutationFn: (job: ImageGalleryJob) => api.stopImageJob(job.id),
+    onMutate: (job) => {
+      return { jobId: job.id };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["imageGallery"] });
+      queryClient.invalidateQueries({ queryKey: ["imageJobStatuses"] });
+      toast.success(t("images.stopped"));
+    },
+    onError: (error) => {
+      toast.danger(t("images.stopFailed"), {
+        description: formatAppError(error),
+      });
+    },
+  });
+
   const deleteImages = useMutation({
     mutationFn: async (items: GalleryItem[]) => {
       const orderedItems = [...items].sort((first, second) => {
@@ -387,6 +404,11 @@ export function ImageStudioPage() {
     retryJob.mutate(item.job);
   }
 
+  function stopPreviewJob(item: GalleryItem) {
+    if ((item.job.status !== "queued" && item.job.status !== "running") || stopJob.isPending) return;
+    stopJob.mutate(item.job);
+  }
+
   function confirmDeleteImages() {
     if (!pendingDeleteItems?.length || deleteImages.isPending) return;
     deleteImages.mutate(pendingDeleteItems);
@@ -471,9 +493,11 @@ export function ImageStudioPage() {
           editing={editingItemKey === selectedItem.key}
           deleting={deleteImages.isPending}
           retrying={retryJob.isPending}
+          stopping={stopJob.isPending && stopJob.variables?.id === selectedItem.job.id}
           onEdit={handleEditItem}
           onDelete={deletePreviewImage}
           onRetry={retryPreviewJob}
+          onStop={stopPreviewJob}
           onClose={() => setSelectedItemKey(null)}
         />
       ) : null}

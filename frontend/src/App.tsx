@@ -51,7 +51,7 @@ function ImageJobNotifier() {
         if (job.status === "succeeded") {
           toast.success(t("images.generated"));
         }
-        if (job.status === "failed") {
+        if (job.status === "failed" && job.error?.code !== "IMAGE_JOB_STOPPED") {
           toast.danger(t("images.generateFailed"), {
             description: job.error?.message,
           });
