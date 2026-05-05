@@ -42,6 +42,9 @@ class ImageJobSubmission:
         references = _validated_reference_images(payload)
         if request.source == "external_dispatcher" and not request.source_task_id:
             raise _image_error(400, "IMAGE_SUBMISSION_INVALID", "External dispatcher submissions require source_task_id")
+        dispatcher_id = (request.dispatcher_id or "default").strip() if request.source == "external_dispatcher" else None
+        if request.source == "external_dispatcher" and not dispatcher_id:
+            raise _image_error(400, "IMAGE_SUBMISSION_INVALID", "External dispatcher id is required")
         if not request.idempotency_key.strip():
             raise _image_error(400, "IMAGE_SUBMISSION_INVALID", "Image submission is invalid")
         if request.queue != "default":
@@ -58,8 +61,9 @@ class ImageJobSubmission:
                 """
                 SELECT id FROM image_submissions
                 WHERE source = ? AND idempotency_key = ?
+                  AND COALESCE(dispatcher_id, '') = COALESCE(?, '')
                 """,
-                (request.source, idempotency_key),
+                (request.source, idempotency_key, dispatcher_id),
             ).fetchone()
             if existing is not None:
                 submission_id = str(existing["id"])
@@ -76,8 +80,9 @@ class ImageJobSubmission:
                     """
                     SELECT id FROM image_submissions
                     WHERE source = ? AND source_task_id = ?
+                      AND COALESCE(dispatcher_id, '') = COALESCE(?, '')
                     """,
-                    (request.source, source_task_id),
+                    (request.source, source_task_id, dispatcher_id),
                 ).fetchone()
                 if conflict is not None:
                     raise _image_error(409, "IMAGE_SUBMISSION_CONFLICT", "Image submission conflicts with an existing task")
@@ -86,14 +91,15 @@ class ImageJobSubmission:
             conn.execute(
                 """
                 INSERT INTO image_submissions (
-                    id, source, source_task_id, idempotency_key, queue, priority, status,
+                    id, source, dispatcher_id, source_task_id, idempotency_key, queue, priority, status,
                     created_at, updated_at, external_delivery_status, metadata_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
                 """,
                 (
                     submission_id,
                     request.source,
+                    dispatcher_id,
                     source_task_id,
                     idempotency_key,
                     request.queue,
@@ -116,10 +122,10 @@ class ImageJobSubmission:
                     """
                     INSERT INTO image_jobs (
                         id, submission_id, conversation_id, prompt, model, size, quality, n, response_format,
-                        status, created_at, updated_at, previous_response_id, source, source_task_id,
+                        status, created_at, updated_at, previous_response_id, source, dispatcher_id, source_task_id,
                         idempotency_key, priority, external_delivery_status
                     )
-                    VALUES (?, ?, NULL, ?, ?, ?, ?, 1, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, NULL, ?, ?, ?, ?, 1, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         job_id,
@@ -133,6 +139,7 @@ class ImageJobSubmission:
                         now,
                         previous_response_id,
                         request.source,
+                        dispatcher_id,
                         source_task_id,
                         idempotency_key,
                         priority,
@@ -163,4 +170,3 @@ class ImageJobSubmission:
         if self._notify_new_job is not None:
             self._notify_new_job()
         return ImageJobSubmitResponse(submission_id=submission_id, job_ids=job_ids, created=True)
-

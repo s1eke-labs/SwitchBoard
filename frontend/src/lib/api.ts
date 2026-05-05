@@ -407,6 +407,7 @@ export type ImageDispatcherConnectionStatus =
   | "paused";
 
 export type ImageTaskDispatcherSettings = {
+  id: string;
   configured: boolean;
   name: string | null;
   api_base_url: string | null;
@@ -423,6 +424,22 @@ export type ImageTaskDispatcherSettings = {
   external_last_claim_at: number | null;
   external_current_task_id: string | null;
   external_last_error: string | null;
+  deleted_at: number | null;
+  task_count: number;
+  running_external_tasks: {
+    id: string;
+    dispatcher_id: string | null;
+    source_task_id: string | null;
+    prompt: string;
+    status: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled";
+    started_at: number | null;
+    updated_at: number;
+    lease_owner: string | null;
+  }[];
+};
+
+export type ImageTaskDispatcherListResponse = {
+  items: ImageTaskDispatcherSettings[];
 };
 
 export type ImageTaskDispatcherSettingsRequest = {
@@ -441,11 +458,13 @@ export type ImageWorkerStatus = {
   active_worker_running: boolean;
   active_worker_slots: number;
   dispatcher: ImageTaskDispatcherSettings;
+  dispatchers: ImageTaskDispatcherSettings[];
   active_leases: number;
   queued_jobs: number;
   running_jobs: number;
   running_external_tasks: {
     id: string;
+    dispatcher_id: string | null;
     source_task_id: string | null;
     prompt: string;
     status: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled";
@@ -674,6 +693,18 @@ export const api = {
     }),
   imageTaskDispatcherSettings: () =>
     request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/settings"),
+  imageTaskDispatchers: () =>
+    request<ImageTaskDispatcherListResponse>("/api/images/task-dispatchers"),
+  createImageTaskDispatcher: (payload: ImageTaskDispatcherSettingsRequest) =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatchers", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateImageTaskDispatcher: (dispatcherId: string, payload: ImageTaskDispatcherSettingsRequest) =>
+    request<ImageTaskDispatcherSettings>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
   saveImageTaskDispatcherSettings: (payload: ImageTaskDispatcherSettingsRequest) =>
     request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/settings", {
       method: "PUT",
@@ -684,11 +715,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  testNamedImageTaskDispatcher: (dispatcherId: string, payload: ImageDispatcherTestRequest) =>
+    request<{ ok: boolean; settings: ImageTaskDispatcherSettings }>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}/test`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   registerImageTaskDispatcher: () =>
     request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/register", { method: "POST" }),
+  registerNamedImageTaskDispatcher: (dispatcherId: string) =>
+    request<ImageTaskDispatcherSettings>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}/register`, { method: "POST" }),
   pauseImageTaskDispatcher: () =>
     request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/pause", { method: "POST" }),
+  pauseNamedImageTaskDispatcher: (dispatcherId: string) =>
+    request<ImageTaskDispatcherSettings>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}/pause`, { method: "POST" }),
   resumeImageTaskDispatcher: () =>
     request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/resume", { method: "POST" }),
+  resumeNamedImageTaskDispatcher: (dispatcherId: string) =>
+    request<ImageTaskDispatcherSettings>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}/resume`, { method: "POST" }),
+  deleteImageTaskDispatcher: (dispatcherId: string) =>
+    request<ImageTaskDispatcherSettings>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}`, { method: "DELETE" }),
   imageWorkerStatus: () => request<ImageWorkerStatus>("/api/images/workers/status"),
 };

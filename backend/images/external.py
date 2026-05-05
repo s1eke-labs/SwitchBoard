@@ -27,9 +27,11 @@ from .models import (
     ImageExternalResultPayload,
     ImageJobSubmitPayload,
     ImageJobSubmitRequest,
+    ImageRunningExternalTaskResponse,
+    ImageTaskDispatcherListResponse,
     ImageTaskDispatcherSettingsRequest,
     ImageTaskDispatcherSettingsResponse,
-    ImageWorkerStatusResponse,
+    _image_error,
 )
 from .submission import ImageJobSubmission
 from .storage import image_file_path
@@ -60,29 +62,42 @@ def _redact_error(exc: Exception) -> str:
     return message
 
 
-def _vault_token_path(settings: Settings) -> Path:
+def _token_file_name(dispatcher_id: str) -> str:
+    safe_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in dispatcher_id) or "default"
+    return TOKEN_FILE_NAME if safe_id == "default" else f"image-task-dispatcher-token-{safe_id}.json"
+
+
+def _vault_token_path(settings: Settings, dispatcher_id: str = "default") -> Path:
     root = settings.auth_vault_dir or settings.db_path.parent / "auth-vault"
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
-    return root / TOKEN_FILE_NAME
+    return root / _token_file_name(dispatcher_id)
 
 
-def _write_token(settings: Settings, token: str) -> None:
-    path = _vault_token_path(settings)
+def _write_token(settings: Settings, dispatcher_id: str, token: str) -> None:
+    path = _vault_token_path(settings, dispatcher_id)
     payload = encrypt_auth(settings, {"token": token})
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False)
 
 
-def _read_token(settings: Settings) -> str | None:
-    path = _vault_token_path(settings)
+def _read_token(settings: Settings, dispatcher_id: str = "default") -> str | None:
+    path = _vault_token_path(settings, dispatcher_id)
+    if dispatcher_id == "default" and not path.exists():
+        path = _vault_token_path(settings)
     if not path.exists():
         return None
     payload = json.loads(path.read_text(encoding="utf-8"))
     value = decrypt_auth(settings, payload)
     token = value.get("token")
     return token if isinstance(token, str) and token else None
+
+
+def _delete_token(settings: Settings, dispatcher_id: str) -> None:
+    for path in {_vault_token_path(settings, dispatcher_id), _vault_token_path(settings)} if dispatcher_id == "default" else {_vault_token_path(settings, dispatcher_id)}:
+        with suppress(FileNotFoundError):
+            path.unlink()
 
 
 def _token_preview(token: str | None) -> str | None:
@@ -111,20 +126,47 @@ def _external_value_for_debug(value: object) -> object:
 
 
 class ExternalImageTaskDispatcherAdapter:
-    def __init__(self, settings: Settings, submission: ImageJobSubmission, transport: httpx.AsyncBaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        submission: ImageJobSubmission,
+        transport: httpx.AsyncBaseTransport | None = None,
+        dispatcher_id: str = "default",
+    ) -> None:
         self.settings = settings
         self.submission = submission
         self._transport = transport
+        self.dispatcher_id = dispatcher_id
         self._task: asyncio.Task[None] | None = None
         self._closed = False
 
     def get_settings(self) -> ImageTaskDispatcherSettingsResponse:
         with connect(self.settings.db_path) as conn:
-            row = conn.execute("SELECT * FROM image_task_dispatcher_config WHERE id = 1").fetchone()
-        token = _read_token(self.settings)
+            row = conn.execute("SELECT * FROM image_task_dispatchers WHERE id = ?", (self.dispatcher_id,)).fetchone()
+            task_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS count FROM image_jobs WHERE source = 'external_dispatcher' AND dispatcher_id = ?",
+                    (self.dispatcher_id,),
+                ).fetchone()["count"]
+            )
+            running_rows = list(
+                conn.execute(
+                    """
+                    SELECT id, dispatcher_id, source_task_id, prompt, status, started_at, updated_at, lease_owner
+                    FROM image_jobs
+                    WHERE source = 'external_dispatcher'
+                      AND dispatcher_id = ?
+                      AND status IN ('leased', 'running')
+                    ORDER BY COALESCE(started_at, updated_at) ASC, created_at ASC, id ASC
+                    """,
+                    (self.dispatcher_id,),
+                )
+            )
+        token = _read_token(self.settings, self.dispatcher_id)
         if row is None:
-            return ImageTaskDispatcherSettingsResponse(configured=False)
+            return ImageTaskDispatcherSettingsResponse(id=self.dispatcher_id, configured=False)
         return ImageTaskDispatcherSettingsResponse(
+            id=str(row["id"]),
             configured=bool(row["name"] and row["api_base_url"] and token),
             name=str(row["name"]) if row["name"] else None,
             api_base_url=str(row["api_base_url"]) if row["api_base_url"] else None,
@@ -138,6 +180,21 @@ class ExternalImageTaskDispatcherAdapter:
             external_last_claim_at=int(row["last_claim_at"]) if row["last_claim_at"] else None,
             external_current_task_id=str(row["current_source_task_id"]) if row["current_source_task_id"] else None,
             external_last_error=str(row["last_error"]) if row["last_error"] else None,
+            deleted_at=int(row["deleted_at"]) if row["deleted_at"] else None,
+            task_count=task_count,
+            running_external_tasks=[
+                ImageRunningExternalTaskResponse(
+                    id=str(task["id"]),
+                    dispatcher_id=str(task["dispatcher_id"]) if task["dispatcher_id"] else None,
+                    source_task_id=str(task["source_task_id"]) if task["source_task_id"] else None,
+                    prompt=str(task["prompt"]),
+                    status=str(task["status"]),
+                    started_at=int(task["started_at"]) if task["started_at"] else None,
+                    updated_at=int(task["updated_at"]),
+                    lease_owner=str(task["lease_owner"]) if task["lease_owner"] else None,
+                )
+                for task in running_rows
+            ],
         )
 
     async def save_settings(self, payload: ImageTaskDispatcherSettingsRequest) -> ImageTaskDispatcherSettingsResponse:
@@ -146,24 +203,25 @@ class ExternalImageTaskDispatcherAdapter:
         if not name or not api_base_url:
             raise ValueError("Task dispatcher name and API base URL are required")
         if payload.token is not None and payload.token.strip():
-            _write_token(self.settings, payload.token.strip())
+            _write_token(self.settings, self.dispatcher_id, payload.token.strip())
         now = _now()
         with connect(self.settings.db_path) as conn:
             conn.execute(
                 """
-                INSERT INTO image_task_dispatcher_config (
-                    id, name, api_base_url, paused, runner_status, created_at, updated_at
+                INSERT INTO image_task_dispatchers (
+                    id, name, api_base_url, paused, runner_status, deleted_at, created_at, updated_at
                 )
-                VALUES (1, ?, ?, 0, 'registering', ?, ?)
+                VALUES (?, ?, ?, 0, 'registering', NULL, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     api_base_url = excluded.api_base_url,
                     paused = 0,
                     runner_status = 'registering',
                     last_error = NULL,
+                    deleted_at = NULL,
                     updated_at = excluded.updated_at
                 """,
-                (name, api_base_url, now, now),
+                (self.dispatcher_id, name, api_base_url, now, now),
             )
         await self.register()
         await self.start()
@@ -172,7 +230,7 @@ class ExternalImageTaskDispatcherAdapter:
     async def test(self, payload: ImageDispatcherTestRequest) -> ImageDispatcherActionResponse:
         settings = self.get_settings()
         base_url = (payload.api_base_url or settings.api_base_url or "").strip().rstrip("/")
-        token = (payload.token or _read_token(self.settings) or "").strip()
+        token = (payload.token or _read_token(self.settings, self.dispatcher_id) or "").strip()
         if not base_url or not token:
             raise ValueError("Task dispatcher API base URL and token are required")
         async with self._client(timeout=10) as client:
@@ -186,7 +244,7 @@ class ExternalImageTaskDispatcherAdapter:
 
     async def register(self) -> ImageTaskDispatcherSettingsResponse:
         settings = self.get_settings()
-        token = _read_token(self.settings)
+        token = _read_token(self.settings, self.dispatcher_id)
         if not settings.api_base_url or not settings.name or not token:
             self._save_status("unconfigured", None)
             return self.get_settings()
@@ -224,29 +282,80 @@ class ExternalImageTaskDispatcherAdapter:
         with connect(self.settings.db_path) as conn:
             conn.execute(
                 """
-                UPDATE image_task_dispatcher_config
+                UPDATE image_task_dispatchers
                 SET paused = 1, runner_status = 'paused',
                     last_heartbeat_at = COALESCE(?, last_heartbeat_at),
                     last_error = ?, updated_at = ?
-                WHERE id = 1
+                WHERE id = ?
                 """,
-                (reported_at, last_error, _now()),
+                (reported_at, last_error, _now(), self.dispatcher_id),
             )
         return self.get_settings()
 
     async def resume(self) -> ImageTaskDispatcherSettingsResponse:
         with connect(self.settings.db_path) as conn:
             conn.execute(
-                "UPDATE image_task_dispatcher_config SET paused = 0, runner_status = 'registering', updated_at = ? WHERE id = 1",
-                (_now(),),
+                "UPDATE image_task_dispatchers SET paused = 0, runner_status = 'registering', updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+                (_now(), self.dispatcher_id),
             )
         await self.register()
         await self.start()
         return self.get_settings()
 
+    async def delete(self) -> ImageTaskDispatcherSettingsResponse:
+        with connect(self.settings.db_path) as conn:
+            active_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM image_jobs
+                    WHERE source = 'external_dispatcher'
+                      AND dispatcher_id = ?
+                      AND status IN ('queued', 'leased', 'running')
+                    """,
+                    (self.dispatcher_id,),
+                ).fetchone()["count"]
+            )
+            pending_delivery_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM image_submissions
+                    WHERE source = 'external_dispatcher'
+                      AND dispatcher_id = ?
+                      AND status IN ('succeeded', 'failed', 'canceled')
+                      AND COALESCE(external_delivery_status, 'pending') != 'delivered'
+                    """,
+                    (self.dispatcher_id,),
+                ).fetchone()["count"]
+            )
+        if active_count or pending_delivery_count:
+            raise _image_error(409, "IMAGE_DISPATCHER_ACTIVE", "Task dispatcher still has active or pending delivery tasks")
+        await self.close()
+        settings = self.get_settings()
+        with suppress(Exception):
+            await self._send_runner_status(settings, "offline")
+        _delete_token(self.settings, self.dispatcher_id)
+        now = _now()
+        with connect(self.settings.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE image_task_dispatchers
+                SET api_base_url = NULL,
+                    paused = 1,
+                    runner_id = NULL,
+                    runner_status = 'paused',
+                    deleted_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, now, self.dispatcher_id),
+            )
+        return self.get_settings()
+
     async def start(self) -> None:
         settings = self.get_settings()
-        if not settings.configured or settings.paused:
+        if not settings.configured or settings.paused or settings.deleted_at is not None:
             return
         if self._task is not None and not self._task.done():
             return
@@ -265,7 +374,7 @@ class ExternalImageTaskDispatcherAdapter:
     async def _loop(self) -> None:
         while not self._closed:
             settings = self.get_settings()
-            if not settings.configured or settings.paused:
+            if not settings.configured or settings.paused or settings.deleted_at is not None:
                 await asyncio.sleep(1)
                 continue
             if not settings.external_runner_id or settings.external_runner_status != "online":
@@ -284,14 +393,14 @@ class ExternalImageTaskDispatcherAdapter:
                 return
             with connect(self.settings.db_path) as conn:
                 conn.execute(
-                    "UPDATE image_task_dispatcher_config SET last_heartbeat_at = ?, runner_status = 'online', last_error = NULL, updated_at = ? WHERE id = 1",
-                    (_now(), _now()),
+                    "UPDATE image_task_dispatchers SET last_heartbeat_at = ?, runner_status = 'online', last_error = NULL, updated_at = ? WHERE id = ?",
+                    (_now(), _now(), self.dispatcher_id),
                 )
         except Exception as exc:
             self._save_status("offline", _redact_error(exc))
 
     async def _send_runner_status(self, settings: ImageTaskDispatcherSettingsResponse, status: str) -> bool:
-        token = _read_token(self.settings)
+        token = _read_token(self.settings, self.dispatcher_id)
         if not token or not settings.api_base_url or not settings.external_runner_id:
             return False
         async with self._client(timeout=10) as client:
@@ -308,7 +417,7 @@ class ExternalImageTaskDispatcherAdapter:
         return True
 
     async def _claim_remote_tasks(self, settings: ImageTaskDispatcherSettingsResponse) -> None:
-        token = _read_token(self.settings)
+        token = _read_token(self.settings, self.dispatcher_id)
         if not token or not settings.api_base_url or not settings.external_runner_id:
             return
         try:
@@ -332,11 +441,11 @@ class ExternalImageTaskDispatcherAdapter:
             with connect(self.settings.db_path) as conn:
                 conn.execute(
                     """
-                    UPDATE image_task_dispatcher_config
+                    UPDATE image_task_dispatchers
                     SET last_claim_at = ?, current_source_task_id = ?, updated_at = ?
-                    WHERE id = 1
+                    WHERE id = ?
                     """,
-                    (_now(), str(tasks[0].get("source_task_id") or tasks[0].get("id")) if tasks else None, _now()),
+                    (_now(), str(tasks[0].get("source_task_id") or tasks[0].get("id")) if tasks else None, _now(), self.dispatcher_id),
                 )
         except Exception as exc:
             self._save_status("offline", _redact_error(exc))
@@ -365,12 +474,17 @@ class ExternalImageTaskDispatcherAdapter:
             )
             request = ImageJobSubmitRequest(
                 source="external_dispatcher",
+                dispatcher_id=self.dispatcher_id,
                 source_task_id=source_task_id,
                 idempotency_key=idempotency_key,
                 queue=str(task.get("queue") or "default"),
                 priority=str(task.get("priority") or "normal"),
                 payload=submit_payload,
-                metadata={"requester": str(task.get("requester") or ""), "trace_id": str(task.get("trace_id") or "")},
+                metadata={
+                    "requester": str(task.get("requester") or ""),
+                    "trace_id": str(task.get("trace_id") or ""),
+                    "dispatcher": self.dispatcher_id,
+                },
             )
             await self.submission.submit(request)
         except Exception as exc:
@@ -384,7 +498,7 @@ class ExternalImageTaskDispatcherAdapter:
             )
 
     async def _deliver_pending_results(self, settings: ImageTaskDispatcherSettingsResponse) -> None:
-        token = _read_token(self.settings)
+        token = _read_token(self.settings, self.dispatcher_id)
         if not token or not settings.api_base_url:
             return
         now = _now()
@@ -394,12 +508,14 @@ class ExternalImageTaskDispatcherAdapter:
                     """
                     SELECT * FROM image_submissions
                     WHERE source = 'external_dispatcher'
+                      AND dispatcher_id = ?
                       AND source_task_id IS NOT NULL
                       AND status IN ('succeeded', 'failed', 'canceled')
                       AND COALESCE(external_delivery_status, 'pending') != 'delivered'
                     ORDER BY updated_at ASC
                     LIMIT 5
-                    """
+                    """,
+                    (self.dispatcher_id,),
                 )
             )
         for submission in rows:
@@ -452,7 +568,7 @@ class ExternalImageTaskDispatcherAdapter:
             )
 
     async def _report_pending_status_updates(self, settings: ImageTaskDispatcherSettingsResponse) -> None:
-        token = _read_token(self.settings)
+        token = _read_token(self.settings, self.dispatcher_id)
         if not token or not settings.api_base_url:
             return
         now = _now()
@@ -463,6 +579,7 @@ class ExternalImageTaskDispatcherAdapter:
                     SELECT id, source_task_id, status, external_status_reported_status, external_status_report_error_json
                     FROM image_submissions
                     WHERE source = 'external_dispatcher'
+                      AND dispatcher_id = ?
                       AND source_task_id IS NOT NULL
                       AND (
                         COALESCE(external_status_reported_status, '') != status
@@ -470,7 +587,8 @@ class ExternalImageTaskDispatcherAdapter:
                       )
                     ORDER BY updated_at ASC
                     LIMIT 10
-                    """
+                    """,
+                    (self.dispatcher_id,),
                 )
             )
         for submission in rows:
@@ -529,21 +647,22 @@ class ExternalImageTaskDispatcherAdapter:
         }
         with connect(self.settings.db_path) as conn:
             existing = conn.execute(
-                "SELECT id FROM image_submissions WHERE source = 'external_dispatcher' AND source_task_id = ?",
-                (source_task_id,),
+                "SELECT id FROM image_submissions WHERE source = 'external_dispatcher' AND dispatcher_id = ? AND source_task_id = ?",
+                (self.dispatcher_id, source_task_id),
             ).fetchone()
             if existing is not None:
                 return
             conn.execute(
                 """
                 INSERT OR IGNORE INTO image_submissions (
-                    id, source, source_task_id, idempotency_key, queue, priority, status,
+                    id, source, dispatcher_id, source_task_id, idempotency_key, queue, priority, status,
                     created_at, updated_at, external_delivery_status, error_json, metadata_json
                 )
-                VALUES (?, 'external_dispatcher', ?, ?, ?, 0, 'failed', ?, ?, 'pending', ?, ?)
+                VALUES (?, 'external_dispatcher', ?, ?, ?, ?, 0, 'failed', ?, ?, 'pending', ?, ?)
                 """,
                 (
                     f"sub_{uuid.uuid4().hex}",
+                    self.dispatcher_id,
                     source_task_id,
                     idempotency_key or source_task_id,
                     str(task.get("queue") or "default"),
@@ -756,17 +875,18 @@ class ExternalImageTaskDispatcherAdapter:
         with connect(self.settings.db_path) as conn:
             conn.execute(
                 """
-                UPDATE image_task_dispatcher_config
+                UPDATE image_task_dispatchers
                 SET runner_id = ?, runner_status = 'online',
                     heartbeat_interval_seconds = ?, poll_interval_seconds = ?,
                     last_error = NULL, updated_at = ?
-                WHERE id = 1
+                WHERE id = ?
                 """,
                 (
                     str(data.get("runner_id") or data.get("id") or ""),
                     int(data.get("heartbeat_interval_seconds") or data.get("heartbeat_interval") or 30),
                     int(data.get("poll_interval_seconds") or data.get("poll_interval") or 10),
                     now,
+                    self.dispatcher_id,
                 ),
             )
 
@@ -775,12 +895,12 @@ class ExternalImageTaskDispatcherAdapter:
         with connect(self.settings.db_path) as conn:
             conn.execute(
                 """
-                INSERT INTO image_task_dispatcher_config (id, runner_status, last_error, created_at, updated_at)
-                VALUES (1, ?, ?, ?, ?)
+                INSERT INTO image_task_dispatchers (id, runner_status, last_error, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET runner_status = excluded.runner_status,
                     last_error = excluded.last_error, updated_at = excluded.updated_at
                 """,
-                (status, error, now, now),
+                (self.dispatcher_id, status, error, now, now),
             )
 
     def _tasks_from_claim_response(self, data: Any) -> list[dict[str, Any]]:
@@ -792,3 +912,74 @@ class ExternalImageTaskDispatcherAdapter:
             if isinstance(data.get("task"), dict):
                 return [data["task"]]
         return []
+
+
+class ExternalImageTaskDispatcherManager:
+    def __init__(self, settings: Settings, submission: ImageJobSubmission, transport: httpx.AsyncBaseTransport | None = None) -> None:
+        self.settings = settings
+        self.submission = submission
+        self._transport = transport
+        self._adapters: dict[str, ExternalImageTaskDispatcherAdapter] = {}
+
+    def _adapter(self, dispatcher_id: str = "default") -> ExternalImageTaskDispatcherAdapter:
+        if dispatcher_id not in self._adapters:
+            self._adapters[dispatcher_id] = ExternalImageTaskDispatcherAdapter(
+                self.settings,
+                self.submission,
+                transport=self._transport,
+                dispatcher_id=dispatcher_id,
+            )
+        return self._adapters[dispatcher_id]
+
+    def _dispatcher_ids(self, *, include_deleted: bool = False) -> list[str]:
+        where = "" if include_deleted else "WHERE deleted_at IS NULL"
+        with connect(self.settings.db_path) as conn:
+            return [
+                str(row["id"])
+                for row in conn.execute(
+                    f"SELECT id FROM image_task_dispatchers {where} ORDER BY created_at ASC, id ASC"
+                )
+            ]
+
+    def list_settings(self) -> ImageTaskDispatcherListResponse:
+        return ImageTaskDispatcherListResponse(
+            items=[self._adapter(dispatcher_id).get_settings() for dispatcher_id in self._dispatcher_ids()]
+        )
+
+    def get_settings(self) -> ImageTaskDispatcherSettingsResponse:
+        return self._adapter("default").get_settings()
+
+    async def save_settings(self, payload: ImageTaskDispatcherSettingsRequest) -> ImageTaskDispatcherSettingsResponse:
+        return await self._adapter("default").save_settings(payload)
+
+    async def create_settings(self, payload: ImageTaskDispatcherSettingsRequest) -> ImageTaskDispatcherSettingsResponse:
+        dispatcher_id = f"disp_{uuid.uuid4().hex[:12]}"
+        return await self._adapter(dispatcher_id).save_settings(payload)
+
+    async def update_settings(self, dispatcher_id: str, payload: ImageTaskDispatcherSettingsRequest) -> ImageTaskDispatcherSettingsResponse:
+        return await self._adapter(dispatcher_id).save_settings(payload)
+
+    async def test(self, payload: ImageDispatcherTestRequest, dispatcher_id: str = "default") -> ImageDispatcherActionResponse:
+        return await self._adapter(dispatcher_id).test(payload)
+
+    async def register(self, dispatcher_id: str = "default") -> ImageTaskDispatcherSettingsResponse:
+        return await self._adapter(dispatcher_id).register()
+
+    async def pause(self, dispatcher_id: str = "default") -> ImageTaskDispatcherSettingsResponse:
+        return await self._adapter(dispatcher_id).pause()
+
+    async def resume(self, dispatcher_id: str = "default") -> ImageTaskDispatcherSettingsResponse:
+        return await self._adapter(dispatcher_id).resume()
+
+    async def delete(self, dispatcher_id: str) -> ImageTaskDispatcherSettingsResponse:
+        settings = await self._adapter(dispatcher_id).delete()
+        self._adapters.pop(dispatcher_id, None)
+        return settings
+
+    async def start(self) -> None:
+        for dispatcher_id in self._dispatcher_ids():
+            await self._adapter(dispatcher_id).start()
+
+    async def close(self) -> None:
+        for adapter in list(self._adapters.values()):
+            await adapter.close()

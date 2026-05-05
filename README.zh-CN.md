@@ -162,6 +162,7 @@ CHATGPT_BACKEND_BASE=https://chatgpt.com/backend-api
 
 - 游廊会展示生成图片，文件保存在 `SWITCHBOARD_DATA_DIR/images/YYYY/MM/DD/{job_id}/`。
 - 作图任务元数据保存在 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`；ChatGPT token 不会写入这里。
+- 分发方设置页可以同时连接多个外部任务分发方；每个分发方有独立的暂停/删除、脱敏 token 状态、当前任务和图片任务数，执行槽仍作为系统信息展示。
 - 更深入的作图任务、API 和对接细节见 [docs/image-jobs.md](./docs/image-jobs.md)。
 
 ## 本地类生产运行
@@ -232,7 +233,7 @@ Compose 会把 `.env` 用于变量替换。宿主机 Codex 目录以可读写方
 - 隐藏账号和自定义名称都是 SwitchBoard 本地元数据。
 - 配置导出只包含 SwitchBoard 本地账号展示状态，绝不会包含凭据。
 - 图片生成只在内存中读取当前 access token；token 永远不会返回给前端。
-- 任务分发方 token 加密保存在私有 auth vault 中，前端只能拿到脱敏摘要。
+- 任务分发方 token 会按分发方独立加密保存在私有 auth vault 中，前端只能拿到脱敏摘要；删除分发方会清理实时 token，但保留历史任务来源标签。
 - 图片 debug 日志和已存储的上游元数据不会包含 access token、Authorization header 的真实值、图片 base64 内容、safety identifier 或 prompt cache key。
 - 不要提交 `.env`、SQLite 数据库、生成的私有数据或本地 Codex 凭据。
 - 用量成本估算使用本地价格表匹配已知模型名；未知模型的成本会保持为 null。

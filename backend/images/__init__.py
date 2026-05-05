@@ -54,6 +54,7 @@ from .models import (
     ImageReferenceInput,
     ImageResponseFormat,
     ImageRunningExternalTaskResponse,
+    ImageTaskDispatcherListResponse,
     ImageTaskDispatcherSettingsRequest,
     ImageTaskDispatcherSettingsResponse,
     ImageToolUsageSummary,
@@ -65,7 +66,7 @@ from .models import (
     _image_error,
 )
 from .executor import ImageJobExecutor
-from .external import ExternalImageTaskDispatcherAdapter
+from .external import ExternalImageTaskDispatcherAdapter, ExternalImageTaskDispatcherManager
 from .queries import ImageJobQueries
 from .queue import ImageGenerationQueue
 from .store import ImageJobStore

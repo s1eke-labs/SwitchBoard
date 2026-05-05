@@ -56,14 +56,15 @@ def _gallery_image_from_data(settings: Settings, data: ImageData | None) -> Imag
     )
 
 
-def _source_fields(row, dispatcher_label: str) -> dict[str, str | None]:
+def _source_fields(row, dispatcher_labels: dict[str, str]) -> dict[str, str | None]:
     raw_source = str(row["source"] or "local_ui") if "source" in row.keys() else "local_ui"
     source = local_or_dispatcher_source(raw_source)
     if source == "external_dispatcher":
+        dispatcher_id = str(row["dispatcher_id"] or "default") if "dispatcher_id" in row.keys() else "default"
         return {
             "source": "external_dispatcher",
-            "source_label": dispatcher_label,
-            "dispatcher_id": "default",
+            "source_label": dispatcher_labels.get(dispatcher_id, "任务分发方"),
+            "dispatcher_id": dispatcher_id,
             "source_task_id": str(row["source_task_id"]) if row["source_task_id"] else None,
         }
     return {"source": "local", "source_label": "本地", "dispatcher_id": None, "source_task_id": None}
@@ -73,12 +74,19 @@ class ImageJobQueries:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def dispatcher_label(self) -> str:
+    def dispatcher_labels(self) -> dict[str, str]:
         with connect(self.settings.db_path) as conn:
-            row = conn.execute("SELECT name FROM image_task_dispatcher_config WHERE id = 1").fetchone()
-        if row is not None and row["name"]:
-            return str(row["name"])
-        return "任务分发方"
+            rows = list(conn.execute("SELECT id, name FROM image_task_dispatchers"))
+        labels = {str(row["id"]): str(row["name"]) for row in rows if row["name"]}
+        if "default" not in labels:
+            with connect(self.settings.db_path) as conn:
+                row = conn.execute("SELECT name FROM image_task_dispatcher_config WHERE id = 1").fetchone()
+            if row is not None and row["name"]:
+                labels["default"] = str(row["name"])
+        return labels
+
+    def dispatcher_label(self) -> str:
+        return self.dispatcher_labels().get("default", "任务分发方")
 
     def get(self, job_id: str) -> ImageGenerationJobResponse | None:
         with connect(self.settings.db_path) as conn:
@@ -101,7 +109,7 @@ class ImageJobQueries:
                 position = queued_ids.index(job_id) + 1
         result = ImageGenerationResponse.model_validate_json(job["result_json"]) if job["result_json"] else None
         error = IssueDetail.model_validate_json(job["error_json"]) if job["error_json"] else None
-        source_fields = _source_fields(job, self.dispatcher_label())
+        source_fields = _source_fields(job, self.dispatcher_labels())
         return ImageGenerationJobResponse(
             id=str(job["id"]),
             conversation_id=str(job["conversation_id"]) if job["conversation_id"] else None,
@@ -289,7 +297,7 @@ class ImageJobQueries:
                     tuple(references_by_job_id),
                 ):
                     references_by_job_id[str(row["job_id"])].append(row)
-        dispatcher_label = self.dispatcher_label()
+        dispatcher_labels = self.dispatcher_labels()
         items: list[ImageGalleryItemResponse] = []
         for row in job_rows:
             job_id = str(row["id"])
@@ -312,7 +320,7 @@ class ImageJobQueries:
                 upstream_metadata=upstream_metadata_from_json(job["upstream_metadata_json"]),
                 error=error,
                 submission_id=str(job["submission_id"]) if job["submission_id"] else None,
-                **_source_fields(job, dispatcher_label),
+                **_source_fields(job, dispatcher_labels),
             )
             slot_start = int(row["slot_start"])
             slot_count = int(row["slot_count"])
@@ -391,5 +399,8 @@ class ImageJobQueries:
         if source == "local":
             return "WHERE source != 'external_dispatcher'", ()
         if source.startswith("dispatcher:"):
-            return "WHERE source = 'external_dispatcher'", ()
+            dispatcher_id = source.split(":", 1)[1].strip()
+            if not dispatcher_id:
+                raise _image_error(400, "IMAGE_SUBMISSION_INVALID", "Image source filter is invalid")
+            return "WHERE source = 'external_dispatcher' AND dispatcher_id = ?", (dispatcher_id,)
         raise _image_error(400, "IMAGE_SUBMISSION_INVALID", "Image source filter is invalid")

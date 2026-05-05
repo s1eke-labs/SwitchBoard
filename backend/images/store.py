@@ -277,22 +277,30 @@ class ImageJobStore:
             running_jobs = int(conn.execute("SELECT COUNT(*) AS count FROM image_jobs WHERE status = 'running'").fetchone()["count"])
         return active_leases, queued_jobs, running_jobs
 
-    def running_external_tasks(self) -> list[ImageRunningExternalTaskResponse]:
+    def running_external_tasks(self, dispatcher_id: str | None = None) -> list[ImageRunningExternalTaskResponse]:
+        dispatcher_filter = ""
+        params: tuple[str, ...] = ()
+        if dispatcher_id is not None:
+            dispatcher_filter = "AND dispatcher_id = ?"
+            params = (dispatcher_id,)
         with connect(self.settings.db_path) as conn:
             rows = list(
                 conn.execute(
                     """
-                    SELECT id, source_task_id, prompt, status, started_at, updated_at, lease_owner
+                    SELECT id, dispatcher_id, source_task_id, prompt, status, started_at, updated_at, lease_owner
                     FROM image_jobs
                     WHERE source = 'external_dispatcher'
                       AND status IN ('leased', 'running')
+                      {dispatcher_filter}
                     ORDER BY COALESCE(started_at, updated_at) ASC, created_at ASC, id ASC
-                    """
+                    """.format(dispatcher_filter=dispatcher_filter),
+                    params,
                 )
             )
         return [
             ImageRunningExternalTaskResponse(
                 id=str(row["id"]),
+                dispatcher_id=str(row["dispatcher_id"]) if row["dispatcher_id"] else None,
                 source_task_id=str(row["source_task_id"]) if row["source_task_id"] else None,
                 prompt=str(row["prompt"]),
                 status=str(row["status"]),

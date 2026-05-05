@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS image_jobs (
     result_json TEXT,
     error_json TEXT,
     source TEXT NOT NULL DEFAULT 'local_ui',
+    dispatcher_id TEXT,
     source_task_id TEXT,
     idempotency_key TEXT,
     priority INTEGER NOT NULL DEFAULT 0,
@@ -175,6 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_image_jobs_created
 CREATE TABLE IF NOT EXISTS image_submissions (
     id TEXT PRIMARY KEY,
     source TEXT NOT NULL,
+    dispatcher_id TEXT,
     source_task_id TEXT,
     idempotency_key TEXT,
     queue TEXT NOT NULL,
@@ -194,13 +196,9 @@ CREATE TABLE IF NOT EXISTS image_submissions (
 CREATE INDEX IF NOT EXISTS idx_image_submissions_created
     ON image_submissions(created_at DESC, id DESC);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_source_idempotency
+CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_local_idempotency
     ON image_submissions(source, idempotency_key)
-    WHERE idempotency_key IS NOT NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_source_task
-    ON image_submissions(source, source_task_id)
-    WHERE source_task_id IS NOT NULL;
+    WHERE idempotency_key IS NOT NULL AND source != 'external_dispatcher';
 
 CREATE TABLE IF NOT EXISTS image_task_dispatcher_config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -218,6 +216,27 @@ CREATE TABLE IF NOT EXISTS image_task_dispatcher_config (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS image_task_dispatchers (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    api_base_url TEXT,
+    paused INTEGER NOT NULL DEFAULT 0,
+    runner_id TEXT,
+    runner_status TEXT NOT NULL DEFAULT 'unconfigured',
+    heartbeat_interval_seconds INTEGER,
+    poll_interval_seconds INTEGER,
+    last_heartbeat_at INTEGER,
+    last_claim_at INTEGER,
+    current_source_task_id TEXT,
+    last_error TEXT,
+    deleted_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_image_task_dispatchers_deleted
+    ON image_task_dispatchers(deleted_at, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS image_job_references (
     id TEXT PRIMARY KEY,
@@ -282,6 +301,7 @@ def _migrate_images(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE image_jobs ADD COLUMN n INTEGER NOT NULL DEFAULT 1")
     added_columns = {
         "source": "TEXT NOT NULL DEFAULT 'local_ui'",
+        "dispatcher_id": "TEXT",
         "source_task_id": "TEXT",
         "idempotency_key": "TEXT",
         "priority": "INTEGER NOT NULL DEFAULT 0",
@@ -301,6 +321,7 @@ def _migrate_images(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE image_jobs ADD COLUMN {column_name} {column_type}")
     submission_columns = _columns(conn, "image_submissions")
     submission_added_columns = {
+        "dispatcher_id": "TEXT",
         "external_status_reported_status": "TEXT",
         "external_status_reported_at": "INTEGER",
         "external_status_report_error_json": "TEXT",
@@ -310,20 +331,54 @@ def _migrate_images(conn: sqlite3.Connection) -> None:
         if column_name not in submission_columns:
             conn.execute(f"ALTER TABLE image_submissions ADD COLUMN {column_name} {column_type}")
     now = now_ts()
+    dispatcher_columns = _columns(conn, "image_task_dispatchers")
+    if dispatcher_columns:
+        legacy = conn.execute("SELECT * FROM image_task_dispatcher_config WHERE id = 1").fetchone()
+        existing_default = conn.execute("SELECT id FROM image_task_dispatchers WHERE id = 'default'").fetchone()
+        if legacy is not None and existing_default is None:
+            conn.execute(
+                """
+                INSERT INTO image_task_dispatchers (
+                    id, name, api_base_url, paused, runner_id, runner_status,
+                    heartbeat_interval_seconds, poll_interval_seconds,
+                    last_heartbeat_at, last_claim_at, current_source_task_id,
+                    last_error, deleted_at, created_at, updated_at
+                )
+                VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                """,
+                (
+                    legacy["name"],
+                    legacy["api_base_url"],
+                    int(legacy["paused"] or 0),
+                    legacy["runner_id"],
+                    legacy["runner_status"] or "unconfigured",
+                    legacy["heartbeat_interval_seconds"],
+                    legacy["poll_interval_seconds"],
+                    legacy["last_heartbeat_at"],
+                    legacy["last_claim_at"],
+                    legacy["current_source_task_id"],
+                    legacy["last_error"],
+                    int(legacy["created_at"] or now),
+                    int(legacy["updated_at"] or now),
+                ),
+            )
+    conn.execute("UPDATE image_submissions SET dispatcher_id = 'default' WHERE source = 'external_dispatcher' AND dispatcher_id IS NULL")
+    conn.execute("UPDATE image_jobs SET dispatcher_id = 'default' WHERE source = 'external_dispatcher' AND dispatcher_id IS NULL")
     for row in conn.execute("SELECT id, source, source_task_id, idempotency_key, created_at, updated_at FROM image_jobs WHERE submission_id IS NULL"):
         submission_id = f"legacy-{row['id']}"
         source = str(row["source"] or "local_ui")
         conn.execute(
             """
             INSERT OR IGNORE INTO image_submissions (
-                id, source, source_task_id, idempotency_key, queue, priority, status,
+                id, source, dispatcher_id, source_task_id, idempotency_key, queue, priority, status,
                 created_at, updated_at, external_delivery_status, metadata_json
             )
-            VALUES (?, ?, ?, ?, 'default', 0, 'accepted', ?, ?, NULL, NULL)
+            VALUES (?, ?, ?, ?, ?, 'default', 0, 'accepted', ?, ?, NULL, NULL)
             """,
             (
                 submission_id,
                 source,
+                "default" if source == "external_dispatcher" else None,
                 row["source_task_id"],
                 row["idempotency_key"],
                 int(row["created_at"] or now),
@@ -349,18 +404,33 @@ def _migrate_images(conn: sqlite3.Connection) -> None:
             ON image_jobs(status, lease_expires_at)
         """
     )
+    conn.execute("DROP INDEX IF EXISTS idx_image_submissions_source_idempotency")
+    conn.execute("DROP INDEX IF EXISTS idx_image_submissions_source_task")
     conn.execute(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_source_idempotency
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_local_idempotency
             ON image_submissions(source, idempotency_key)
-            WHERE idempotency_key IS NOT NULL
+            WHERE idempotency_key IS NOT NULL AND source != 'external_dispatcher'
         """
     )
     conn.execute(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_source_task
-            ON image_submissions(source, source_task_id)
-            WHERE source_task_id IS NOT NULL
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_dispatcher_idempotency
+            ON image_submissions(dispatcher_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL AND source = 'external_dispatcher'
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_dispatcher_task
+            ON image_submissions(dispatcher_id, source_task_id)
+            WHERE source_task_id IS NOT NULL AND source = 'external_dispatcher'
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_image_jobs_dispatcher_status
+            ON image_jobs(dispatcher_id, status, created_at)
         """
     )
 

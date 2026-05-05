@@ -162,6 +162,7 @@ Notes:
 
 - The gallery shows generated images, and files are stored under `SWITCHBOARD_DATA_DIR/images/YYYY/MM/DD/{job_id}/`.
 - Image job metadata is stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`; ChatGPT tokens are not stored there.
+- The Dispatcher settings page can connect multiple external task dispatchers at once; each dispatcher has independent pause/delete controls, masked token status, current tasks, and image task counts, while worker slots remain system-level information.
 - Advanced image job, API, and integration details live in [docs/image-jobs.md](./docs/image-jobs.md).
 
 ## Production-Style Local Run
@@ -232,7 +233,7 @@ Import merges by `account_id`: accounts in the file update local display metadat
 - Hidden accounts and custom names are SwitchBoard-local metadata.
 - Config export includes only SwitchBoard-local account display state and never includes credentials.
 - Image generation reads the current access token only in memory; tokens are never returned to the frontend.
-- Task dispatcher tokens are encrypted in the private auth vault and are returned to the frontend only as masked summaries.
+- Task dispatcher tokens are stored per dispatcher in the private auth vault and are returned to the frontend only as masked summaries; deleting a dispatcher removes its live token while preserving historical task source labels.
 - Image debug logging and stored upstream metadata never include the access token, Authorization header value, image base64 payloads, safety identifiers, or prompt cache keys.
 - Do not commit `.env`, SQLite databases, generated private data, or local Codex credentials.
 - Usage cost estimates use a local pricing table for known model names; unknown model costs remain null.

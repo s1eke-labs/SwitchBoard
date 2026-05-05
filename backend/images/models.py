@@ -259,6 +259,7 @@ class ImageJobSubmitPayload(BaseModel):
 
 class ImageJobSubmitRequest(BaseModel):
     source: ImageJobSource = "local_ui"
+    dispatcher_id: str | None = None
     source_task_id: str | None = None
     idempotency_key: str
     queue: str = "default"
@@ -305,6 +306,7 @@ class ImageTaskDispatcherSettingsRequest(BaseModel):
 
 
 class ImageTaskDispatcherSettingsResponse(BaseModel):
+    id: str = "default"
     configured: bool
     name: str | None = None
     api_base_url: str | None = None
@@ -318,6 +320,13 @@ class ImageTaskDispatcherSettingsResponse(BaseModel):
     external_last_claim_at: int | None = None
     external_current_task_id: str | None = None
     external_last_error: str | None = None
+    deleted_at: int | None = None
+    task_count: int = 0
+    running_external_tasks: list["ImageRunningExternalTaskResponse"] = Field(default_factory=list)
+
+
+class ImageTaskDispatcherListResponse(BaseModel):
+    items: list[ImageTaskDispatcherSettingsResponse] = Field(default_factory=list)
 
 
 class ImageDispatcherTestRequest(BaseModel):
@@ -353,6 +362,7 @@ class ImageExternalResultPayload(BaseModel):
 
 class ImageRunningExternalTaskResponse(BaseModel):
     id: str
+    dispatcher_id: str | None = None
     source_task_id: str | None = None
     prompt: str
     status: ImageJobStatus
@@ -365,6 +375,7 @@ class ImageWorkerStatusResponse(BaseModel):
     active_worker_running: bool
     active_worker_slots: int
     dispatcher: ImageTaskDispatcherSettingsResponse
+    dispatchers: list[ImageTaskDispatcherSettingsResponse] = Field(default_factory=list)
     active_leases: int
     queued_jobs: int
     running_jobs: int

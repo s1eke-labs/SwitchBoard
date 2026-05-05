@@ -29,6 +29,7 @@ from images import (
     ImageReferenceInput,
     PassiveImageWorker,
     ExternalImageTaskDispatcherAdapter,
+    ExternalImageTaskDispatcherManager,
     ImageUpstreamMetadata,
     build_upstream_payload,
     generate_image,
@@ -36,6 +37,7 @@ from images import (
     image_thumbnail_relative_path,
 )
 from issues import issue_detail
+from images.external import _vault_token_path
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nreference"
 PNG_B64 = "iVBORw0KGgpyZWZlcmVuY2U="
@@ -1353,6 +1355,103 @@ def test_image_migration_keeps_legacy_jobs_visible_without_conversation(tmp_path
     assert "upstream_metadata_json" in columns
 
 
+def test_image_migration_copies_legacy_dispatcher_to_default(tmp_path) -> None:
+    db_path = tmp_path / "switchboard.sqlite"
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE image_task_dispatcher_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                name TEXT,
+                api_base_url TEXT,
+                paused INTEGER NOT NULL DEFAULT 0,
+                runner_id TEXT,
+                runner_status TEXT NOT NULL DEFAULT 'unconfigured',
+                heartbeat_interval_seconds INTEGER,
+                poll_interval_seconds INTEGER,
+                last_heartbeat_at INTEGER,
+                last_claim_at INTEGER,
+                current_source_task_id TEXT,
+                last_error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO image_task_dispatcher_config (
+                id, name, api_base_url, paused, runner_id, runner_status,
+                heartbeat_interval_seconds, poll_interval_seconds, last_heartbeat_at,
+                last_claim_at, current_source_task_id, last_error, created_at, updated_at
+            )
+            VALUES (1, 'Legacy', 'https://dispatcher.example.test/api', 1, 'runner-old',
+                    'paused', 30, 10, 100, 90, 'ext-old', NULL, 50, 60)
+            """
+        )
+
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT * FROM image_task_dispatchers WHERE id = 'default'").fetchone()
+
+    assert row is not None
+    assert row["name"] == "Legacy"
+    assert row["api_base_url"] == "https://dispatcher.example.test/api"
+    assert row["paused"] == 1
+    assert row["runner_id"] == "runner-old"
+
+
+def test_image_migration_adds_dispatcher_columns_before_new_indexes(tmp_path) -> None:
+    db_path = tmp_path / "switchboard.sqlite"
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE image_jobs (
+                id TEXT PRIMARY KEY,
+                prompt TEXT NOT NULL,
+                model TEXT,
+                size TEXT NOT NULL,
+                quality TEXT NOT NULL,
+                response_format TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                source TEXT NOT NULL DEFAULT 'local_ui',
+                source_task_id TEXT,
+                idempotency_key TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE image_submissions (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                source_task_id TEXT,
+                idempotency_key TEXT,
+                queue TEXT NOT NULL,
+                priority INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        job_columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(image_jobs)")}
+        submission_columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(image_submissions)")}
+        index_names = {str(row["name"]) for row in conn.execute("PRAGMA index_list(image_submissions)")}
+
+    assert "dispatcher_id" in job_columns
+    assert "dispatcher_id" in submission_columns
+    assert "idx_image_submissions_dispatcher_idempotency" in index_names
+    assert "idx_image_submissions_dispatcher_task" in index_names
+
+
 @pytest.mark.asyncio
 async def test_image_generation_queue_keeps_jobs_without_auto_chaining_responses(tmp_path) -> None:
     settings = _settings(tmp_path)
@@ -1596,6 +1695,90 @@ async def test_image_job_submission_is_idempotent_and_detects_source_task_confli
 
 
 @pytest.mark.asyncio
+async def test_external_dispatcher_source_task_uniqueness_is_scoped_by_dispatcher(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    submission = ImageJobSubmission(settings)
+
+    first = await submission.submit(
+        ImageJobSubmitRequest(
+            source="external_dispatcher",
+            dispatcher_id="dispatcher-one",
+            source_task_id="ext-shared",
+            idempotency_key="idem-one",
+            payload=ImageJobSubmitPayload(prompt="poster one"),
+        )
+    )
+    second = await submission.submit(
+        ImageJobSubmitRequest(
+            source="external_dispatcher",
+            dispatcher_id="dispatcher-two",
+            source_task_id="ext-shared",
+            idempotency_key="idem-two",
+            payload=ImageJobSubmitPayload(prompt="poster two"),
+        )
+    )
+
+    assert first.created is True
+    assert second.created is True
+    with pytest.raises(ImageGenerationError) as exc_info:
+        await submission.submit(
+            ImageJobSubmitRequest(
+                source="external_dispatcher",
+                dispatcher_id="dispatcher-one",
+                source_task_id="ext-shared",
+                idempotency_key="idem-three",
+                payload=ImageJobSubmitPayload(prompt="poster three"),
+            )
+        )
+    assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_gallery_filters_and_labels_external_dispatchers_by_id(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    now = int(time.time())
+    with connect(settings.db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO image_task_dispatchers (id, name, runner_status, created_at, updated_at)
+            VALUES (?, ?, 'paused', ?, ?)
+            """,
+            [("dispatcher-one", "One Queue", now, now), ("dispatcher-two", "Two Queue", now, now)],
+        )
+    submission = ImageJobSubmission(settings)
+    await submission.submit(
+        ImageJobSubmitRequest(
+            source="external_dispatcher",
+            dispatcher_id="dispatcher-one",
+            source_task_id="ext-one",
+            idempotency_key="idem-one",
+            payload=ImageJobSubmitPayload(prompt="poster one"),
+        )
+    )
+    await submission.submit(
+        ImageJobSubmitRequest(
+            source="external_dispatcher",
+            dispatcher_id="dispatcher-two",
+            source_task_id="ext-two",
+            idempotency_key="idem-two",
+            payload=ImageJobSubmitPayload(prompt="poster two"),
+        )
+    )
+
+    queries = ImageJobQueries(settings)
+    one = queries.list_gallery_items(page=1, limit=10, source="dispatcher:dispatcher-one")
+    two = queries.list_gallery_items(page=1, limit=10, source="dispatcher:dispatcher-two")
+
+    assert [item.job.prompt for item in one.items] == ["poster one"]
+    assert one.items[0].job.source_label == "One Queue"
+    assert one.items[0].job.dispatcher_id == "dispatcher-one"
+    assert [item.job.prompt for item in two.items] == ["poster two"]
+    assert two.items[0].job.source_label == "Two Queue"
+
+
+@pytest.mark.asyncio
 async def test_image_job_store_claim_reclaim_and_lease_token_guards_terminal_writes(tmp_path) -> None:
     settings = _settings(tmp_path)
     init_db(settings.db_path)
@@ -1765,6 +1948,86 @@ async def test_external_dispatcher_registers_polls_and_delivers_without_plaintex
 
 
 @pytest.mark.asyncio
+async def test_external_dispatcher_manager_runs_multiple_dispatchers_independently(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    claimed: list[str] = []
+    delivered: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = request.read()
+        if request.url.path == "/api/a/runners/register":
+            assert request.headers["authorization"] == "Bearer secret-a"
+            return httpx.Response(200, json={"runner_id": "runner-a"})
+        if request.url.path == "/api/b/runners/register":
+            assert request.headers["authorization"] == "Bearer secret-b"
+            return httpx.Response(200, json={"runner_id": "runner-b"})
+        if request.url.path == "/api/a/runners/runner-a/tasks/claim":
+            claimed.append("a")
+            return httpx.Response(200, json={"tasks": [{"id": "ext-shared", "idempotency_key": "idem-a", "payload": {"prompt": "from a"}}]})
+        if request.url.path == "/api/b/runners/runner-b/tasks/claim":
+            claimed.append("b")
+            return httpx.Response(200, json={"tasks": [{"id": "ext-shared", "idempotency_key": "idem-b", "payload": {"prompt": "from b"}}]})
+        if request.url.path == "/api/a/tasks/ext-shared/result":
+            delivered.append("a")
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/b/tasks/ext-shared/result":
+            delivered.append("b")
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path.endswith("/heartbeat") or request.url.path.endswith("/status"):
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(404, content=body)
+
+    submission = ImageJobSubmission(settings)
+    manager = ExternalImageTaskDispatcherManager(settings, submission, transport=httpx.MockTransport(handler))
+    dispatcher_a = await manager.create_settings(
+        images_module.ImageTaskDispatcherSettingsRequest(name="A", api_base_url="https://dispatcher.example.test/api/a", token="secret-a")
+    )
+    dispatcher_b = await manager.create_settings(
+        images_module.ImageTaskDispatcherSettingsRequest(name="B", api_base_url="https://dispatcher.example.test/api/b", token="secret-b")
+    )
+    await manager.close()
+    claimed.clear()
+
+    await manager._adapter(dispatcher_a.id)._claim_remote_tasks(dispatcher_a)
+    await manager._adapter(dispatcher_b.id)._claim_remote_tasks(dispatcher_b)
+
+    with connect(settings.db_path) as conn:
+        rows = list(conn.execute("SELECT dispatcher_id, source_task_id, prompt FROM image_jobs ORDER BY prompt"))
+    assert [(row["dispatcher_id"], row["source_task_id"], row["prompt"]) for row in rows] == [
+        (dispatcher_a.id, "ext-shared", "from a"),
+        (dispatcher_b.id, "ext-shared", "from b"),
+    ]
+    assert sorted(claimed) == ["a", "b"]
+
+    store = ImageJobStore(settings)
+    queries = ImageJobQueries(settings)
+    executor = ImageJobExecutor(
+        settings,
+        store,
+        queries,
+        generator=lambda settings, payload: asyncio.sleep(
+            0,
+            result=ImageGenerationResponse(
+                created=1776000000,
+                model="gpt-image-2",
+                data=[ImageData(b64_json="aGVsbG8=", file_name=f"{payload.prompt}.png")],
+            ),
+        ),
+    )
+    worker = PassiveImageWorker(store, executor)
+    assert (await worker.drain(max_jobs=2)).executed == 2
+    await manager._adapter(dispatcher_a.id)._deliver_pending_results(dispatcher_a)
+    await manager._adapter(dispatcher_b.id)._deliver_pending_results(dispatcher_b)
+
+    assert sorted(delivered) == ["a", "b"]
+    db_text = settings.db_path.read_text(encoding="utf-8", errors="ignore")
+    assert "secret-a" not in db_text
+    assert "secret-b" not in db_text
+    await manager.close()
+
+
+@pytest.mark.asyncio
 async def test_external_dispatcher_reports_rejected_claim_in_heartbeat_and_result(tmp_path) -> None:
     settings = _settings(tmp_path)
     init_db(settings.db_path)
@@ -1891,6 +2154,62 @@ async def test_external_dispatcher_pause_survives_empty_claim_error(tmp_path) ->
     assert paused.paused is True
     assert paused.external_runner_status == "paused"
     assert paused.external_last_error is None
+
+
+@pytest.mark.asyncio
+async def test_external_dispatcher_delete_soft_deletes_token_and_blocks_active_tasks(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/runners/register":
+            return httpx.Response(200, json={"runner_id": "runner-one"})
+        if request.url.path == "/api/runners/runner-one/heartbeat":
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(200, json={"ok": True})
+
+    submission = ImageJobSubmission(settings)
+    adapter = ExternalImageTaskDispatcherAdapter(settings, submission, transport=httpx.MockTransport(handler), dispatcher_id="deletable")
+    saved = await adapter.save_settings(
+        images_module.ImageTaskDispatcherSettingsRequest(
+            name="Deletable",
+            api_base_url="https://dispatcher.example.test/api",
+            token="delete-secret",
+        )
+    )
+    await adapter.close()
+    response = await submission.submit(
+        ImageJobSubmitRequest(
+            source="external_dispatcher",
+            dispatcher_id=saved.id,
+            source_task_id="active-one",
+            idempotency_key="active-one",
+            payload=ImageJobSubmitPayload(prompt="poster"),
+        )
+    )
+
+    with pytest.raises(ImageGenerationError) as exc_info:
+        await adapter.delete()
+    assert exc_info.value.status_code == 409
+
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            "UPDATE image_jobs SET status = 'succeeded', external_delivery_status = 'delivered' WHERE id = ?",
+            (response.job_ids[0],),
+        )
+        conn.execute(
+            "UPDATE image_submissions SET status = 'succeeded', external_delivery_status = 'delivered' WHERE id = ?",
+            (response.submission_id,),
+        )
+
+    deleted = await adapter.delete()
+
+    assert deleted.deleted_at is not None
+    assert deleted.configured is False
+    assert deleted.name == "Deletable"
+    assert deleted.token.configured is False
+    assert "delete-secret" not in settings.db_path.read_text(encoding="utf-8", errors="ignore")
+    assert not _vault_token_path(settings, "deletable").exists()
 
 
 @pytest.mark.asyncio
@@ -2023,12 +2342,20 @@ async def test_worker_status_reports_running_external_tasks(tmp_path) -> None:
     response = await submission.submit(
         ImageJobSubmitRequest(
             source="external_dispatcher",
+            dispatcher_id="status-dispatcher",
             source_task_id="ext-running",
             idempotency_key="idem-running",
             payload=ImageJobSubmitPayload(prompt="external poster"),
         )
     )
     queue = ImageGenerationQueue(settings)
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO image_task_dispatchers (id, name, runner_status, created_at, updated_at)
+            VALUES ('status-dispatcher', 'Status Queue', 'online', 1, 1)
+            """
+        )
     with connect(settings.db_path) as conn:
         conn.execute(
             """
@@ -2048,6 +2375,9 @@ async def test_worker_status_reports_running_external_tasks(tmp_path) -> None:
     assert task.status == "running"
     assert task.started_at == 12
     assert task.lease_owner == "active:test"
+    assert status.dispatchers[0].id == "status-dispatcher"
+    assert status.dispatchers[0].task_count == 1
+    assert status.dispatchers[0].running_external_tasks[0].source_task_id == "ext-running"
     await queue.close()
 
 

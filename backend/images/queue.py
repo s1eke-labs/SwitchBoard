@@ -5,7 +5,7 @@ import uuid
 
 from config import Settings
 from .executor import ImageGenerator, ImageJobExecutor
-from .external import ExternalImageTaskDispatcherAdapter
+from .external import ExternalImageTaskDispatcherManager
 from .models import (
     ImageGalleryListResponse,
     ImageGenerationJobListResponse,
@@ -36,7 +36,7 @@ class ImageGenerationQueue:
         self.executor = ImageJobExecutor(settings, self.store, self.queries, generator)
         self.passive_worker = PassiveImageWorker(self.store, self.executor)
         self.active_worker = ActiveImageWorker(settings, self.store, self.executor, self.coordinator)
-        self.external_dispatcher = ExternalImageTaskDispatcherAdapter(settings, self.submission)
+        self.external_dispatcher = ExternalImageTaskDispatcherManager(settings, self.submission)
 
     async def enqueue(self, payload: ImageGenerationRequest) -> ImageGenerationJobResponse:
         async with self._lock:
@@ -96,6 +96,7 @@ class ImageGenerationQueue:
             active_worker_running=self.active_worker.running,
             active_worker_slots=self.active_worker.slot_count,
             dispatcher=self.external_dispatcher.get_settings(),
+            dispatchers=self.external_dispatcher.list_settings().items,
             active_leases=active_leases,
             queued_jobs=queued_jobs,
             running_jobs=running_jobs,

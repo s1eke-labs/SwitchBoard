@@ -27,6 +27,7 @@ from images import (
     ImageGenerationResponse,
     ImageDispatcherActionResponse,
     ImageDispatcherTestRequest,
+    ImageTaskDispatcherListResponse,
     ImageTaskDispatcherSettingsRequest,
     ImageTaskDispatcherSettingsResponse,
     ImageWorkerStatusResponse,
@@ -341,6 +342,52 @@ def create_app() -> FastAPI:
     @app.get("/api/images/task-dispatcher/settings", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
     def image_task_dispatcher_settings() -> ImageTaskDispatcherSettingsResponse:
         return image_queue.external_dispatcher.get_settings()
+
+    @app.get("/api/images/task-dispatchers", response_model=ImageTaskDispatcherListResponse, dependencies=authed)
+    def image_task_dispatchers() -> ImageTaskDispatcherListResponse:
+        return image_queue.external_dispatcher.list_settings()
+
+    @app.post("/api/images/task-dispatchers", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def create_image_task_dispatcher(payload: ImageTaskDispatcherSettingsRequest) -> ImageTaskDispatcherSettingsResponse:
+        try:
+            return await image_queue.external_dispatcher.create_settings(payload)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_SUBMISSION_INVALID", str(exc)) from exc
+
+    @app.put("/api/images/task-dispatchers/{dispatcher_id}", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def update_image_task_dispatcher(dispatcher_id: str, payload: ImageTaskDispatcherSettingsRequest) -> ImageTaskDispatcherSettingsResponse:
+        try:
+            return await image_queue.external_dispatcher.update_settings(dispatcher_id, payload)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_SUBMISSION_INVALID", str(exc)) from exc
+
+    @app.post("/api/images/task-dispatchers/{dispatcher_id}/test", response_model=ImageDispatcherActionResponse, dependencies=authed)
+    async def test_named_image_task_dispatcher(dispatcher_id: str, payload: ImageDispatcherTestRequest) -> ImageDispatcherActionResponse:
+        try:
+            return await image_queue.external_dispatcher.test(payload, dispatcher_id=dispatcher_id)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_SUBMISSION_INVALID", str(exc)) from exc
+        except Exception as exc:
+            raise http_error(status.HTTP_502_BAD_GATEWAY, "IMAGE_EXTERNAL_DELIVERY_FAILED", "Task dispatcher connection failed") from exc
+
+    @app.post("/api/images/task-dispatchers/{dispatcher_id}/register", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def register_named_image_task_dispatcher(dispatcher_id: str) -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.register(dispatcher_id)
+
+    @app.post("/api/images/task-dispatchers/{dispatcher_id}/pause", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def pause_named_image_task_dispatcher(dispatcher_id: str) -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.pause(dispatcher_id)
+
+    @app.post("/api/images/task-dispatchers/{dispatcher_id}/resume", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def resume_named_image_task_dispatcher(dispatcher_id: str) -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.resume(dispatcher_id)
+
+    @app.delete("/api/images/task-dispatchers/{dispatcher_id}", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def delete_named_image_task_dispatcher(dispatcher_id: str) -> ImageTaskDispatcherSettingsResponse:
+        try:
+            return await image_queue.external_dispatcher.delete(dispatcher_id)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
 
     @app.put("/api/images/task-dispatcher/settings", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
     async def save_image_task_dispatcher_settings(payload: ImageTaskDispatcherSettingsRequest) -> ImageTaskDispatcherSettingsResponse:

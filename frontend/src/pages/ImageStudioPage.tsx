@@ -96,16 +96,18 @@ export function ImageStudioPage() {
   const galleryPageSize = galleryMetrics.pageSize;
 
   const dispatcherSettings = useQuery({
-    queryKey: ["imageTaskDispatcherSettings"],
-    queryFn: api.imageTaskDispatcherSettings,
+    queryKey: ["imageTaskDispatchers"],
+    queryFn: api.imageTaskDispatchers,
   });
   const gallerySourceOptions = useMemo(() => {
     const options = [
       { value: "all", label: t("images.source.all") },
       { value: "local", label: t("images.source.local") },
     ];
-    if (dispatcherSettings.data?.name) {
-      options.push({ value: "dispatcher:default", label: dispatcherSettings.data.name });
+    for (const dispatcher of dispatcherSettings.data?.items ?? []) {
+      if (dispatcher.name) {
+        options.push({ value: `dispatcher:${dispatcher.id}`, label: dispatcher.name });
+      }
     }
     return options;
   }, [dispatcherSettings.data, t]);
