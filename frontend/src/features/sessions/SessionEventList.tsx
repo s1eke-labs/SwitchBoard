@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { api, SessionEventPreview, SessionUserIndexItem } from "@/lib/api";
 import { translate, useI18n } from "@/i18n";
 import { formatAppError } from "@/lib/errors";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/heroui/alert";
+import { Avatar } from "@/components/heroui/avatar";
+import { Badge } from "@/components/heroui/badge";
+import { Button } from "@/components/heroui/button";
+import { ListBox } from "@/components/heroui/list-box";
+import { Spinner } from "@/components/heroui/spinner";
 import { formatBytes, fullEventBody, userIndexLabel } from "@/features/sessions/sessionUtils";
 
 const SESSION_EVENTS_PAGE_SIZE = 80;
@@ -105,11 +109,11 @@ function EventRow({ event, threadId, focused }: { event: SessionEventPreview; th
             <div className="mt-1 flex flex-wrap items-center gap-2">
               {event.body_truncated && fullEvent.isFetching ? (
                 <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                  <Loader2 className="animate-spin" size={12} />
+                  <Spinner />
                   {translate("common.loading")}
                 </span>
               ) : null}
-              {fullEvent.error ? <span className="text-xs text-destructive">{formatAppError(fullEvent.error)}</span> : null}
+              {fullEvent.error ? <Alert tone="danger" className="text-xs">{formatAppError(fullEvent.error)}</Alert> : null}
             </div>
           </div>
         ) : null}
@@ -120,15 +124,15 @@ function EventRow({ event, threadId, focused }: { event: SessionEventPreview; th
   return (
     <div className="relative px-4 py-2.5 sm:px-5">
       <div className="flex w-full items-start gap-3">
-        <div
+        <Avatar
           className={cn(
-            "relative z-10 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold shadow-sm",
+            "relative z-10 mt-0.5 h-8 w-8 shadow-sm",
             display.avatarClassName,
           )}
           aria-hidden="true"
         >
-          {display.avatar}
-        </div>
+          <Avatar.Fallback>{display.avatar}</Avatar.Fallback>
+        </Avatar>
         <article
           className={cn(
             "min-w-0 flex-1 rounded-lg border px-3.5 py-3 transition-shadow",
@@ -161,11 +165,11 @@ function EventRow({ event, threadId, focused }: { event: SessionEventPreview; th
               </Button>
               {fullEvent.isFetching ? (
                 <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                  <Loader2 className="animate-spin" size={12} />
+                  <Spinner />
                   {translate("common.loading")}
                 </span>
               ) : null}
-              {fullEvent.error ? <span className="text-xs text-destructive">{formatAppError(fullEvent.error)}</span> : null}
+              {fullEvent.error ? <Alert tone="danger" className="text-xs">{formatAppError(fullEvent.error)}</Alert> : null}
             </div>
           ) : null}
         </article>
@@ -190,6 +194,7 @@ function SessionUserDirectory({
   onJump: (item: SessionUserIndexItem) => void;
 }) {
   const errorMessage = error ? formatAppError(error) : null;
+  const activeItem = items.find((item) => item.line_no === activeLineNo || item.event_index === pendingEventIndex);
 
   return (
     <aside className="flex min-h-0 flex-col border-b bg-white lg:border-b-0 lg:border-r">
@@ -202,32 +207,38 @@ function SessionUserDirectory({
       <div className="max-h-52 min-h-0 overflow-auto px-3 py-4 lg:max-h-none lg:flex-1">
         {loading ? (
           <div className="flex items-center px-1 py-4 text-xs text-muted-foreground">
-            <Loader2 className="mr-2 animate-spin" size={14} />
+            <Spinner className="mr-2" />
             {translate("sessions.loadingIndex")}
           </div>
         ) : errorMessage ? (
-          <div className="px-1 py-4 text-xs text-destructive">{errorMessage}</div>
+          <Alert tone="danger" className="mx-1 my-4 text-xs">{errorMessage}</Alert>
         ) : items.length ? (
-          <div className="space-y-3">
+          <ListBox
+            aria-label={translate("sessions.userMessages")}
+            selectionMode="single"
+            selectedKeys={activeItem ? [activeItem.id] : []}
+            className="space-y-3"
+            onAction={(key) => {
+              const item = items.find((candidate) => candidate.id === key);
+              if (item) onJump(item);
+            }}
+          >
             {items.map((item) => {
               const active = item.line_no === activeLineNo || item.event_index === pendingEventIndex;
               const timeLabel = item.timestamp ? formatTime(Date.parse(item.timestamp) / 1000) : "";
               return (
-                <button
+                <ListBox.Item
                   key={item.id}
-                  type="button"
+                  id={item.id}
+                  textValue={userIndexLabel(item)}
                   className={cn(
-                    "flex w-full items-start gap-3 rounded-lg border bg-white px-3.5 py-3 text-left transition-colors hover:bg-muted/40",
+                    "flex w-full items-start gap-3 px-3.5 py-3 text-left",
                     active ? "border-blue-200 bg-blue-50/80 ring-1 ring-blue-100" : "border-border",
                   )}
-                  onClick={() => onJump(item)}
                 >
-                  <span
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white"
-                    aria-hidden="true"
-                  >
-                    U
-                  </span>
+                  <Avatar className="h-8 w-8 bg-blue-600 text-white" aria-hidden="true">
+                    <Avatar.Fallback>U</Avatar.Fallback>
+                  </Avatar>
                   <span className="min-w-0 flex-1">
                     <span className="line-clamp-2 break-words text-sm font-semibold leading-5 text-foreground">
                       {userIndexLabel(item)}
@@ -238,10 +249,10 @@ function SessionUserDirectory({
                       <span>{translate("sessions.line", { line: item.line_no })}</span>
                     </span>
                   </span>
-                </button>
+                </ListBox.Item>
               );
             })}
-          </div>
+          </ListBox>
         ) : (
           <div className="px-1 py-4 text-xs text-muted-foreground">{translate("sessions.noUserMessages")}</div>
         )}
@@ -329,7 +340,7 @@ export function SessionEventList({
   if (detailPending && activeId) {
     return (
       <div className="flex h-40 items-center justify-center text-muted-foreground">
-        <Loader2 className="mr-2 animate-spin" size={18} />
+        <Spinner className="mr-2" />
         {translate("common.loading")}
       </div>
     );
@@ -342,14 +353,14 @@ export function SessionEventList({
   if (events.isPending) {
     return (
       <div className="flex h-40 items-center justify-center text-muted-foreground">
-        <Loader2 className="mr-2 animate-spin" size={18} />
+        <Spinner className="mr-2" />
         {translate("common.loading")}
       </div>
     );
   }
 
   if (events.error) {
-    return <div className="p-4 text-sm text-destructive">{formatAppError(events.error)}</div>;
+    return <Alert tone="danger" className="m-4">{formatAppError(events.error)}</Alert>;
   }
 
   if (!eventItems.length) {
@@ -395,7 +406,7 @@ export function SessionEventList({
                     <div className="flex items-center justify-center px-4 py-6 text-sm text-muted-foreground">
                       {events.isFetchingNextPage ? (
                         <>
-                          <Loader2 className="mr-2 animate-spin" size={16} />
+                          <Spinner className="mr-2" />
                           {translate("sessions.loadMore")}
                         </>
                       ) : (

@@ -11,7 +11,9 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from account_usage import observe_account_usage_conn
 from config import Settings
+from codex_files import current_account_id
 from db import connect
 from pricing import estimate_cost
 from sessions import _readonly_connect, _state_db_path, iso_to_ts, resolve_rollout_path
@@ -40,6 +42,8 @@ class UsageRequestLogDTO(BaseModel):
     id: str
     thread_id: str
     event_index: int
+    account_id: str | None
+    account_display_name: str | None
     occurred_at: int
     billing_model: str | None
     input_tokens: int
@@ -123,6 +127,7 @@ class RolloutStat:
 
 
 AGGREGATION_REFRESH_SECONDS = 10 * 60
+UNASSIGNED_ACCOUNT_FILTER = "__unassigned__"
 RANGE_SPECS = (
     UsageRangeSpec("24h", 60 * 60 * 24, "hour"),
     UsageRangeSpec("7d", 60 * 60 * 24 * 7, "day"),
@@ -250,6 +255,20 @@ def _rollout_stat(path: Path) -> RolloutStat | None:
     return RolloutStat(mtime_ns=stat.st_mtime_ns, size_bytes=stat.st_size)
 
 
+def _account_id_at(conn: sqlite3.Connection, occurred_at: int) -> str | None:
+    row = conn.execute(
+        """
+        SELECT account_id
+        FROM account_usage_intervals
+        WHERE started_at <= ? AND (ended_at IS NULL OR ended_at > ?)
+        ORDER BY started_at DESC, id DESC
+        LIMIT 1
+        """,
+        (occurred_at, occurred_at),
+    ).fetchone()
+    return row["account_id"] if row else None
+
+
 def _discover_rollouts(settings: Settings) -> list[RolloutSource]:
     sources: dict[Path, RolloutSource] = {}
     thread_rows = _thread_rows(settings)
@@ -300,6 +319,9 @@ def _sync_usage_events(settings: Settings) -> None:
     if not sources:
         return
     with connect(settings.db_path) as app_conn:
+        current_id = current_account_id(settings.codex_home)
+        if current_id:
+            observe_account_usage_conn(app_conn, current_id)
         for source in sources:
             stat = _rollout_stat(source.path)
             if stat is None:
@@ -360,18 +382,20 @@ def _sync_usage_events(settings: Settings) -> None:
                     cache_creation_tokens = max(input_tokens - cache_hit_tokens, 0)
                     output_tokens = usage["output_tokens"]
                     cost, known = estimate_cost(model, input_tokens, cache_hit_tokens, output_tokens)
+                    account_id = _account_id_at(app_conn, occurred_at)
                     app_conn.execute(
                         """
                         INSERT OR IGNORE INTO usage_events (
-                            thread_id, event_index, occurred_at, model, input_tokens,
+                            thread_id, event_index, account_id, occurred_at, model, input_tokens,
                             cache_hit_tokens, cache_creation_tokens, output_tokens,
                             reasoning_output_tokens, total_tokens, cost_usd, cost_known
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             source.thread_id,
                             index,
+                            account_id,
                             occurred_at,
                             model,
                             input_tokens,
@@ -663,6 +687,8 @@ def _request_log_from_row(row: sqlite3.Row) -> UsageRequestLogDTO:
         id=_request_log_id(row["thread_id"], row["event_index"]),
         thread_id=row["thread_id"],
         event_index=row["event_index"],
+        account_id=row["account_id"],
+        account_display_name=row["account_display_name"],
         occurred_at=row["occurred_at"],
         billing_model=row["model"],
         input_tokens=row["input_tokens"],
@@ -700,6 +726,7 @@ def get_usage_request_logs(
     limit: int = 50,
     cursor: str | None = None,
     page: int = 1,
+    account_id: str | None = None,
 ) -> UsageRequestLogsResponse:
     cursor_value = _decode_request_log_cursor(cursor)
     if page < 1:
@@ -711,6 +738,11 @@ def get_usage_request_logs(
     safe_limit = max(1, min(limit, 100))
     filters = ["occurred_at >= ?", "occurred_at <= ?"]
     params: list[Any] = [from_ts, to_ts]
+    if account_id == UNASSIGNED_ACCOUNT_FILTER:
+        filters.append("account_id IS NULL")
+    elif account_id:
+        filters.append("account_id = ?")
+        params.append(account_id)
     page_filters = list(filters)
     page_params = list(params)
     if cursor_value is not None:
@@ -796,11 +828,18 @@ def get_usage_request_logs(
         rows = list(
             conn.execute(
                 f"""
-                SELECT *
-                FROM usage_events
-                WHERE {where}
-                ORDER BY occurred_at DESC, thread_id DESC, event_index DESC
-                LIMIT ?
+                SELECT
+                    usage_events.*,
+                    COALESCE(accounts.custom_name, accounts.display_name, usage_events.account_id) AS account_display_name
+                FROM (
+                    SELECT *
+                    FROM usage_events
+                    WHERE {where}
+                    ORDER BY occurred_at DESC, thread_id DESC, event_index DESC
+                    LIMIT ?
+                ) AS usage_events
+                LEFT JOIN accounts ON accounts.account_id = usage_events.account_id
+                ORDER BY usage_events.occurred_at DESC, usage_events.thread_id DESC, usage_events.event_index DESC
                 """,
                 (*page_params, safe_limit + 1),
             )

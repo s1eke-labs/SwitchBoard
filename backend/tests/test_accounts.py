@@ -503,6 +503,13 @@ async def test_switch_account_replaces_current_auth_and_scans(monkeypatch: pytes
     assert result.status == "ok"
     assert result.account.account_id == "acct-one"
     assert read_json(current_auth_path(settings.codex_home))["tokens"]["account_id"] == "acct-one"
+    with connect(settings.db_path) as conn:
+        intervals = list(conn.execute("SELECT account_id, ended_at FROM account_usage_intervals ORDER BY id"))
+
+    assert [row["account_id"] for row in intervals] == ["acct-one", "acct-two", "acct-one"]
+    assert intervals[0]["ended_at"] is not None
+    assert intervals[1]["ended_at"] is not None
+    assert intervals[2]["ended_at"] is None
 
 
 def test_switch_account_migrates_legacy_codex_home_vault(tmp_path: Path) -> None:

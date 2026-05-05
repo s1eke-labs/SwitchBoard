@@ -12,7 +12,8 @@ from typing import Any
 import httpx
 from pydantic import BaseModel
 
-from codex_files import current_account_id, current_auth_path, read_json
+from account_usage import observe_account_usage_conn
+from codex_files import auth_tokens, current_account_id, current_auth_path, read_json
 from config import Settings
 from db import connect, now_ts
 from issues import IssueDetail, scan_warning_from_message
@@ -366,19 +367,6 @@ async def _fetch_json(client: httpx.AsyncClient, url: str, access_token: str) ->
     return response.json()
 
 
-def _auth_tokens(auth: dict[str, Any]) -> tuple[str, str]:
-    tokens = auth.get("tokens")
-    if not isinstance(tokens, dict):
-        raise ValueError("auth.json does not contain ChatGPT tokens")
-    account_id = tokens.get("account_id")
-    access_token = tokens.get("access_token")
-    if not isinstance(account_id, str) or not account_id:
-        raise ValueError("auth.json does not contain tokens.account_id")
-    if not isinstance(access_token, str) or not access_token:
-        raise ValueError("auth.json does not contain tokens.access_token")
-    return account_id, access_token
-
-
 def _account_vault_dir(settings: Settings, account_id: str) -> Path:
     if not account_id or "/" in account_id or "\\" in account_id or account_id in {".", ".."}:
         raise ValueError("Invalid account_id")
@@ -469,7 +457,7 @@ def _migrated_account_auth_path(settings: Settings, account_id: str) -> Path:
     legacy_path = _legacy_account_auth_path(settings, account_id)
     if legacy_path.exists():
         auth = _read_stored_auth(settings, legacy_path)
-        stored_account_id, _ = _auth_tokens(auth)
+        stored_account_id, _ = auth_tokens(auth)
         if stored_account_id != account_id:
             return legacy_path
         save_account_auth(settings, account_id, auth)
@@ -481,7 +469,7 @@ def switch_account_auth(settings: Settings, account_id: str) -> None:
     if not stored_path.exists():
         raise KeyError(account_id)
     auth = _read_stored_auth(settings, stored_path)
-    stored_account_id, _ = _auth_tokens(auth)
+    stored_account_id, _ = auth_tokens(auth)
     if stored_account_id != account_id:
         raise ValueError("Stored auth account_id does not match requested account")
     _write_private_json(current_auth_path(settings.codex_home), auth)
@@ -547,7 +535,8 @@ async def scan_current_account(settings: Settings) -> ScanResult:
         raise FileNotFoundError(f"{auth_path} does not exist")
 
     auth = read_json(auth_path)
-    account_id, access_token = _auth_tokens(auth)
+    account_id, access_token = auth_tokens(auth)
+    observed_at = now_ts()
     tokens = auth["tokens"]
     save_account_auth(settings, account_id, auth)
 
@@ -584,6 +573,7 @@ async def scan_current_account(settings: Settings) -> ScanResult:
             plan_type,
             last_error,
         )
+        observe_account_usage_conn(conn, account_id, observed_at)
         if rate_limits:
             primary = rate_limits.get("primary") or {}
             secondary = rate_limits.get("secondary") or {}

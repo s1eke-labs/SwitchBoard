@@ -1,30 +1,45 @@
 import { FormEvent, useState } from "react";
-import { Check, Clock, Loader2, LogIn, Pencil, Trash2, X } from "lucide-react";
+import { Check, Clock, LogIn, Pencil, Trash2, X } from "lucide-react";
 import { AccountDTO, LimitDTO } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { formatAppError } from "@/lib/errors";
 import { cn, formatDuration, formatPercent, formatTime } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Alert } from "@/components/heroui/alert";
+import { Badge } from "@/components/heroui/badge";
+import { Button, type ButtonProps } from "@/components/heroui/button";
+import { Card, CardContent } from "@/components/heroui/card";
+import { Form } from "@/components/heroui/form";
+import { Input } from "@/components/heroui/input";
+import { Meter } from "@/components/heroui/meter";
+import { Spinner } from "@/components/heroui/spinner";
+import { Tooltip } from "@/components/heroui/tooltip";
 
 function LimitMeter({ label, limit }: { label: string; limit: LimitDTO | null }) {
   const remaining = limit?.remaining_percent ?? 100;
   return (
-    <div className="min-w-0">
+    <Meter aria-label={label} minValue={0} maxValue={100} value={remaining}>
       <div className="mb-1 flex items-center justify-between gap-2 text-xs">
         <span className="font-semibold text-muted-foreground">{label}</span>
-        <span className="font-bold">{formatPercent(remaining)}</span>
+        <Meter.Output>{formatPercent(remaining)}</Meter.Output>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full limit-bar" style={{ width: `${Math.max(0, Math.min(100, remaining))}%` }} />
-      </div>
+      <Meter.Track>
+        <Meter.Fill />
+      </Meter.Track>
       <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
         <Clock size={12} />
         <span>{formatTime(limit?.resets_at)}</span>
       </div>
-    </div>
+    </Meter>
+  );
+}
+
+function IconActionButton({ label, children, ...props }: ButtonProps & { label: string }) {
+  return (
+    <Tooltip content={label}>
+      <Button aria-label={label} size="icon" {...props}>
+        {children}
+      </Button>
+    </Tooltip>
   );
 }
 
@@ -82,7 +97,7 @@ export function AccountCard({
         <div className="mb-3 flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             {isEditing ? (
-              <form onSubmit={saveName} className="flex min-w-0 flex-wrap items-center gap-2">
+              <Form onSubmit={saveName} className="flex min-w-0 flex-wrap items-center gap-2">
                 <Input
                   autoFocus
                   className="h-8 w-44 max-w-full"
@@ -90,20 +105,16 @@ export function AccountCard({
                   value={draftName}
                   onChange={(event) => setDraftName(event.target.value)}
                 />
-                <Button
-                  aria-label={t("accounts.saveName")}
-                  title={t("accounts.saveName")}
-                  size="icon"
+                <IconActionButton
+                  label={t("accounts.saveName")}
                   className={actionButtonClass}
                   type="submit"
                   disabled={renaming}
                 >
-                  {renaming ? <Loader2 className="animate-spin" size={iconSize} /> : <Check size={iconSize} />}
-                </Button>
-                <Button
-                  aria-label={t("accounts.cancelRename")}
-                  title={t("accounts.cancelRename")}
-                  size="icon"
+                  {renaming ? <Spinner /> : <Check size={iconSize} />}
+                </IconActionButton>
+                <IconActionButton
+                  label={t("accounts.cancelRename")}
                   className={actionButtonClass}
                   type="button"
                   variant="ghost"
@@ -111,8 +122,8 @@ export function AccountCard({
                   disabled={renaming}
                 >
                   <X size={iconSize} />
-                </Button>
-              </form>
+                </IconActionButton>
+              </Form>
             ) : (
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="min-w-0 truncate text-base font-bold">{account.display_name}</h3>
@@ -123,49 +134,43 @@ export function AccountCard({
               </div>
             )}
             {renameError ? (
-              <p className="mt-2 text-xs text-destructive">
+              <Alert tone="danger" className="mt-2 px-2 py-1 text-xs">
                 {renameError instanceof Error ? formatAppError(renameError) : t("accounts.renameFailedFallback")}
-              </p>
+              </Alert>
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {!account.current ? (
-              <Button
-                aria-label={t("accounts.switchAccount")}
-                title={t("accounts.switchAccount")}
-                size="icon"
+              <IconActionButton
+                label={t("accounts.switchAccount")}
                 variant="secondary"
                 className={actionButtonClass}
                 onClick={() => onSwitch(account.account_id)}
                 disabled={switching}
               >
-                {switching ? <Loader2 className="animate-spin" size={iconSize} /> : <LogIn size={iconSize} />}
-              </Button>
+                {switching ? <Spinner /> : <LogIn size={iconSize} />}
+              </IconActionButton>
             ) : null}
             {!isEditing ? (
-              <Button
-                aria-label={t("accounts.renameAccount")}
-                title={t("accounts.renameAccount")}
-                size="icon"
+              <IconActionButton
+                label={t("accounts.renameAccount")}
                 variant="ghost"
                 className={actionButtonClass}
                 onClick={beginEditing}
               >
                 <Pencil size={iconSize} />
-              </Button>
+              </IconActionButton>
             ) : null}
             {!account.current ? (
-              <Button
-                aria-label={t("accounts.hideAccount")}
-                title={t("accounts.hideAccount")}
-                size="icon"
+              <IconActionButton
+                label={t("accounts.hideAccount")}
                 variant="ghost"
                 className={actionButtonClass}
                 onClick={() => onHide(account.account_id)}
                 disabled={switching}
               >
                 <Trash2 size={iconSize} />
-              </Button>
+              </IconActionButton>
             ) : null}
           </div>
         </div>

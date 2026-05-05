@@ -1,77 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Loader2, Search, UserRound } from "lucide-react";
+import { UserRound } from "lucide-react";
 import { api, SessionSummary } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { cn, formatNumber, formatTime } from "@/lib/utils";
 import { sessionPath } from "@/app/routing";
 import { SessionEventList } from "@/features/sessions/SessionEventList";
-import { Button } from "@/components/ui/button";
-import { Card, CardHeader } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { PageSelector } from "@/components/PageSelector";
+import { Card, CardHeader } from "@/components/heroui/card";
+import { SearchField } from "@/components/heroui/search-field";
+import { Spinner } from "@/components/heroui/spinner";
 
 const SESSIONS_PAGE_SIZE = 7;
-
-function PageSelector({
-  page,
-  totalPages,
-  disabled,
-  jumping,
-  onSelect,
-}: {
-  page: number;
-  totalPages: number;
-  disabled: boolean;
-  jumping: boolean;
-  onSelect: (page: number) => void;
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const pageCount = Math.max(1, totalPages);
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        className="h-9 min-w-24 rounded-md px-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-        onClick={() => setOpen((value) => !value)}
-        disabled={disabled || pageCount <= 1}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-      >
-        {jumping ? t("common.loadingEllipsis") : t("common.pageLabel", { page: Math.min(page, pageCount), total: pageCount })}
-      </button>
-      {open ? (
-        <div className="absolute bottom-11 left-1/2 z-20 max-h-56 w-56 -translate-x-1/2 overflow-auto rounded-lg border bg-white p-2 shadow-soft">
-          <div className="grid grid-cols-4 gap-1" role="listbox" aria-label={t("common.selectPage")}>
-            {Array.from({ length: pageCount }, (_, index) => {
-              const pageNumber = index + 1;
-              const active = pageNumber === page;
-              return (
-                <button
-                  key={pageNumber}
-                  type="button"
-                  className={cn(
-                    "h-8 rounded-md text-sm font-semibold transition-colors hover:bg-muted",
-                    active ? "bg-foreground text-white hover:bg-foreground" : "text-foreground",
-                  )}
-                  onClick={() => {
-                    setOpen(false);
-                    onSelect(pageNumber);
-                  }}
-                  role="option"
-                  aria-selected={active}
-                >
-                  {pageNumber}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 function SessionButton({
   session,
@@ -162,21 +102,20 @@ export function SessionsPage({
           <UserRound size={20} strokeWidth={1.8} />
           <h2 className="text-2xl font-bold leading-tight">{t("sessions.title")}</h2>
         </div>
-        <div className="relative w-full sm:w-96">
-          <Search className="pointer-events-none absolute left-3 top-2.5 text-muted-foreground" size={16} />
-          <Input
-            className="h-10 rounded-lg pl-9 text-sm"
-            placeholder={t("sessions.searchPlaceholder")}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </div>
+        <SearchField
+          aria-label={t("sessions.searchPlaceholder")}
+          className="w-full sm:w-96"
+          placeholder={t("sessions.searchPlaceholder")}
+          value={query}
+          onChange={setQuery}
+          onClear={() => setQuery("")}
+        />
       </div>
       <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[365px_minmax(0,1fr)]">
         <Card className="flex min-h-[380px] flex-col overflow-hidden rounded-lg shadow-none">
           {sessions.isPending ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">
-              <Loader2 className="mr-2 animate-spin" size={18} />
+              <Spinner className="mr-2" />
               {t("common.loading")}
             </div>
           ) : sessionItems.length || page > 1 ? (
@@ -212,37 +151,13 @@ export function SessionsPage({
                 )}
               </div>
               <div className="flex items-center justify-center border-t p-3">
-                <div className="inline-flex items-center gap-2 bg-white">
-                  <Button
-                    aria-label={t("common.previousPage")}
-                    title={t("common.previousPage")}
-                    variant="secondary"
-                    size="icon"
-                    className="h-9 w-9 rounded-lg"
-                    onClick={() => setPage((value) => Math.max(1, value - 1))}
-                    disabled={page === 1 || sessions.isFetching}
-                  >
-                    <ChevronLeft size={16} />
-                  </Button>
-                  <PageSelector
-                    page={page}
-                    totalPages={totalPages}
-                    disabled={sessions.isFetching}
-                    jumping={sessions.isFetching}
-                    onSelect={selectPage}
-                  />
-                  <Button
-                    aria-label={t("common.nextPage")}
-                    title={t("common.nextPage")}
-                    variant="secondary"
-                    size="icon"
-                    className="h-9 w-9 rounded-lg"
-                    onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
-                    disabled={page >= totalPages || sessions.isFetching}
-                  >
-                    <ChevronRight size={16} />
-                  </Button>
-                </div>
+                <PageSelector
+                  page={page}
+                  totalPages={totalPages}
+                  disabled={sessions.isFetching}
+                  jumping={sessions.isFetching}
+                  onSelect={selectPage}
+                />
               </div>
             </>
           ) : (

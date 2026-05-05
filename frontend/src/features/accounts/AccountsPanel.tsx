@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, Download, Loader2, RefreshCw, Upload } from "lucide-react";
-import { toast } from "sonner";
+import { ChevronDown, ChevronUp, Download, RefreshCw, Upload } from "lucide-react";
+import { toast } from "@heroui/react";
 import { api, AccountDTO } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { formatAppError, formatIssueMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/heroui/alert";
+import { Button } from "@/components/heroui/button";
+import { Spinner } from "@/components/heroui/spinner";
+import { Toolbar } from "@/components/heroui/toolbar";
+import { Tooltip } from "@/components/heroui/tooltip";
 import { AccountCard } from "@/features/accounts/AccountCard";
 
 const COLLAPSED_VISIBLE_COUNT = 3;
@@ -47,26 +51,27 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
   function handleSwitch(accountId: string) {
     const targetAccount = accounts.find((account) => account.account_id === accountId);
     const targetName = targetAccount?.display_name ?? t("accounts.defaultName");
+    const toastId = toast(t("accounts.switchingTo", { name: targetName }), { isLoading: true });
     const promise = switchAccount.mutateAsync(accountId);
 
-    toast.promise(promise, {
-      loading: t("accounts.switchingTo", { name: targetName }),
-      success: (result) => {
+    promise
+      .then((result) => {
+        toast.close(toastId);
         if (result.warning) {
           toast.warning(t("accounts.scanWarningTitle"), {
             description: formatIssueMessage(result.warning) ?? result.warning.message,
           });
         }
-        return {
-          message: t("accounts.accountSwitched"),
+        toast.success(t("accounts.accountSwitched"), {
           description: t("accounts.accountSwitchedDescription", { name: result.account.display_name }),
-        };
-      },
-      error: (error) => ({
-        message: t("accounts.switchFailed"),
-        description: error instanceof Error ? formatAppError(error) : t("accounts.switchFailedFallback"),
-      }),
-    });
+        });
+      })
+      .catch((error) => {
+        toast.close(toastId);
+        toast.danger(t("accounts.switchFailed"), {
+          description: error instanceof Error ? formatAppError(error) : t("accounts.switchFailedFallback"),
+        });
+      });
   }
 
   function configFileName() {
@@ -88,22 +93,25 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
   }
 
   function handleExportConfig() {
+    const toastId = toast(t("accounts.exportingConfig"), { isLoading: true });
     const promise = exportConfig.mutateAsync().then((config) => {
       downloadConfigFile(config);
       return config;
     });
 
-    toast.promise(promise, {
-      loading: t("accounts.exportingConfig"),
-      success: (config) => ({
-        message: t("accounts.configExported"),
-        description: t("accounts.configExportedDescription", { count: config.accounts.length }),
-      }),
-      error: (error) => ({
-        message: t("accounts.exportFailed"),
-        description: error instanceof Error ? formatAppError(error) : t("accounts.exportFailedFallback"),
-      }),
-    });
+    promise
+      .then((config) => {
+        toast.close(toastId);
+        toast.success(t("accounts.configExported"), {
+          description: t("accounts.configExportedDescription", { count: config.accounts.length }),
+        });
+      })
+      .catch((error) => {
+        toast.close(toastId);
+        toast.danger(t("accounts.exportFailed"), {
+          description: error instanceof Error ? formatAppError(error) : t("accounts.exportFailedFallback"),
+        });
+      });
   }
 
   async function handleImportConfig(file: File) {
@@ -118,7 +126,7 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
         }),
       });
     } catch (error) {
-      toast.error(t("accounts.importFailed"), {
+      toast.danger(t("accounts.importFailed"), {
         description: error instanceof Error ? formatAppError(error) : t("accounts.importFailedFallback"),
       });
     }
@@ -142,17 +150,18 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
               <h2 className="text-2xl font-bold">{t("accounts.title")}</h2>
               <p className="truncate text-sm text-muted-foreground">{current?.display_name ?? t("accounts.noCurrentAccount")}</p>
             </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Toolbar aria-label={t("accounts.title")}>
               {hasHiddenAccounts ? (
-                <Button
-                  aria-label={expanded ? t("accounts.collapse") : t("accounts.expand")}
-                  title={expanded ? t("accounts.collapse") : t("accounts.expand")}
-                  size="icon"
-                  variant="secondary"
-                  onClick={() => setExpanded((value) => !value)}
-                >
-                  {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                </Button>
+                <Tooltip content={expanded ? t("accounts.collapse") : t("accounts.expand")}>
+                  <Button
+                    aria-label={expanded ? t("accounts.collapse") : t("accounts.expand")}
+                    size="icon"
+                    variant="secondary"
+                    onClick={() => setExpanded((value) => !value)}
+                  >
+                    {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </Button>
+                </Tooltip>
               ) : null}
               <input
                 ref={importInputRef}
@@ -165,36 +174,38 @@ export function AccountsPanel({ accounts }: { accounts: AccountDTO[] }) {
                   if (file) void handleImportConfig(file);
                 }}
               />
-              <Button
-                aria-label={t("accounts.importConfig")}
-                title={t("accounts.importConfig")}
-                size="icon"
-                variant="secondary"
-                onClick={() => importInputRef.current?.click()}
-                disabled={importConfig.isPending}
-              >
-                {importConfig.isPending ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
-              </Button>
-              <Button
-                aria-label={t("accounts.exportConfig")}
-                title={t("accounts.exportConfig")}
-                size="icon"
-                variant="secondary"
-                onClick={handleExportConfig}
-                disabled={exportConfig.isPending}
-              >
-                {exportConfig.isPending ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
-              </Button>
+              <Tooltip content={t("accounts.importConfig")}>
+                <Button
+                  aria-label={t("accounts.importConfig")}
+                  size="icon"
+                  variant="secondary"
+                  onClick={() => importInputRef.current?.click()}
+                  disabled={importConfig.isPending}
+                >
+                  {importConfig.isPending ? <Spinner /> : <Upload size={16} />}
+                </Button>
+              </Tooltip>
+              <Tooltip content={t("accounts.exportConfig")}>
+                <Button
+                  aria-label={t("accounts.exportConfig")}
+                  size="icon"
+                  variant="secondary"
+                  onClick={handleExportConfig}
+                  disabled={exportConfig.isPending}
+                >
+                  {exportConfig.isPending ? <Spinner /> : <Download size={16} />}
+                </Button>
+              </Tooltip>
               <Button onClick={() => scan.mutate()} disabled={scan.isPending}>
-                {scan.isPending ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
+                {scan.isPending ? <Spinner /> : <RefreshCw size={16} />}
                 {t("accounts.scan")}
               </Button>
-            </div>
+            </Toolbar>
           </div>
           {scan.data?.warning ? (
-            <div className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800">
+            <Alert tone="warning">
               {formatIssueMessage(scan.data.warning) ?? scan.data.warning.message}
-            </div>
+            </Alert>
           ) : null}
           <div className={cn("min-h-0", expanded ? "flex-1 overflow-y-auto pr-2" : "flex-1 overflow-hidden")}>
             <div className={cn("grid grid-cols-3 gap-4", !expanded && "h-full auto-rows-fr")}>

@@ -11,7 +11,7 @@ from vault_crypto import auth_vault_key_path
 def test_api_requires_login(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -42,7 +42,7 @@ def test_api_requires_login(monkeypatch, tmp_path) -> None:
 def test_config_import_export_api_auth_and_summary(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -103,7 +103,7 @@ def test_config_import_export_api_auth_and_summary(monkeypatch, tmp_path) -> Non
 def test_config_import_api_returns_bad_request_for_invalid_schema(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -129,7 +129,7 @@ def test_config_import_api_returns_bad_request_for_invalid_schema(monkeypatch, t
 def test_login_uses_constant_time_compare(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -157,7 +157,7 @@ def test_login_uses_constant_time_compare(monkeypatch, tmp_path) -> None:
 def test_sessions_api_returns_bad_request_for_invalid_cursor(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -185,7 +185,7 @@ def test_sessions_api_returns_bad_request_for_invalid_cursor(monkeypatch, tmp_pa
 def test_sessions_api_returns_bad_request_for_invalid_page(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -208,7 +208,7 @@ def test_sessions_api_returns_bad_request_for_invalid_page(monkeypatch, tmp_path
 def test_usage_request_logs_api_returns_bad_request_for_invalid_cursor(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -231,7 +231,7 @@ def test_usage_request_logs_api_returns_bad_request_for_invalid_cursor(monkeypat
 def test_usage_request_logs_api_returns_bad_request_for_invalid_page(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import config
@@ -255,7 +255,7 @@ def test_usage_request_logs_api_returns_bad_request_for_invalid_page(monkeypatch
 async def test_account_refresh_catches_scan_errors(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("APP_PASSWORD", "secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("SWITCHBOARD_DB", str(tmp_path / "switchboard.sqlite"))
+    monkeypatch.setenv("SWITCHBOARD_DATA_DIR", str(tmp_path / "switchboard-data"))
     (tmp_path / "codex").mkdir()
 
     import asyncio

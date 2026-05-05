@@ -16,6 +16,24 @@ from accounts import AccountDTO, ScanResult, hide_account, list_accounts, scan_c
 from config import get_settings, validate_runtime_settings
 from config_transfer import ConfigExportDTO, ConfigImportSummary, export_config, import_config
 from db import init_db
+from images import (
+    ImageGalleryListResponse,
+    ImageGenerationError,
+    ImageGenerationJobListResponse,
+    ImageGenerationJobResponse,
+    ImageGenerationJobStatusListResponse,
+    ImageGenerationQueue,
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+    ImageDispatcherActionResponse,
+    ImageDispatcherTestRequest,
+    ImageTaskDispatcherListResponse,
+    ImageTaskDispatcherSettingsRequest,
+    ImageTaskDispatcherSettingsResponse,
+    ImageWorkerStatusResponse,
+    generate_image,
+    image_file_path,
+)
 from issues import (
     account_auth_not_found_detail,
     account_issue_from_message,
@@ -94,6 +112,7 @@ def create_app() -> FastAPI:
     init_db(settings.db_path)
     ensure_auth_vault_key(settings)
     account_scan_lock = asyncio.Lock()
+    image_queue = ImageGenerationQueue(settings)
 
     async def usage_aggregation_loop() -> None:
         while True:
@@ -112,11 +131,13 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         usage_task = asyncio.create_task(usage_aggregation_loop())
         account_task = asyncio.create_task(account_refresh_loop())
+        await image_queue.start()
         app.state.usage_aggregation_task = usage_task
         app.state.account_refresh_task = account_task
         try:
             yield
         finally:
+            await image_queue.close()
             usage_task.cancel()
             account_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -126,6 +147,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="SwitchBoard", version=__version__, lifespan=lifespan)
     app.state.settings = settings
+    app.state.image_queue = image_queue
 
     @app.get("/api/health")
     def health() -> dict[str, bool]:
@@ -268,11 +290,177 @@ def create_app() -> FastAPI:
         limit: int = 50,
         cursor: str | None = None,
         page: int = 1,
+        account_id: str | None = None,
     ) -> UsageRequestLogsResponse:
         try:
-            return get_usage_request_logs(settings, from_value=from_, to_value=to, limit=limit, cursor=cursor, page=page)
+            return get_usage_request_logs(
+                settings,
+                from_value=from_,
+                to_value=to,
+                limit=limit,
+                cursor=cursor,
+                page=page,
+                account_id=account_id,
+            )
         except ValueError as exc:
             raise http_error_from_detail(status.HTTP_400_BAD_REQUEST, usage_issue_from_message(str(exc))) from exc
+
+    @app.post("/api/images/generations", response_model=ImageGenerationResponse, dependencies=authed)
+    async def image_generations(payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        try:
+            return await generate_image(settings, payload)
+        except ImageGenerationError as exc:
+            logger.warning("Image generation failed: %s", exc.detail.message)
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
+    @app.post("/api/images/jobs", response_model=ImageGenerationJobResponse, status_code=status.HTTP_202_ACCEPTED, dependencies=authed)
+    async def create_image_job(payload: ImageGenerationRequest) -> ImageGenerationJobResponse:
+        try:
+            return await image_queue.enqueue(payload)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
+    @app.get("/api/images/jobs", response_model=ImageGenerationJobListResponse, dependencies=authed)
+    async def image_jobs(page: int = 1, limit: int = 20) -> ImageGenerationJobListResponse:
+        try:
+            return await image_queue.list_recent(page=page, limit=max(1, min(limit, 50)))
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
+    @app.get("/api/images/jobs/statuses", response_model=ImageGenerationJobStatusListResponse, dependencies=authed)
+    async def image_job_statuses(ids: Annotated[list[str] | None, Query()] = None) -> ImageGenerationJobStatusListResponse:
+        tracked_ids = [job_id for job_id in dict.fromkeys(ids or []) if job_id][:100]
+        return await image_queue.list_statuses(tracked_job_ids=tracked_ids)
+
+    @app.get("/api/images/gallery", response_model=ImageGalleryListResponse, dependencies=authed)
+    async def image_gallery(page: int = 1, limit: int = 20, source: str = "all") -> ImageGalleryListResponse:
+        try:
+            return await image_queue.list_gallery_items(page=page, limit=max(1, min(limit, 50)), source=source)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
+    @app.get("/api/images/task-dispatcher/settings", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    def image_task_dispatcher_settings() -> ImageTaskDispatcherSettingsResponse:
+        return image_queue.external_dispatcher.get_settings()
+
+    @app.get("/api/images/task-dispatchers", response_model=ImageTaskDispatcherListResponse, dependencies=authed)
+    def image_task_dispatchers() -> ImageTaskDispatcherListResponse:
+        return image_queue.external_dispatcher.list_settings()
+
+    @app.post("/api/images/task-dispatchers", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def create_image_task_dispatcher(payload: ImageTaskDispatcherSettingsRequest) -> ImageTaskDispatcherSettingsResponse:
+        try:
+            return await image_queue.external_dispatcher.create_settings(payload)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_SUBMISSION_INVALID", str(exc)) from exc
+
+    @app.put("/api/images/task-dispatchers/{dispatcher_id}", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def update_image_task_dispatcher(dispatcher_id: str, payload: ImageTaskDispatcherSettingsRequest) -> ImageTaskDispatcherSettingsResponse:
+        try:
+            return await image_queue.external_dispatcher.update_settings(dispatcher_id, payload)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_SUBMISSION_INVALID", str(exc)) from exc
+
+    @app.post("/api/images/task-dispatchers/{dispatcher_id}/test", response_model=ImageDispatcherActionResponse, dependencies=authed)
+    async def test_named_image_task_dispatcher(dispatcher_id: str, payload: ImageDispatcherTestRequest) -> ImageDispatcherActionResponse:
+        try:
+            return await image_queue.external_dispatcher.test(payload, dispatcher_id=dispatcher_id)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_SUBMISSION_INVALID", str(exc)) from exc
+        except Exception as exc:
+            raise http_error(status.HTTP_502_BAD_GATEWAY, "IMAGE_EXTERNAL_DELIVERY_FAILED", "Task dispatcher connection failed") from exc
+
+    @app.post("/api/images/task-dispatchers/{dispatcher_id}/register", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def register_named_image_task_dispatcher(dispatcher_id: str) -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.register(dispatcher_id)
+
+    @app.post("/api/images/task-dispatchers/{dispatcher_id}/pause", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def pause_named_image_task_dispatcher(dispatcher_id: str) -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.pause(dispatcher_id)
+
+    @app.post("/api/images/task-dispatchers/{dispatcher_id}/resume", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def resume_named_image_task_dispatcher(dispatcher_id: str) -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.resume(dispatcher_id)
+
+    @app.delete("/api/images/task-dispatchers/{dispatcher_id}", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def delete_named_image_task_dispatcher(dispatcher_id: str) -> ImageTaskDispatcherSettingsResponse:
+        try:
+            return await image_queue.external_dispatcher.delete(dispatcher_id)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
+    @app.put("/api/images/task-dispatcher/settings", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def save_image_task_dispatcher_settings(payload: ImageTaskDispatcherSettingsRequest) -> ImageTaskDispatcherSettingsResponse:
+        try:
+            return await image_queue.external_dispatcher.save_settings(payload)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_SUBMISSION_INVALID", str(exc)) from exc
+
+    @app.post("/api/images/task-dispatcher/test", response_model=ImageDispatcherActionResponse, dependencies=authed)
+    async def test_image_task_dispatcher(payload: ImageDispatcherTestRequest) -> ImageDispatcherActionResponse:
+        try:
+            return await image_queue.external_dispatcher.test(payload)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_SUBMISSION_INVALID", str(exc)) from exc
+        except Exception as exc:
+            raise http_error(status.HTTP_502_BAD_GATEWAY, "IMAGE_EXTERNAL_DELIVERY_FAILED", "Task dispatcher connection failed") from exc
+
+    @app.post("/api/images/task-dispatcher/register", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def register_image_task_dispatcher() -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.register()
+
+    @app.post("/api/images/task-dispatcher/pause", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def pause_image_task_dispatcher() -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.pause()
+
+    @app.post("/api/images/task-dispatcher/resume", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def resume_image_task_dispatcher() -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.resume()
+
+    @app.get("/api/images/workers/status", response_model=ImageWorkerStatusResponse, dependencies=authed)
+    def image_workers_status() -> ImageWorkerStatusResponse:
+        return image_queue.worker_status()
+
+    @app.get("/api/images/jobs/{job_id}", response_model=ImageGenerationJobResponse, dependencies=authed)
+    async def image_job(job_id: str) -> ImageGenerationJobResponse:
+        job = await image_queue.get(job_id)
+        if job is None:
+            raise http_error(status.HTTP_404_NOT_FOUND, "IMAGE_JOB_NOT_FOUND", "Image generation job not found")
+        return job
+
+    @app.delete("/api/images/jobs/{job_id}/images/{image_index}", response_model=dict[str, bool], dependencies=authed)
+    async def delete_image_job_result(job_id: str, image_index: int) -> dict[str, bool]:
+        try:
+            await image_queue.delete_result_image(job_id, image_index)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+        return {"ok": True}
+
+    @app.post("/api/images/jobs/{job_id}/stop", response_model=dict[str, bool], dependencies=authed)
+    async def stop_image_job(job_id: str) -> dict[str, bool]:
+        try:
+            await image_queue.stop_job(job_id)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+        return {"ok": True}
+
+    @app.delete("/api/images/jobs/{job_id}", response_model=dict[str, bool], dependencies=authed)
+    async def delete_image_job(job_id: str) -> dict[str, bool]:
+        try:
+            await image_queue.delete_job(job_id)
+        except ImageGenerationError as exc:
+            raise http_error_from_detail(exc.status_code, exc.detail) from exc
+        return {"ok": True}
+
+    @app.get("/api/images/files/{file_path:path}", dependencies=authed)
+    def image_file(file_path: str) -> FileResponse:
+        try:
+            path = image_file_path(settings, file_path)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_FILE_INVALID", "Invalid image filename") from exc
+        if not path.exists() or not path.is_file():
+            raise http_error(status.HTTP_404_NOT_FOUND, "IMAGE_FILE_NOT_FOUND", "Image file not found")
+        return FileResponse(path)
 
     static_dir = settings.static_dir
     if static_dir and static_dir.exists():

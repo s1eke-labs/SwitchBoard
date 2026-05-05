@@ -1,32 +1,14 @@
 import { ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Activity, BarChart3, LogOut, ReceiptText, UserRound } from "lucide-react";
+import { Activity, BarChart3, Image, LogOut, ReceiptText, Settings, UserRound } from "lucide-react";
 import { api } from "@/lib/api";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/heroui/button";
+import { Spinner } from "@/components/heroui/spinner";
+import { SegmentedControl } from "@/components/heroui/toggle-button-group";
+import { Tooltip } from "@/components/heroui/tooltip";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { AppRoute } from "@/app/routing";
 import { useI18n } from "@/i18n";
-
-function NavButton({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  children: ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`inline-flex h-8 items-center gap-2 rounded-md px-2.5 text-sm font-semibold transition-colors ${
-        active ? "bg-foreground text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
 
 export function AppShell({
   route,
@@ -43,6 +25,12 @@ export function AppShell({
     mutationFn: api.logout,
     onSuccess: () => queryClient.invalidateQueries(),
   });
+  const navItems = [
+    { value: "dashboard", path: "/", label: <><BarChart3 size={16} />{t("nav.dashboard")}</> },
+    { value: "sessions", path: "/sessions", label: <><UserRound size={16} />{t("nav.sessions")}</> },
+    { value: "requestLogs", path: "/request-logs", label: <><ReceiptText size={16} />{t("nav.requestLogs")}</> },
+    { value: "images", path: "/images", label: <><Image size={16} />{t("nav.images")}</> },
+  ] as const;
 
   return (
     <main className="flex h-screen flex-col overflow-hidden bg-background">
@@ -61,26 +49,33 @@ export function AppShell({
                 <p className="truncate text-xs text-muted-foreground">{t("app.subtitle")}</p>
               </div>
             </button>
-            <div className="flex items-center gap-1">
-              <NavButton active={route.page === "dashboard"} onClick={() => onNavigate("/")}>
-                <BarChart3 size={16} />
-                {t("nav.dashboard")}
-              </NavButton>
-              <NavButton active={route.page === "sessions"} onClick={() => onNavigate("/sessions")}>
-                <UserRound size={16} />
-                {t("nav.sessions")}
-              </NavButton>
-              <NavButton active={route.page === "requestLogs"} onClick={() => onNavigate("/request-logs")}>
-                <ReceiptText size={16} />
-                {t("nav.requestLogs")}
-              </NavButton>
-            </div>
+            <SegmentedControl
+              aria-label="SwitchBoard"
+              value={route.page === "settings" ? null : route.page}
+              options={navItems}
+              onChange={(value) => {
+                const item = navItems.find((navItem) => navItem.value === value);
+                if (item) onNavigate(item.path);
+              }}
+            />
           </div>
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
-            <Button variant="ghost" size="icon" title={t("nav.signOut")} aria-label={t("nav.signOut")} onClick={() => logout.mutate()}>
-              <LogOut size={18} />
-            </Button>
+            <Tooltip content={t("nav.settings")}>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={t("nav.settings")}
+                onClick={() => onNavigate("/settings/dispatcher")}
+              >
+                <Settings size={18} />
+              </Button>
+            </Tooltip>
+            <Tooltip content={t("nav.signOut")}>
+              <Button variant="ghost" size="icon" aria-label={t("nav.signOut")} onClick={() => logout.mutate()} disabled={logout.isPending}>
+                {logout.isPending ? <Spinner /> : <LogOut size={18} />}
+              </Button>
+            </Tooltip>
           </div>
         </div>
       </header>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import sqlite3
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ SORT_UPDATED_AT_MS = "COALESCE(updated_at_ms, updated_at * 1000)"
 SESSIONS_ORDER_BY = f"{SORT_UPDATED_AT_MS} DESC, id DESC"
 SESSION_EVENT_PREVIEW_CHARS = 4_000
 SESSION_USER_INDEX_PREVIEW_CHARS = 160
+ROLLOUT_FILENAME_RE = re.compile(r"^rollout-(\d{4})-(\d{2})-(\d{2})T.*\.jsonl$")
 
 class SessionSummary(BaseModel):
     thread_id: str
@@ -349,32 +351,43 @@ def _event_source_type(line: dict[str, Any]) -> str:
     return str(payload_type or line.get("type") or "")
 
 
+def _event_from_raw_line(
+    raw_line: str,
+    line_no: int,
+    seen_assistant_text_sources: dict[str, set[str]],
+    max_text_len: int | None = 20_000,
+) -> SessionEvent | None:
+    try:
+        line = json.loads(raw_line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(line, dict):
+        return None
+    event = _normalize_event(line, line_no=line_no, max_text_len=max_text_len)
+    if event is None:
+        return None
+
+    if event.kind == "user":
+        seen_assistant_text_sources.clear()
+    elif event.kind == "assistant":
+        body = _event_body(event)
+        source_type = _event_source_type(line)
+        source_types = seen_assistant_text_sources.setdefault(body, set())
+        if source_types and source_type not in source_types:
+            return None
+        source_types.add(source_type)
+
+    return event
+
+
 def _iter_session_events(rollout_path: Path, max_text_len: int | None = 20_000) -> Iterator[SessionEvent]:
     seen_assistant_text_sources: dict[str, set[str]] = {}
 
     with rollout_path.open("r", encoding="utf-8") as handle:
         for line_no, raw_line in enumerate(handle, start=1):
-            try:
-                line = json.loads(raw_line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(line, dict):
-                continue
-            event = _normalize_event(line, line_no=line_no, max_text_len=max_text_len)
-            if event is None:
-                continue
-
-            if event.kind == "user":
-                seen_assistant_text_sources.clear()
-            elif event.kind == "assistant":
-                body = _event_body(event)
-                source_type = _event_source_type(line)
-                source_types = seen_assistant_text_sources.setdefault(body, set())
-                if source_types and source_type not in source_types:
-                    continue
-                source_types.add(source_type)
-
-            yield event
+            event = _event_from_raw_line(raw_line, line_no, seen_assistant_text_sources, max_text_len=max_text_len)
+            if event is not None:
+                yield event
 
 
 def _event_body(event: SessionEvent) -> str:
@@ -420,24 +433,34 @@ def _user_index_item(event: SessionEvent, event_index: int) -> SessionUserIndexI
     )
 
 
+def _rollout_date_candidate(settings: Settings, rollout_path: Path, thread_id: str) -> Path | None:
+    filename = rollout_path.name
+    match = ROLLOUT_FILENAME_RE.match(filename)
+    if match is None or not filename.endswith(f"-{thread_id}.jsonl"):
+        return None
+    year, month, day = match.group(1), match.group(2), match.group(3)
+    return settings.codex_home / "sessions" / year / month / day / filename
+
+
+def _add_candidate(candidates: list[Path], candidate: Path | None) -> None:
+    if candidate is not None and candidate not in candidates:
+        candidates.append(candidate)
+
+
 def resolve_rollout_path(settings: Settings, stored_path: str, thread_id: str) -> Path:
     rollout_path = Path(stored_path)
     candidates: list[Path] = []
     if rollout_path.is_absolute():
-        candidates.append(rollout_path)
+        _add_candidate(candidates, rollout_path)
         if "sessions" in rollout_path.parts:
             sessions_index = rollout_path.parts.index("sessions")
-            candidates.append(settings.codex_home / Path(*rollout_path.parts[sessions_index:]))
+            _add_candidate(candidates, settings.codex_home / Path(*rollout_path.parts[sessions_index:]))
     else:
-        candidates.append(settings.codex_home / rollout_path)
+        _add_candidate(candidates, settings.codex_home / rollout_path)
+    _add_candidate(candidates, _rollout_date_candidate(settings, rollout_path, thread_id))
 
     for candidate in candidates:
         if candidate.exists():
-            return candidate
-
-    sessions_dir = settings.codex_home / "sessions"
-    if sessions_dir.exists():
-        for candidate in sessions_dir.rglob(f"*{thread_id}.jsonl"):
             return candidate
 
     return candidates[0] if candidates else rollout_path
@@ -458,12 +481,15 @@ def _session_context(settings: Settings, thread_id: str) -> tuple[SessionSummary
 
 def _session_event_counts(rollout_path: Path) -> tuple[int, int]:
     raw_count = 0
+    event_count = 0
     if not rollout_path.exists():
         return raw_count, 0
+    seen_assistant_text_sources: dict[str, set[str]] = {}
     with rollout_path.open("r", encoding="utf-8") as handle:
-        for _ in handle:
+        for line_no, raw_line in enumerate(handle, start=1):
             raw_count += 1
-    event_count = sum(1 for _ in _iter_session_events(rollout_path))
+            if _event_from_raw_line(raw_line, line_no, seen_assistant_text_sources) is not None:
+                event_count += 1
     return raw_count, event_count
 
 

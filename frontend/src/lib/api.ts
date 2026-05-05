@@ -184,6 +184,8 @@ export type UsageRequestLogDTO = {
   id: string;
   thread_id: string;
   event_index: number;
+  account_id: string | null;
+  account_display_name: string | null;
   occurred_at: number;
   billing_model: string | null;
   input_tokens: number;
@@ -217,12 +219,263 @@ export type UsageRequestLogsResponse = {
 export type UsageRequestLogsParams = {
   from?: number;
   to?: number;
+  account_id?: string;
   cursor?: string | null;
   page?: number;
   limit?: number;
 };
 
+export type ImageGenerationRequest = {
+  prompt: string;
+  model?: string;
+  size?: string;
+  quality?: "auto";
+  n?: 1 | 2 | 4;
+  response_format?: "b64_json" | "url";
+  reference_images?: ImageReferenceInput[];
+  conversation_id?: string | null;
+  previous_response_id?: string | null;
+};
+
+export type ImageReferenceInput = {
+  file_name: string;
+  mime_type: string;
+  b64_json: string;
+};
+
+export type ImageReferenceData = {
+  id: string;
+  file_name: string;
+  file_url: string;
+  thumbnail_url: string | null;
+  original_file_name: string;
+  mime_type: string;
+  size_bytes: number;
+};
+
+export type ImageGenerationResponse = {
+  created: number;
+  model: string;
+  response_id: string | null;
+  data: Array<{
+    b64_json: string | null;
+    url: string | null;
+    revised_prompt: string | null;
+    file_name: string | null;
+    file_url: string | null;
+    thumbnail_url: string | null;
+    saved_path: string | null;
+    width: number | null;
+    height: number | null;
+    size_bytes: number | null;
+    duration_seconds: number | null;
+  }>;
+  upstream_metadata: ImageUpstreamMetadata[];
+};
+
+export type ImageGenerationJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export type ImageUsageSummary = {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  cached_tokens: number | null;
+  reasoning_tokens: number | null;
+};
+
+export type ImageToolUsageSummary = {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  input_image_tokens: number | null;
+  input_text_tokens: number | null;
+  output_image_tokens: number | null;
+  output_text_tokens: number | null;
+};
+
+export type ImageUpstreamMetadata = {
+  response_id: string | null;
+  response_model: string | null;
+  image_model: string | null;
+  requested_size: string | null;
+  resolved_size: string | null;
+  quality: string | null;
+  output_format: string | null;
+  background: string | null;
+  moderation: string | null;
+  output_compression: number | null;
+  created_at: number | null;
+  completed_at: number | null;
+  duration_seconds: number | null;
+  usage: ImageUsageSummary | null;
+  image_usage: ImageToolUsageSummary | null;
+};
+
+export type ImageGenerationJob = {
+  id: string;
+  conversation_id: string | null;
+  prompt: string;
+  size: NonNullable<ImageGenerationRequest["size"]>;
+  quality: "auto" | "low" | "medium" | "high";
+  n: 1 | 2 | 4;
+  status: ImageGenerationJobStatus;
+  created_at: number;
+  updated_at: number;
+  previous_response_id: string | null;
+  upstream_response_id: string | null;
+  upstream_metadata: ImageUpstreamMetadata[];
+  position: number | null;
+  references: ImageReferenceData[];
+  result: ImageGenerationResponse | null;
+  error: IssueDetail | null;
+  submission_id: string | null;
+  source: "local" | "external_dispatcher";
+  source_label: string;
+  dispatcher_id: string | null;
+  source_task_id: string | null;
+};
+
+export type ImageGenerationJobSummary = Pick<
+  ImageGenerationJob,
+  "id" | "conversation_id" | "prompt" | "size" | "quality" | "n" | "status" | "created_at" | "updated_at" | "position" | "error"
+>;
+
+export type ImageGenerationJobListResponse = {
+  items: ImageGenerationJobSummary[];
+  total_count: number;
+};
+
+export type ImageGenerationJobStatusSummary = Pick<ImageGenerationJob, "id" | "status" | "updated_at" | "position" | "error">;
+
+export type ImageGenerationJobStatusListResponse = {
+  items: ImageGenerationJobStatusSummary[];
+  total_count: number;
+  active_count: number;
+};
+
+export type ImageGalleryJob = Pick<
+  ImageGenerationJob,
+  | "id"
+  | "prompt"
+  | "size"
+  | "quality"
+  | "n"
+  | "status"
+  | "created_at"
+  | "updated_at"
+  | "position"
+  | "references"
+  | "upstream_metadata"
+  | "error"
+  | "submission_id"
+  | "source"
+  | "source_label"
+  | "dispatcher_id"
+  | "source_task_id"
+>;
+
+export type ImageGalleryImage = {
+  url: string | null;
+  revised_prompt: string | null;
+  file_name: string | null;
+  file_url: string | null;
+  thumbnail_url: string | null;
+  width: number | null;
+  height: number | null;
+  size_bytes: number | null;
+  duration_seconds: number | null;
+};
+
+export type ImageGalleryItem = {
+  key: string;
+  job: ImageGalleryJob;
+  image_index: number;
+  image: ImageGalleryImage | null;
+};
+
+export type ImageGalleryListResponse = {
+  items: ImageGalleryItem[];
+  total_count: number;
+};
+
+export type ImageDispatcherConnectionStatus =
+  | "unconfigured"
+  | "registering"
+  | "online"
+  | "offline"
+  | "auth_failed"
+  | "paused";
+
+export type ImageTaskDispatcherSettings = {
+  id: string;
+  configured: boolean;
+  name: string | null;
+  api_base_url: string | null;
+  token: {
+    configured: boolean;
+    preview: string | null;
+  };
+  paused: boolean;
+  external_runner_id: string | null;
+  external_runner_status: ImageDispatcherConnectionStatus;
+  external_heartbeat_interval_seconds: number | null;
+  external_poll_interval_seconds: number | null;
+  external_last_heartbeat_at: number | null;
+  external_last_claim_at: number | null;
+  external_current_task_id: string | null;
+  external_last_error: string | null;
+  deleted_at: number | null;
+  task_count: number;
+  running_external_tasks: {
+    id: string;
+    dispatcher_id: string | null;
+    source_task_id: string | null;
+    prompt: string;
+    status: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled";
+    started_at: number | null;
+    updated_at: number;
+    lease_owner: string | null;
+  }[];
+};
+
+export type ImageTaskDispatcherListResponse = {
+  items: ImageTaskDispatcherSettings[];
+};
+
+export type ImageTaskDispatcherSettingsRequest = {
+  name: string;
+  api_base_url: string;
+  token?: string | null;
+};
+
+export type ImageDispatcherTestRequest = {
+  name?: string | null;
+  api_base_url?: string | null;
+  token?: string | null;
+};
+
+export type ImageWorkerStatus = {
+  active_worker_running: boolean;
+  active_worker_slots: number;
+  dispatcher: ImageTaskDispatcherSettings;
+  dispatchers: ImageTaskDispatcherSettings[];
+  active_leases: number;
+  queued_jobs: number;
+  running_jobs: number;
+  running_external_tasks: {
+    id: string;
+    dispatcher_id: string | null;
+    source_task_id: string | null;
+    prompt: string;
+    status: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled";
+    started_at: number | null;
+    updated_at: number;
+    lease_owner: string | null;
+  }[];
+};
+
 const REQUEST_TIMEOUT_MS = 10_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 300_000;
 
 export class ApiError extends Error {
   status: number;
@@ -292,14 +545,19 @@ function parseErrorDetail(payload: unknown, statusText: string) {
   };
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function request<T>(
+  url: string,
+  init?: RequestInit,
+  options: { timeoutMs?: number } = {},
+): Promise<T> {
   const controller = new AbortController();
   let timedOut = false;
   const handleAbort = () => controller.abort();
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const timeoutId = window.setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, REQUEST_TIMEOUT_MS);
+  }, timeoutMs);
 
   if (init?.signal) {
     if (init.signal.aborted) {
@@ -332,7 +590,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   } catch (error) {
     if (timedOut) {
       throw new ApiError({
-        message: `Request timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds`,
+        message: `Request timed out after ${timeoutMs / 1000} seconds`,
         status: 408,
         code: "CLIENT_REQUEST_TIMEOUT",
       });
@@ -387,12 +645,94 @@ export const api = {
   sessionUserIndex: (threadId: string) =>
     request<SessionUserIndexResponse>(`/api/sessions/${threadId}/user-index`),
   usageAggregates: () => request<UsageAggregatesResponse>("/api/usage/aggregates"),
-  usageRequestLogs: ({ from, to, cursor = null, page, limit = 50 }: UsageRequestLogsParams = {}) => {
+  usageRequestLogs: ({ from, to, account_id, cursor = null, page, limit = 50 }: UsageRequestLogsParams = {}) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (from !== undefined) params.set("from", String(from));
     if (to !== undefined) params.set("to", String(to));
+    if (account_id) params.set("account_id", account_id);
     if (cursor) params.set("cursor", cursor);
     if (page !== undefined) params.set("page", String(page));
     return request<UsageRequestLogsResponse>(`/api/usage/request-logs?${params.toString()}`);
   },
+  generateImage: (payload: ImageGenerationRequest) =>
+    request<ImageGenerationResponse>(
+      "/api/images/generations",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      { timeoutMs: IMAGE_REQUEST_TIMEOUT_MS },
+    ),
+  createImageJob: (payload: ImageGenerationRequest) =>
+    request<ImageGenerationJob>("/api/images/jobs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  imageJobs: ({ page = 1, limit = 20 }: { page?: number; limit?: number } = {}) =>
+    request<ImageGenerationJobListResponse>(`/api/images/jobs?page=${page}&limit=${limit}`),
+  imageJobStatuses: ({ ids = [] }: { ids?: string[] } = {}) => {
+    const params = new URLSearchParams();
+    for (const id of ids) params.append("ids", id);
+    const query = params.toString();
+    return request<ImageGenerationJobStatusListResponse>(`/api/images/jobs/statuses${query ? `?${query}` : ""}`);
+  },
+  imageGalleryItems: ({ page = 1, limit = 20, source = "all" }: { page?: number; limit?: number; source?: string } = {}) =>
+    request<ImageGalleryListResponse>(`/api/images/gallery?page=${page}&limit=${limit}&source=${encodeURIComponent(source)}`),
+  imageJob: (jobId: string) => request<ImageGenerationJob>(`/api/images/jobs/${jobId}`),
+  stopImageJob: (jobId: string) =>
+    request<{ ok: boolean }>(`/api/images/jobs/${jobId}/stop`, {
+      method: "POST",
+    }),
+  deleteImageJobResult: (jobId: string, imageIndex: number) =>
+    request<{ ok: boolean }>(`/api/images/jobs/${jobId}/images/${imageIndex}`, {
+      method: "DELETE",
+    }),
+  deleteImageJob: (jobId: string) =>
+    request<{ ok: boolean }>(`/api/images/jobs/${jobId}`, {
+      method: "DELETE",
+    }),
+  imageTaskDispatcherSettings: () =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/settings"),
+  imageTaskDispatchers: () =>
+    request<ImageTaskDispatcherListResponse>("/api/images/task-dispatchers"),
+  createImageTaskDispatcher: (payload: ImageTaskDispatcherSettingsRequest) =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatchers", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateImageTaskDispatcher: (dispatcherId: string, payload: ImageTaskDispatcherSettingsRequest) =>
+    request<ImageTaskDispatcherSettings>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  saveImageTaskDispatcherSettings: (payload: ImageTaskDispatcherSettingsRequest) =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/settings", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  testImageTaskDispatcher: (payload: ImageDispatcherTestRequest) =>
+    request<{ ok: boolean; settings: ImageTaskDispatcherSettings }>("/api/images/task-dispatcher/test", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  testNamedImageTaskDispatcher: (dispatcherId: string, payload: ImageDispatcherTestRequest) =>
+    request<{ ok: boolean; settings: ImageTaskDispatcherSettings }>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}/test`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  registerImageTaskDispatcher: () =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/register", { method: "POST" }),
+  registerNamedImageTaskDispatcher: (dispatcherId: string) =>
+    request<ImageTaskDispatcherSettings>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}/register`, { method: "POST" }),
+  pauseImageTaskDispatcher: () =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/pause", { method: "POST" }),
+  pauseNamedImageTaskDispatcher: (dispatcherId: string) =>
+    request<ImageTaskDispatcherSettings>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}/pause`, { method: "POST" }),
+  resumeImageTaskDispatcher: () =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/resume", { method: "POST" }),
+  resumeNamedImageTaskDispatcher: (dispatcherId: string) =>
+    request<ImageTaskDispatcherSettings>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}/resume`, { method: "POST" }),
+  deleteImageTaskDispatcher: (dispatcherId: string) =>
+    request<ImageTaskDispatcherSettings>(`/api/images/task-dispatchers/${encodeURIComponent(dispatcherId)}`, { method: "DELETE" }),
+  imageWorkerStatus: () => request<ImageWorkerStatus>("/api/images/workers/status"),
 };
