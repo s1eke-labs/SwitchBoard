@@ -125,5 +125,10 @@ def _validate_payload(settings: Settings, payload: ImageGenerationRequest) -> No
     if payload.n not in ALLOWED_IMAGE_COUNTS:
         raise _image_error(400, "IMAGE_INVALID_COUNT", "Invalid image count")
     if payload.response_format not in ALLOWED_IMAGE_RESPONSE_FORMATS:
-        raise _image_error(400, "IMAGE_INVALID_RESPONSE_FORMAT", "Invalid image response format")
+        allowed = ", ".join(sorted(ALLOWED_IMAGE_RESPONSE_FORMATS))
+        raise _image_error(
+            400,
+            "IMAGE_INVALID_RESPONSE_FORMAT",
+            f"Invalid image response format: {payload.response_format!r}. Expected one of: {allowed}",
+        )
     _validated_reference_images(payload)

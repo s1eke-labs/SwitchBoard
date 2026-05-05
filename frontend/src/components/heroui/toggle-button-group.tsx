@@ -9,7 +9,7 @@ export type SegmentedControlOption<T extends string> = {
 };
 
 type SegmentedControlProps<T extends string> = {
-  value: T;
+  value: T | null;
   options: readonly SegmentedControlOption<T>[];
   "aria-label": string;
   className?: string;
@@ -53,8 +53,8 @@ export function SegmentedControl<T extends string>({
     <ToggleButtonGroup
       aria-label={ariaLabel}
       selectionMode="single"
-      disallowEmptySelection
-      selectedKeys={[value]}
+      disallowEmptySelection={value !== null}
+      selectedKeys={value === null ? [] : [value]}
       isDisabled={disabled}
       className={className}
       onSelectionChange={(keys) => {

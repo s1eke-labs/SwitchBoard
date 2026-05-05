@@ -21,7 +21,7 @@
     ◆ <a href="#快速开始">快速开始</a>
     ◆ <a href="#演示">演示</a>
     ◆ <a href="#安装">安装</a>
-    ◆ <a href="#架构">架构</a>
+    ◆ <a href="#文档">文档</a>
   </p>
 
   <p><a href="./README.md">English</a></p>
@@ -30,6 +30,7 @@
 ## 最新动态
 
 - **[2026/05]** 将作图页拆分为聚焦的 feature 模块，并迁移到本地 HeroUI 封装组件。
+- **[2026/05]** 优化作图队列和任务设置。
 - **[2026/05]** 新增分页图片游廊、单图/整任务删除，以及根据游廊视口自适应的页大小。
 - **[2026/05]** 使用 `SWITCHBOARD_DATA_DIR` 统一持久化数据目录配置。
 
@@ -45,7 +46,7 @@ SwitchBoard 为本地 Codex 用户提供一个受登录保护的仪表盘，把�
 
 ## 快速开始
 
-日常开发时，建议在两个终端分别启动后端和前端。
+本地启用时，建议在两个终端分别启动后端和前端。
 
 ```bash
 # 1. 启动后端 API
@@ -96,7 +97,7 @@ Codex 本地文件
 
 ## 安装
 
-本节覆盖更完整的安装选项。最快开发路径见[快速开始](#快速开始)。
+本节覆盖更完整的安装选项。最快本地启动方式见[快速开始](#快速开始)。
 
 ### 环境准备
 
@@ -132,7 +133,7 @@ npm install
 | `SWITCHBOARD_IMAGE_TIMEOUT_SECONDS` | 否 | 图片生成超时时间，默认是 `300`。 |
 | `SWITCHBOARD_IMAGE_MAX_PROMPT_CHARS` | 否 | 后端允许的最大提示词长度，默认是 `4000`。 |
 | `SWITCHBOARD_IMAGE_CONCURRENCY` | 否 | 同时运行的单图任务上限，默认是 `2`；设为 `1` 可恢复串行生成。 |
-| `SWITCHBOARD_IMAGE_DEBUG` | 否 | 开启图片请求/响应调试日志，默认是 `false`；token 和图片 base64 仍不会写入日志。 |
+| `SWITCHBOARD_IMAGE_DEBUG` | 否 | 开启图片请求/响应调试日志；默认是 `false`，token 和图片 base64 仍不会写入日志。 |
 
 根目录 `.env.example` 面向 Docker Compose：
 
@@ -157,50 +158,11 @@ CHATGPT_BACKEND_BASE=https://chatgpt.com/backend-api
 4. 在游廊中浏览结果。页码按图片卡片计数，页大小会根据游廊视口自适应。
 5. 预览、下载、停止活跃任务、重试失败任务、删除单张输出，或删除整个任务。
 
-运行约定：
+补充说明：
 
-- “作图”页面提供 `auto` 以及 `1:1`、`3:4`、`4:3`、`9:16`、`16:9` 和 `21:9` 预设，并映射到低、中、高三档像素尺寸。后端请求可以传入 `auto` 或任意 `宽x高` 尺寸，只要满足分辨率约束：宽高为正数、两边都能被 16 整除、最长边不超过 3840 px、宽高比不超过 3:1、总像素数在 655,360 到 8,294,400 之间。
-- 多图请求会拆成每张图一个队列任务。SwitchBoard 默认最多同时生成 2 张图，每张图都有独立状态、重试、元数据和游廊卡片。
-- 图片详情会在可用时展示脱敏后的上游元数据，包括实际上游尺寸、Host 模型、图片模型、token 总量和上游耗时。
-- 上游图片请求使用 `store: false`；后续提示词需要自行写明上下文或附上参考图。
-- 生成图片和参考图保存在 `SWITCHBOARD_DATA_DIR/images`，并通过需要登录的 `/api/images/files/{file_path}` 返回。
-- 任务元数据保存在 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`。如果 SwitchBoard 在某张图运行中重启，只有这一个单图任务会标记为失败；同批次里仍在排队的图片会在服务恢复后继续生成。
-
-浏览器使用的图片接口：
-
-| 接口 | 用途 |
-| --- | --- |
-| `POST /api/images/jobs` | 提交图片生成任务。 |
-| `GET /api/images/gallery?page=1&limit={page_size}` | 获取轻量游廊卡片。 |
-| `GET /api/images/jobs/statuses?ids={job_id}` | 获取轻量 active/tracked 任务状态，用于状态轮询。 |
-| `GET /api/images/jobs?page=1&limit=20` | 获取轻量任务摘要。 |
-| `GET /api/images/jobs/{job_id}` | 获取单个任务完整详情。 |
-| `POST /api/images/jobs/{job_id}/stop` | 停止排队中或运行中的图片任务。 |
-| `DELETE /api/images/jobs/{job_id}/images/{image_index}` | 删除单张生成结果。 |
-| `DELETE /api/images/jobs/{job_id}` | 删除整个任务。 |
-| `POST /api/images/generations` | 直接同步调用图片生成接口。 |
-
-## 开发命令
-
-在 `backend/` 目录运行后端命令：
-
-```bash
-uv run pylint --rcfile=.pylintrc .
-uv run pytest
-APP_PASSWORD=switchboard CODEX_HOME="$HOME/.codex" SWITCHBOARD_DATA_DIR=./data/dev uv run uvicorn main:app --host 127.0.0.1 --port 8080 --reload
-```
-
-在 `frontend/` 目录运行前端命令：
-
-```bash
-npm install
-npm run dev
-npm run lint
-npm run build
-npm run preview
-```
-
-`uv run pylint --rcfile=.pylintrc .` 会运行后端 lint 检查。`uv run pytest` 会运行聚焦的后端测试。`npm run lint` 会运行前端 ESLint 和 TypeScript 检查。`npm run build` 会生成 `frontend/dist`。
+- 游廊会展示生成图片，文件保存在 `SWITCHBOARD_DATA_DIR/images/YYYY/MM/DD/{job_id}/`。
+- 作图任务元数据保存在 `SWITCHBOARD_DATA_DIR/switchboard.sqlite`；ChatGPT token 不会写入这里。
+- 更深入的作图任务、API 和对接细节见 [docs/image-jobs.md](./docs/image-jobs.md)。
 
 ## 本地类生产运行
 
@@ -255,66 +217,10 @@ Compose 会把 `.env` 用于变量替换。宿主机 Codex 目录以可读写方
 
 导入配置文件时会按 `account_id` 合并：文件中的账号会更新本地展示元数据和最新额度快照，未知账号会创建为占位账号，本地存在但文件中缺失的账号保持不变。当前 Codex 账号永远不会被导入为隐藏状态，导入 `current` 标记也不会切换当前 Codex 账号。
 
-## 架构
+## 文档
 
-### 系统概览
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│ 浏览器                                                      │
-│ React 19 + Vite + Tailwind CSS + HeroUI 本地封装组件         │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ 已认证 /api 请求
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│ FastAPI 后端                                                 │
-│ 登录 Cookie、账号 API、会话 API、用量 API、图片 API           │
-└───────────────┬───────────────────────┬─────────────────────┘
-                │                       │
-                ▼                       ▼
-┌────────────────────────────┐  ┌─────────────────────────────┐
-│ CODEX_HOME                 │  │ SWITCHBOARD_DATA_DIR         │
-│ auth.json、sessions、logs  │  │ SQLite、auth-vault、images   │
-└────────────────────────────┘  └─────────────────────────────┘
-                │                       │
-                └──────────────┬────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ ChatGPT 后端                                                 │
-│ 账号扫描与 OpenAI Images 兼容的生成代理                      │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 关键设计决策
-
-- **扁平 FastAPI 模块**：后端按领域模块组织在 `backend/` 下，不引入很深的框架目录层级。
-- **本地元数据边界**：SwitchBoard 元数据写入 SQLite；ChatGPT token 留在 `auth.json` 文件中，永不写入数据库。
-- **持久化图片队列**：图片任务写入 SQLite，文件保存在数据目录下，因此游廊状态可以跨重启保留。
-- **HeroUI 支撑的前端基础组件**：React 应用优先使用 HeroUI 的本地封装，SwitchBoard 业务组合放在页面和 feature 模块中。
-
-## 仓库结构
-
-```text
-backend/
-  main.py             FastAPI 应用和 API 路由
-  accounts.py         Codex 账号扫描与切换
-  images/             图片生成包、队列、存储和 API 代理
-  sessions.py         Codex 会话读取和事件预览
-  usage.py            用量聚合和请求日志
-  db.py               SQLite 初始化和辅助函数
-  security.py         登录 Cookie 辅助函数
-  tests/              后端测试
-
-frontend/
-  src/app/            应用外壳和路由
-  src/pages/          仪表盘、会话、请求日志、登录和作图页面
-  src/features/       账号、会话、用量和作图 UI 模块
-  src/components/     共享 UI 组件和 HeroUI 封装
-  src/lib/            API 客户端、错误和工具函数
-  dist/               已构建前端输出
-
-docs/images/          Logo 源图和仪表盘截图
-```
+- [docs/development.md](./docs/development.md) - 开发命令、架构、仓库结构和贡献说明。
+- [docs/image-jobs.md](./docs/image-jobs.md) - 作图任务 API 和任务分发方对接细节。
 
 ## 安全说明
 
@@ -326,27 +232,10 @@ docs/images/          Logo 源图和仪表盘截图
 - 隐藏账号和自定义名称都是 SwitchBoard 本地元数据。
 - 配置导出只包含 SwitchBoard 本地账号展示状态，绝不会包含凭据。
 - 图片生成只在内存中读取当前 access token；token 永远不会返回给前端。
+- 任务分发方 token 加密保存在私有 auth vault 中，前端只能拿到脱敏摘要。
 - 图片 debug 日志和已存储的上游元数据不会包含 access token、Authorization header 的真实值、图片 base64 内容、safety identifier 或 prompt cache key。
 - 不要提交 `.env`、SQLite 数据库、生成的私有数据或本地 Codex 凭据。
 - 用量成本估算使用本地价格表匹配已知模型名；未知模型的成本会保持为 null。
-
-## 贡献
-
-欢迎贡献。请保持改动聚焦，并守住本地优先的凭据边界。
-
-```bash
-# 后端检查
-cd backend
-uv run pylint --rcfile=.pylintrc .
-uv run pytest
-
-# 前端检查
-cd ../frontend
-npm run lint
-npm run build
-```
-
-提交信息使用 Conventional Commits：`<type>(<scope>): <summary>`。本仓库偏好中文 summary，除非周边改动本身已经是纯英文。
 
 ## 许可证
 

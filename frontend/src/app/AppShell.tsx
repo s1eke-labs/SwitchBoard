@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Activity, BarChart3, Image, LogOut, ReceiptText, UserRound } from "lucide-react";
+import { Activity, BarChart3, Image, LogOut, ReceiptText, Settings, UserRound } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/heroui/button";
 import { Spinner } from "@/components/heroui/spinner";
@@ -51,7 +51,7 @@ export function AppShell({
             </button>
             <SegmentedControl
               aria-label="SwitchBoard"
-              value={route.page}
+              value={route.page === "settings" ? null : route.page}
               options={navItems}
               onChange={(value) => {
                 const item = navItems.find((navItem) => navItem.value === value);
@@ -61,6 +61,16 @@ export function AppShell({
           </div>
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
+            <Tooltip content={t("nav.settings")}>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={t("nav.settings")}
+                onClick={() => onNavigate("/settings/dispatcher")}
+              >
+                <Settings size={18} />
+              </Button>
+            </Tooltip>
             <Tooltip content={t("nav.signOut")}>
               <Button variant="ghost" size="icon" aria-label={t("nav.signOut")} onClick={() => logout.mutate()} disabled={logout.isPending}>
                 {logout.isPending ? <Spinner /> : <LogOut size={18} />}

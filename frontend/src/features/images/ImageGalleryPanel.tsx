@@ -2,6 +2,7 @@ import {
   CheckCircle2,
   Clock3,
   Download,
+  Filter,
   ImageIcon,
   Trash2,
   XCircle,
@@ -10,6 +11,7 @@ import { Button } from "@/components/heroui/button";
 import { Checkbox } from "@/components/heroui/checkbox";
 import { PageSelector } from "@/components/PageSelector";
 import { Card, CardContent, CardHeader } from "@/components/heroui/card";
+import { Select } from "@/components/heroui/select";
 import { Spinner } from "@/components/heroui/spinner";
 import { Toolbar } from "@/components/heroui/toolbar";
 import { useI18n } from "@/i18n";
@@ -119,6 +121,8 @@ function ImageGallery({
               <div className="h-9 shrink-0 border-t px-3 py-2">
                 <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
                   <span className="min-w-0 truncate">{formatJobTime(item.job.updated_at)}</span>
+                  <span className="shrink-0">·</span>
+                  <span className="min-w-0 truncate">{item.job.source_label}</span>
                 </div>
               </div>
             </button>
@@ -142,6 +146,9 @@ export function ImageGalleryPanel({
   selectedKeys,
   selectedDownloadableCount,
   deleting,
+  source,
+  sourceOptions,
+  onSourceChange,
   onDownloadSelected,
   onDeleteSelected,
   onToggleSelecting,
@@ -161,6 +168,9 @@ export function ImageGalleryPanel({
   selectedKeys: Set<string>;
   selectedDownloadableCount: number;
   deleting: boolean;
+  source: string;
+  sourceOptions: { value: string; label: string }[];
+  onSourceChange: (source: string) => void;
   onDownloadSelected: () => void;
   onDeleteSelected: () => void;
   onToggleSelecting: () => void;
@@ -169,6 +179,7 @@ export function ImageGalleryPanel({
   onToggleSelected: (key: string) => void;
 }) {
   const { t } = useI18n();
+  const sourceLabel = sourceOptions.find((option) => option.value === source)?.label ?? t("images.source.all");
 
   return (
     <Card className="flex min-h-[520px] flex-col self-start">
@@ -179,6 +190,33 @@ export function ImageGalleryPanel({
             <h2 className="truncate text-base font-bold">{t("images.gallery")}</h2>
           </div>
           <Toolbar aria-label={t("images.gallery")} className="justify-end gap-1">
+            <Select
+              aria-label={t("images.sourceFilter")}
+              className="w-44 max-w-full"
+              fullWidth={false}
+              selectedKey={source}
+              isDisabled={loading || deleting}
+              onSelectionChange={(key) => {
+                if (typeof key === "string") onSourceChange(key);
+              }}
+            >
+              <Select.Trigger>
+                <span className="inline-flex min-w-0 items-center gap-2">
+                  <Filter size={15} className="shrink-0 text-muted-foreground" />
+                  <span className="truncate">{sourceLabel}</span>
+                </span>
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <Select.ListBox aria-label={t("images.sourceFilter")}>
+                  {sourceOptions.map((option) => (
+                    <Select.Item key={option.value} id={option.value} textValue={option.label}>
+                      <span className="truncate">{option.label}</span>
+                    </Select.Item>
+                  ))}
+                </Select.ListBox>
+              </Select.Popover>
+            </Select>
             {selecting ? (
               <>
                 <span className="px-2 text-xs font-semibold text-muted-foreground">

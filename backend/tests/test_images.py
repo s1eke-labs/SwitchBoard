@@ -20,7 +20,15 @@ from images import (
     ImageGenerationQueue,
     ImageGenerationRequest,
     ImageGenerationResponse,
+    ImageJobExecutor,
+    ImageJobQueries,
+    ImageJobStore,
+    ImageJobSubmission,
+    ImageJobSubmitPayload,
+    ImageJobSubmitRequest,
     ImageReferenceInput,
+    PassiveImageWorker,
+    ExternalImageTaskDispatcherAdapter,
     ImageUpstreamMetadata,
     build_upstream_payload,
     generate_image,
@@ -37,7 +45,7 @@ VALID_PNG_B64 = (
 
 
 def _task_dir(job_id: str, created_at: int) -> str:
-    return f"{time.strftime('%Y/%m', time.gmtime(created_at))}/{job_id}"
+    return f"{time.strftime('%Y/%m/%d', time.gmtime(created_at))}/{job_id}"
 
 
 def _settings(tmp_path, **overrides) -> Settings:
@@ -629,6 +637,7 @@ async def test_generate_image_accepts_auto_size(tmp_path) -> None:
         (ImageGenerationRequest(prompt="x", quality="ultra"), "IMAGE_INVALID_QUALITY"),
         (ImageGenerationRequest(prompt="x", quality="high"), "IMAGE_INVALID_QUALITY"),
         (ImageGenerationRequest(prompt="x", n=3), "IMAGE_INVALID_COUNT"),
+        (ImageGenerationRequest(prompt="x", response_format="multipart/form-data"), "IMAGE_INVALID_RESPONSE_FORMAT"),
         (
             ImageGenerationRequest(
                 prompt="x",
@@ -678,6 +687,9 @@ async def test_generate_image_validates_payload(tmp_path, payload: ImageGenerati
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail.code == code
+    if code == "IMAGE_INVALID_RESPONSE_FORMAT":
+        assert "multipart/form-data" in exc_info.value.detail.message
+        assert "b64_json" in exc_info.value.detail.message
 
 
 @pytest.mark.asyncio
@@ -1548,6 +1560,494 @@ async def test_image_generation_queue_runs_with_configured_concurrency(tmp_path)
 
     assert first_done is not None
     assert first_done.status == "succeeded"
+    await queue.close()
+
+
+@pytest.mark.asyncio
+async def test_image_job_submission_is_idempotent_and_detects_source_task_conflicts(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    submission = ImageJobSubmission(settings)
+    request = ImageJobSubmitRequest(
+        source="external_dispatcher",
+        source_task_id="ext-one",
+        idempotency_key="idem-one",
+        payload=ImageJobSubmitPayload(prompt="poster", n=2),
+    )
+
+    first = await submission.submit(request)
+    second = await submission.submit(request)
+
+    assert first.created is True
+    assert second.created is False
+    assert second.submission_id == first.submission_id
+    assert second.job_ids == first.job_ids
+    with pytest.raises(ImageGenerationError) as exc_info:
+        await submission.submit(
+            ImageJobSubmitRequest(
+                source="external_dispatcher",
+                source_task_id="ext-one",
+                idempotency_key="idem-two",
+                payload=ImageJobSubmitPayload(prompt="poster"),
+            )
+        )
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail.code == "IMAGE_SUBMISSION_CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_image_job_store_claim_reclaim_and_lease_token_guards_terminal_writes(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    submission = ImageJobSubmission(settings)
+    response = await submission.submit(
+        ImageJobSubmitRequest(
+            source="local_api",
+            idempotency_key="claim-one",
+            payload=ImageJobSubmitPayload(prompt="poster"),
+        )
+    )
+    store = ImageJobStore(settings)
+    first_lease = store.claim_next(owner="passive:test", lease_seconds=1)
+
+    assert first_lease is not None
+    assert store.claim_next(owner="active:test") is None
+    with connect(settings.db_path) as conn:
+        conn.execute("UPDATE image_jobs SET lease_expires_at = ? WHERE id = ?", (int(time.time()) - 1, response.job_ids[0]))
+
+    second_lease = store.claim_next(owner="active:test")
+    assert second_lease is not None
+    assert second_lease.job_id == response.job_ids[0]
+    stale_result = ImageGenerationResponse(created=1776000000, model="gpt-image-2", data=[ImageData(file_name="stale.png")])
+    fresh_result = ImageGenerationResponse(created=1776000000, model="gpt-image-2", data=[ImageData(file_name="fresh.png")])
+
+    assert store.finish(first_lease, stale_result) is False
+    assert store.mark_running(second_lease) is True
+    assert store.finish(second_lease, fresh_result) is True
+    with connect(settings.db_path) as conn:
+        row = conn.execute("SELECT status, result_json FROM image_jobs WHERE id = ?", (response.job_ids[0],)).fetchone()
+    stored = ImageGenerationResponse.model_validate_json(row["result_json"])
+    assert row["status"] == "succeeded"
+    assert stored.data[0].file_name == "fresh.png"
+
+
+@pytest.mark.asyncio
+async def test_passive_worker_and_active_claims_do_not_execute_same_job(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    generated: list[str] = []
+
+    async def generator(settings: Settings, payload: ImageGenerationRequest) -> ImageGenerationResponse:
+        generated.append(payload.prompt)
+        await asyncio.sleep(0.01)
+        return ImageGenerationResponse(
+            created=1776000000,
+            model="gpt-image-2",
+            data=[ImageData(b64_json="aGVsbG8=", file_name=f"{payload.prompt}.png")],
+        )
+
+    queue = ImageGenerationQueue(settings, generator=generator)
+    first = await queue.enqueue(ImageGenerationRequest(prompt="first"))
+    second = await queue.enqueue(ImageGenerationRequest(prompt="second"))
+    passive_result = await queue.passive_worker.run_once(owner="passive:test")
+
+    for _ in range(30):
+        first_done = await queue.get(first.id)
+        second_done = await queue.get(second.id)
+        if (
+            first_done is not None
+            and first_done.status == "succeeded"
+            and second_done is not None
+            and second_done.status == "succeeded"
+        ):
+            break
+        await asyncio.sleep(0.01)
+
+    assert passive_result.job_id in {first.id, second.id}
+    assert sorted(generated) == ["first", "second"]
+    await queue.close()
+
+
+@pytest.mark.asyncio
+async def test_external_dispatcher_registers_polls_and_delivers_without_plaintext_token_in_sqlite(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    delivered: list[tuple[str, bytes]] = []
+    heartbeats: list[dict[str, object]] = []
+    status_updates: list[dict[str, object]] = []
+    registration_payloads: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == "Bearer dispatcher-secret"
+        if request.url.path == "/api/runners/register":
+            registration_payloads.append(json.loads(request.read()))
+            return httpx.Response(
+                200,
+                json={"runner_id": "runner-one", "heartbeat_interval_seconds": 5, "poll_interval_seconds": 1},
+            )
+        if request.url.path == "/api/runners/runner-one/heartbeat":
+            heartbeats.append(json.loads(request.read()))
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/runners/runner-one/tasks/claim":
+            return httpx.Response(
+                200,
+                json={
+                    "tasks": [
+                        {
+                            "id": "ext-one",
+                            "idempotency_key": "idem-ext-one",
+                            "payload": {"prompt": "external poster", "n": 1},
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/api/tasks/ext-one/result":
+            delivered.append((request.headers["content-type"], request.read()))
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/tasks/ext-one/status":
+            status_updates.append(json.loads(request.read()))
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(404)
+
+    submission = ImageJobSubmission(settings)
+    adapter = ExternalImageTaskDispatcherAdapter(settings, submission, transport=httpx.MockTransport(handler))
+    saved = await adapter.save_settings(
+        images_module.ImageTaskDispatcherSettingsRequest(
+            name="Acme",
+            api_base_url="https://dispatcher.example.test/api",
+            token="dispatcher-secret",
+        )
+    )
+    await adapter.close()
+    assert registration_payloads[-1]["capabilities"]["response_format"] == "b64_json"
+    await adapter._heartbeat(saved)
+    await adapter._claim_remote_tasks(saved)
+    with connect(settings.db_path) as conn:
+        job = conn.execute("SELECT id, source, status, response_format FROM image_jobs WHERE source_task_id = 'ext-one'").fetchone()
+    assert job is not None
+    assert job["source"] == "external_dispatcher"
+    assert job["response_format"] == "b64_json"
+    await adapter._report_pending_status_updates(saved)
+    assert status_updates[-1]["source_task_id"] == "ext-one"
+    assert status_updates[-1]["status"] == "queued"
+
+    store = ImageJobStore(settings)
+    queries = ImageJobQueries(settings)
+    executor = ImageJobExecutor(
+        settings,
+        store,
+        queries,
+        generator=lambda settings, payload: asyncio.sleep(
+            0,
+            result=ImageGenerationResponse(
+                created=1776000000,
+                model="gpt-image-2",
+                data=[ImageData(b64_json="aGVsbG8=", file_name="result.png")],
+            ),
+        ),
+    )
+    worker = PassiveImageWorker(store, executor)
+    assert (await worker.run_once(owner="passive:test")).status == "executed"
+    await adapter._report_pending_status_updates(saved)
+    assert status_updates[-1]["source_task_id"] == "ext-one"
+    assert status_updates[-1]["status"] == "succeeded"
+    await adapter._deliver_pending_results(saved)
+
+    assert delivered
+    content_type, body = delivered[0]
+    assert content_type.startswith("multipart/form-data; boundary=")
+    assert b'name="status"\r\n\r\nsucceeded' in body
+    assert b'name="image"; filename="result.png"' in body
+    assert b"\r\n\r\nhello\r\n" in body
+    assert "dispatcher-secret" not in settings.db_path.read_text(encoding="utf-8", errors="ignore")
+    assert adapter.get_settings().token.preview == "di...cret"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_external_dispatcher_reports_rejected_claim_in_heartbeat_and_result(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    status_updates: list[dict[str, object]] = []
+    failures: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/runners/register":
+            return httpx.Response(200, json={"runner_id": "runner-one"})
+        if request.url.path == "/api/runners/runner-one/heartbeat":
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/runners/runner-one/tasks/claim":
+            return httpx.Response(
+                200,
+                json={
+                    "tasks": [
+                        {
+                            "id": "ext-invalid",
+                            "idempotency_key": "idem-invalid",
+                            "payload": {"prompt": "", "n": 1},
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/api/tasks/ext-invalid/result":
+            failures.append(json.loads(request.read()))
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/tasks/ext-invalid/status":
+            status_updates.append(json.loads(request.read()))
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(404)
+
+    submission = ImageJobSubmission(settings)
+    adapter = ExternalImageTaskDispatcherAdapter(settings, submission, transport=httpx.MockTransport(handler))
+    saved = await adapter.save_settings(
+        images_module.ImageTaskDispatcherSettingsRequest(
+            name="Acme",
+            api_base_url="https://dispatcher.example.test/api",
+            token="dispatcher-secret",
+        )
+    )
+    await adapter.close()
+
+    await adapter._claim_remote_tasks(saved)
+    await adapter._report_pending_status_updates(saved)
+    assert status_updates[-1]["source_task_id"] == "ext-invalid"
+    assert status_updates[-1]["status"] == "failed"
+    assert status_updates[-1]["error"]["code"] == "IMAGE_EXTERNAL_TASK_REJECTED"
+
+    await adapter._deliver_pending_results(saved)
+    assert failures[-1]["source_task_id"] == "ext-invalid"
+    assert failures[-1]["status"] == "failed"
+    assert failures[-1]["error"]["code"] == "IMAGE_EXTERNAL_TASK_REJECTED"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_external_dispatcher_pause_reports_runner_offline(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    heartbeats: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == "Bearer dispatcher-secret"
+        if request.url.path == "/api/runners/register":
+            return httpx.Response(200, json={"runner_id": "runner-one"})
+        if request.url.path == "/api/runners/runner-one/heartbeat":
+            heartbeats.append(json.loads(request.read())["status"])
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(404)
+
+    submission = ImageJobSubmission(settings)
+    adapter = ExternalImageTaskDispatcherAdapter(settings, submission, transport=httpx.MockTransport(handler))
+    saved = await adapter.save_settings(
+        images_module.ImageTaskDispatcherSettingsRequest(
+            name="Acme",
+            api_base_url="https://dispatcher.example.test/api",
+            token="dispatcher-secret",
+        )
+    )
+    await adapter.close()
+    assert saved.external_runner_status == "online"
+
+    paused = await adapter.pause()
+
+    assert heartbeats[-1] == "offline"
+    assert paused.paused is True
+    assert paused.external_runner_status == "paused"
+    assert paused.external_last_error is None
+    assert paused.external_last_heartbeat_at is not None
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_external_dispatcher_pause_survives_empty_claim_error(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    claim_attempted = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == "Bearer dispatcher-secret"
+        if request.url.path == "/api/runners/register":
+            return httpx.Response(200, json={"runner_id": "runner-one", "poll_interval_seconds": 1})
+        if request.url.path == "/api/runners/runner-one/heartbeat":
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/runners/runner-one/tasks/claim":
+            claim_attempted.set()
+            raise Exception()
+        return httpx.Response(404)
+
+    submission = ImageJobSubmission(settings)
+    adapter = ExternalImageTaskDispatcherAdapter(settings, submission, transport=httpx.MockTransport(handler))
+    await adapter.save_settings(
+        images_module.ImageTaskDispatcherSettingsRequest(
+            name="Acme",
+            api_base_url="https://dispatcher.example.test/api",
+            token="dispatcher-secret",
+        )
+    )
+    await asyncio.wait_for(claim_attempted.wait(), timeout=1)
+
+    paused = await adapter.pause()
+
+    assert paused.paused is True
+    assert paused.external_runner_status == "paused"
+    assert paused.external_last_error is None
+
+
+@pytest.mark.asyncio
+async def test_external_dispatcher_debug_logs_claimed_payload_without_image_data(tmp_path, caplog) -> None:
+    settings = _settings(tmp_path, image_debug=True)
+    init_db(settings.db_path)
+    caplog.set_level("WARNING")
+    reference_b64 = "c2VjcmV0LXJlZmVyZW5jZQ=="
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/runners/register":
+            return httpx.Response(200, json={"runner_id": "runner-one"})
+        if request.url.path == "/api/runners/runner-one/tasks/claim":
+            return httpx.Response(
+                200,
+                json={
+                    "tasks": [
+                        {
+                            "id": "ext-binary",
+                            "idempotency_key": "idem-binary",
+                            "token": "dispatcher-task-token",
+                            "payload": {
+                                "prompt": "external poster",
+                                "response_format": "binary",
+                                "reference_images": [
+                                    {"file_name": "ref.png", "mime_type": "image/png", "b64_json": reference_b64}
+                                ],
+                            },
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(200, json={"ok": True})
+
+    submission = ImageJobSubmission(settings)
+    adapter = ExternalImageTaskDispatcherAdapter(settings, submission, transport=httpx.MockTransport(handler))
+    saved = await adapter.save_settings(
+        images_module.ImageTaskDispatcherSettingsRequest(
+            name="Acme",
+            api_base_url="https://dispatcher.example.test/api",
+            token="dispatcher-secret",
+        )
+    )
+    await adapter.close()
+
+    await adapter._claim_remote_tasks(saved)
+
+    logs = caplog.text
+    assert "dispatcher claim response tasks=1" in logs
+    assert '"response_format": "binary"' in logs
+    assert "Invalid image response format: 'binary'" in logs
+    assert '"b64_json": "[redacted]"' in logs
+    assert "dispatcher-task-token" not in logs
+    assert reference_b64 not in logs
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_external_delivery_failure_does_not_change_local_job_terminal_status(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/runners/register":
+            return httpx.Response(200, json={"runner_id": "runner-one"})
+        if request.url.path == "/api/tasks/ext-failed-delivery/result":
+            return httpx.Response(502, json={"error": "temporary"})
+        return httpx.Response(200, json={"ok": True})
+
+    submission = ImageJobSubmission(settings)
+    adapter = ExternalImageTaskDispatcherAdapter(settings, submission, transport=httpx.MockTransport(handler))
+    saved = await adapter.save_settings(
+        images_module.ImageTaskDispatcherSettingsRequest(
+            name="Acme",
+            api_base_url="https://dispatcher.example.test/api",
+            token="dispatcher-secret",
+        )
+    )
+    await adapter.close()
+    response = await submission.submit(
+        ImageJobSubmitRequest(
+            source="external_dispatcher",
+            source_task_id="ext-failed-delivery",
+            idempotency_key="idem-failed-delivery",
+            payload=ImageJobSubmitPayload(prompt="poster"),
+        )
+    )
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            UPDATE image_jobs
+            SET status = 'succeeded', result_json = ?, finished_at = 20, updated_at = 20
+            WHERE id = ?
+            """,
+            (
+                ImageGenerationResponse(
+                    created=1776000000,
+                    model="gpt-image-2",
+                    data=[ImageData(file_name="done.png", file_url="/api/images/files/done.png")],
+                ).model_dump_json(),
+                response.job_ids[0],
+            ),
+        )
+        conn.execute(
+            "UPDATE image_submissions SET status = 'succeeded', updated_at = 20 WHERE id = ?",
+            (response.submission_id,),
+        )
+
+    await adapter._deliver_pending_results(saved)
+
+    with connect(settings.db_path) as conn:
+        job = conn.execute("SELECT status FROM image_jobs WHERE id = ?", (response.job_ids[0],)).fetchone()
+        stored_submission = conn.execute(
+            "SELECT external_delivery_status, external_delivery_error_json FROM image_submissions WHERE id = ?",
+            (response.submission_id,),
+        ).fetchone()
+    assert job["status"] == "succeeded"
+    assert stored_submission["external_delivery_status"] == "failed"
+    assert "temporary" not in (stored_submission["external_delivery_error_json"] or "")
+    delivery_error = json.loads(stored_submission["external_delivery_error_json"])
+    assert delivery_error["attempt_count"] == 1
+    assert delivery_error["next_retry_at"] > int(time.time())
+
+
+@pytest.mark.asyncio
+async def test_worker_status_reports_running_external_tasks(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    submission = ImageJobSubmission(settings)
+    response = await submission.submit(
+        ImageJobSubmitRequest(
+            source="external_dispatcher",
+            source_task_id="ext-running",
+            idempotency_key="idem-running",
+            payload=ImageJobSubmitPayload(prompt="external poster"),
+        )
+    )
+    queue = ImageGenerationQueue(settings)
+    with connect(settings.db_path) as conn:
+        conn.execute(
+            """
+            UPDATE image_jobs
+            SET status = 'running', started_at = 12, updated_at = 13, lease_owner = 'active:test'
+            WHERE id = ?
+            """,
+            (response.job_ids[0],),
+        )
+
+    status = queue.worker_status()
+
+    assert len(status.running_external_tasks) == 1
+    task = status.running_external_tasks[0]
+    assert task.source_task_id == "ext-running"
+    assert task.prompt == "external poster"
+    assert task.status == "running"
+    assert task.started_at == 12
+    assert task.lease_owner == "active:test"
     await queue.close()
 
 

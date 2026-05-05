@@ -1,12 +1,49 @@
-.git
-.venv
-node_modules
-frontend/node_modules
-frontend/dist
-__pycache__
-.pytest_cache
-data
+# Version control
+.git/
+.gitignore
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.db
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node / frontend build artifacts (rebuilt inside container)
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# Local app data
+data/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-.env
+tmp/
+
+# Logs
+*.log
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Documentation / non-build files
+docs/
+*.md
+LICENSE

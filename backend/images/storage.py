@@ -40,7 +40,7 @@ class ImageStorageContext:
 
     def resolve_task_dir(self, created: int) -> str:
         if self.task_dir is None:
-            self.task_dir = f"{_image_month_dir(created)}/direct-{created}-{self.direct_uuid}"
+            self.task_dir = f"{_image_date_dir(created)}/direct-{created}-{self.direct_uuid}"
         return self.task_dir
 
 
@@ -70,12 +70,12 @@ def _image_file_url(file_name: str) -> str:
     return f"{IMAGE_FILE_URL_PREFIX}/{file_name}"
 
 
-def _image_month_dir(created: int) -> str:
-    return time.strftime("%Y/%m", time.gmtime(created))
+def _image_date_dir(created: int) -> str:
+    return time.strftime("%Y/%m/%d", time.gmtime(created))
 
 
 def _image_job_task_dir(job_id: str, created: int) -> str:
-    return f"{_image_month_dir(created)}/{job_id}"
+    return f"{_image_date_dir(created)}/{job_id}"
 
 
 def _image_path_parts(file_path: str) -> list[str]:
@@ -84,11 +84,18 @@ def _image_path_parts(file_path: str) -> list[str]:
     parts = file_path.split("/")
     if any(part in {"", ".", ".."} for part in parts):
         raise ValueError("Invalid image filename")
-    if len(parts) != 5:
+    if len(parts) not in {5, 6}:
         raise ValueError("Invalid image filename")
-    year, month, task_dir, role, filename = parts
+    year, month = parts[:2]
     if len(year) != 4 or not year.isdigit() or len(month) != 2 or not month.isdigit():
         raise ValueError("Invalid image filename")
+    if len(parts) == 6:
+        day = parts[2]
+        if len(day) != 2 or not day.isdigit():
+            raise ValueError("Invalid image filename")
+    task_dir = parts[-3]
+    role = parts[-2]
+    filename = parts[-1]
     if not task_dir or not filename:
         raise ValueError("Invalid image filename")
     if role in {IMAGE_REFERENCES_DIR, IMAGE_OUTPUTS_DIR, IMAGE_DERIVED_DIR}:
@@ -98,7 +105,7 @@ def _image_path_parts(file_path: str) -> list[str]:
 
 def _image_file_role(file_name: str) -> str | None:
     parts = _image_path_parts(file_name)
-    role = parts[3]
+    role = parts[-2]
     if role in {IMAGE_REFERENCES_DIR, IMAGE_OUTPUTS_DIR}:
         return role
     return None
@@ -107,7 +114,7 @@ def _image_file_role(file_name: str) -> str | None:
 def image_thumbnail_relative_path(file_name: str) -> str:
     thumbnail_name = image_thumbnail_filename(file_name)
     parts = _image_path_parts(file_name)
-    return "/".join([*parts[:3], IMAGE_DERIVED_DIR, thumbnail_name])
+    return "/".join([*parts[:-2], IMAGE_DERIVED_DIR, thumbnail_name])
 
 
 def _image_thumbnail_path(settings: Settings, file_name: str) -> Path:

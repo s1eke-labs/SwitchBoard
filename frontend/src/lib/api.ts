@@ -328,6 +328,11 @@ export type ImageGenerationJob = {
   references: ImageReferenceData[];
   result: ImageGenerationResponse | null;
   error: IssueDetail | null;
+  submission_id: string | null;
+  source: "local" | "external_dispatcher";
+  source_label: string;
+  dispatcher_id: string | null;
+  source_task_id: string | null;
 };
 
 export type ImageGenerationJobSummary = Pick<
@@ -350,7 +355,23 @@ export type ImageGenerationJobStatusListResponse = {
 
 export type ImageGalleryJob = Pick<
   ImageGenerationJob,
-  "id" | "prompt" | "size" | "quality" | "n" | "status" | "created_at" | "updated_at" | "position" | "references" | "upstream_metadata" | "error"
+  | "id"
+  | "prompt"
+  | "size"
+  | "quality"
+  | "n"
+  | "status"
+  | "created_at"
+  | "updated_at"
+  | "position"
+  | "references"
+  | "upstream_metadata"
+  | "error"
+  | "submission_id"
+  | "source"
+  | "source_label"
+  | "dispatcher_id"
+  | "source_task_id"
 >;
 
 export type ImageGalleryImage = {
@@ -375,6 +396,63 @@ export type ImageGalleryItem = {
 export type ImageGalleryListResponse = {
   items: ImageGalleryItem[];
   total_count: number;
+};
+
+export type ImageDispatcherConnectionStatus =
+  | "unconfigured"
+  | "registering"
+  | "online"
+  | "offline"
+  | "auth_failed"
+  | "paused";
+
+export type ImageTaskDispatcherSettings = {
+  configured: boolean;
+  name: string | null;
+  api_base_url: string | null;
+  token: {
+    configured: boolean;
+    preview: string | null;
+  };
+  paused: boolean;
+  external_runner_id: string | null;
+  external_runner_status: ImageDispatcherConnectionStatus;
+  external_heartbeat_interval_seconds: number | null;
+  external_poll_interval_seconds: number | null;
+  external_last_heartbeat_at: number | null;
+  external_last_claim_at: number | null;
+  external_current_task_id: string | null;
+  external_last_error: string | null;
+};
+
+export type ImageTaskDispatcherSettingsRequest = {
+  name: string;
+  api_base_url: string;
+  token?: string | null;
+};
+
+export type ImageDispatcherTestRequest = {
+  name?: string | null;
+  api_base_url?: string | null;
+  token?: string | null;
+};
+
+export type ImageWorkerStatus = {
+  active_worker_running: boolean;
+  active_worker_slots: number;
+  dispatcher: ImageTaskDispatcherSettings;
+  active_leases: number;
+  queued_jobs: number;
+  running_jobs: number;
+  running_external_tasks: {
+    id: string;
+    source_task_id: string | null;
+    prompt: string;
+    status: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled";
+    started_at: number | null;
+    updated_at: number;
+    lease_owner: string | null;
+  }[];
 };
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -579,8 +657,8 @@ export const api = {
     const query = params.toString();
     return request<ImageGenerationJobStatusListResponse>(`/api/images/jobs/statuses${query ? `?${query}` : ""}`);
   },
-  imageGalleryItems: ({ page = 1, limit = 20 }: { page?: number; limit?: number } = {}) =>
-    request<ImageGalleryListResponse>(`/api/images/gallery?page=${page}&limit=${limit}`),
+  imageGalleryItems: ({ page = 1, limit = 20, source = "all" }: { page?: number; limit?: number; source?: string } = {}) =>
+    request<ImageGalleryListResponse>(`/api/images/gallery?page=${page}&limit=${limit}&source=${encodeURIComponent(source)}`),
   imageJob: (jobId: string) => request<ImageGenerationJob>(`/api/images/jobs/${jobId}`),
   stopImageJob: (jobId: string) =>
     request<{ ok: boolean }>(`/api/images/jobs/${jobId}/stop`, {
@@ -594,4 +672,23 @@ export const api = {
     request<{ ok: boolean }>(`/api/images/jobs/${jobId}`, {
       method: "DELETE",
     }),
+  imageTaskDispatcherSettings: () =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/settings"),
+  saveImageTaskDispatcherSettings: (payload: ImageTaskDispatcherSettingsRequest) =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/settings", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  testImageTaskDispatcher: (payload: ImageDispatcherTestRequest) =>
+    request<{ ok: boolean; settings: ImageTaskDispatcherSettings }>("/api/images/task-dispatcher/test", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  registerImageTaskDispatcher: () =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/register", { method: "POST" }),
+  pauseImageTaskDispatcher: () =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/pause", { method: "POST" }),
+  resumeImageTaskDispatcher: () =>
+    request<ImageTaskDispatcherSettings>("/api/images/task-dispatcher/resume", { method: "POST" }),
+  imageWorkerStatus: () => request<ImageWorkerStatus>("/api/images/workers/status"),
 };

@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS image_conversations (
 
 CREATE TABLE IF NOT EXISTS image_jobs (
     id TEXT PRIMARY KEY,
+    submission_id TEXT,
     conversation_id TEXT,
     prompt TEXT NOT NULL,
     model TEXT,
@@ -147,6 +148,21 @@ CREATE TABLE IF NOT EXISTS image_jobs (
     upstream_metadata_json TEXT,
     result_json TEXT,
     error_json TEXT,
+    source TEXT NOT NULL DEFAULT 'local_ui',
+    source_task_id TEXT,
+    idempotency_key TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    lease_owner TEXT,
+    lease_token TEXT,
+    lease_expires_at INTEGER,
+    started_at INTEGER,
+    finished_at INTEGER,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    external_payload_json TEXT,
+    external_delivery_status TEXT,
+    external_delivery_error_json TEXT,
+    local_deleted_at INTEGER,
+    FOREIGN KEY(submission_id) REFERENCES image_submissions(id) ON DELETE SET NULL,
     FOREIGN KEY(conversation_id) REFERENCES image_conversations(id) ON DELETE SET NULL
 );
 
@@ -155,6 +171,53 @@ CREATE INDEX IF NOT EXISTS idx_image_jobs_status_created
 
 CREATE INDEX IF NOT EXISTS idx_image_jobs_created
     ON image_jobs(created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS image_submissions (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    source_task_id TEXT,
+    idempotency_key TEXT,
+    queue TEXT NOT NULL,
+    priority INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    external_delivery_status TEXT,
+    external_delivery_error_json TEXT,
+    external_status_reported_status TEXT,
+    external_status_reported_at INTEGER,
+    external_status_report_error_json TEXT,
+    error_json TEXT,
+    metadata_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_image_submissions_created
+    ON image_submissions(created_at DESC, id DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_source_idempotency
+    ON image_submissions(source, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_source_task
+    ON image_submissions(source, source_task_id)
+    WHERE source_task_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS image_task_dispatcher_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    name TEXT,
+    api_base_url TEXT,
+    paused INTEGER NOT NULL DEFAULT 0,
+    runner_id TEXT,
+    runner_status TEXT NOT NULL DEFAULT 'unconfigured',
+    heartbeat_interval_seconds INTEGER,
+    poll_interval_seconds INTEGER,
+    last_heartbeat_at INTEGER,
+    last_claim_at INTEGER,
+    current_source_task_id TEXT,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS image_job_references (
     id TEXT PRIMARY KEY,
@@ -205,6 +268,8 @@ def _migrate_usage_events(conn: sqlite3.Connection) -> None:
 
 def _migrate_images(conn: sqlite3.Connection) -> None:
     columns = _columns(conn, "image_jobs")
+    if "submission_id" not in columns:
+        conn.execute("ALTER TABLE image_jobs ADD COLUMN submission_id TEXT")
     if "conversation_id" not in columns:
         conn.execute("ALTER TABLE image_jobs ADD COLUMN conversation_id TEXT")
     if "previous_response_id" not in columns:
@@ -215,10 +280,87 @@ def _migrate_images(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE image_jobs ADD COLUMN upstream_metadata_json TEXT")
     if "n" not in columns:
         conn.execute("ALTER TABLE image_jobs ADD COLUMN n INTEGER NOT NULL DEFAULT 1")
+    added_columns = {
+        "source": "TEXT NOT NULL DEFAULT 'local_ui'",
+        "source_task_id": "TEXT",
+        "idempotency_key": "TEXT",
+        "priority": "INTEGER NOT NULL DEFAULT 0",
+        "lease_owner": "TEXT",
+        "lease_token": "TEXT",
+        "lease_expires_at": "INTEGER",
+        "started_at": "INTEGER",
+        "finished_at": "INTEGER",
+        "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+        "external_payload_json": "TEXT",
+        "external_delivery_status": "TEXT",
+        "external_delivery_error_json": "TEXT",
+        "local_deleted_at": "INTEGER",
+    }
+    for column_name, column_type in added_columns.items():
+        if column_name not in columns:
+            conn.execute(f"ALTER TABLE image_jobs ADD COLUMN {column_name} {column_type}")
+    submission_columns = _columns(conn, "image_submissions")
+    submission_added_columns = {
+        "external_status_reported_status": "TEXT",
+        "external_status_reported_at": "INTEGER",
+        "external_status_report_error_json": "TEXT",
+        "error_json": "TEXT",
+    }
+    for column_name, column_type in submission_added_columns.items():
+        if column_name not in submission_columns:
+            conn.execute(f"ALTER TABLE image_submissions ADD COLUMN {column_name} {column_type}")
+    now = now_ts()
+    for row in conn.execute("SELECT id, source, source_task_id, idempotency_key, created_at, updated_at FROM image_jobs WHERE submission_id IS NULL"):
+        submission_id = f"legacy-{row['id']}"
+        source = str(row["source"] or "local_ui")
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO image_submissions (
+                id, source, source_task_id, idempotency_key, queue, priority, status,
+                created_at, updated_at, external_delivery_status, metadata_json
+            )
+            VALUES (?, ?, ?, ?, 'default', 0, 'accepted', ?, ?, NULL, NULL)
+            """,
+            (
+                submission_id,
+                source,
+                row["source_task_id"],
+                row["idempotency_key"],
+                int(row["created_at"] or now),
+                int(row["updated_at"] or now),
+            ),
+        )
+        conn.execute("UPDATE image_jobs SET submission_id = ? WHERE id = ?", (submission_id, row["id"]))
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_image_jobs_conversation_created
             ON image_jobs(conversation_id, created_at ASC, id ASC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_image_jobs_claim
+            ON image_jobs(status, priority DESC, created_at ASC, id ASC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_image_jobs_lease
+            ON image_jobs(status, lease_expires_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_source_idempotency
+            ON image_submissions(source, idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_image_submissions_source_task
+            ON image_submissions(source, source_task_id)
+            WHERE source_task_id IS NOT NULL
         """
     )
 

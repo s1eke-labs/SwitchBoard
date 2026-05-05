@@ -12,6 +12,7 @@ import { ImageStudioPage } from "@/pages/ImageStudioPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { RequestLogsPage } from "@/pages/RequestLogsPage";
 import { SessionsPage } from "@/pages/SessionsPage";
+import { SettingsPage } from "@/pages/SettingsPage";
 import { Alert } from "@/components/heroui/alert";
 import { Spinner } from "@/components/heroui/spinner";
 
@@ -82,6 +83,12 @@ export default function App() {
     queryFn: api.accounts,
   });
 
+  useEffect(() => {
+    if (window.location.pathname === "/images/dispatcher") {
+      navigate("/settings/dispatcher", true);
+    }
+  }, [navigate]);
+
   if (accounts.error && errorStatus(accounts.error) === 401) {
     return <LoginPage onDone={() => queryClient.invalidateQueries({ queryKey: ["accounts"] })} />;
   }
@@ -120,6 +127,10 @@ export default function App() {
       ) : route.page === "images" ? (
         <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-auto px-4 py-6">
           <ImageStudioPage />
+        </div>
+      ) : route.page === "settings" ? (
+        <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col overflow-auto px-4 py-6">
+          <SettingsPage section={route.section} onNavigate={navigate} />
         </div>
       ) : (
         <DashboardPage accounts={accounts.data ?? []} />

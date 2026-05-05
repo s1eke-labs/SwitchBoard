@@ -60,6 +60,7 @@ export function ImageStudioPage() {
   const [previewReferenceId, setPreviewReferenceId] = useState<string | null>(null);
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
   const [galleryPage, setGalleryPage] = useState(1);
+  const [gallerySource, setGallerySource] = useState("all");
   const [editingItemKey, setEditingItemKey] = useState<string | null>(null);
   const [selectingGallery, setSelectingGallery] = useState(false);
   const [selectedGalleryKeys, setSelectedGalleryKeys] = useState<Set<string>>(() => new Set());
@@ -94,9 +95,24 @@ export function ImageStudioPage() {
   }, [galleryLayout]);
   const galleryPageSize = galleryMetrics.pageSize;
 
+  const dispatcherSettings = useQuery({
+    queryKey: ["imageTaskDispatcherSettings"],
+    queryFn: api.imageTaskDispatcherSettings,
+  });
+  const gallerySourceOptions = useMemo(() => {
+    const options = [
+      { value: "all", label: t("images.source.all") },
+      { value: "local", label: t("images.source.local") },
+    ];
+    if (dispatcherSettings.data?.name) {
+      options.push({ value: "dispatcher:default", label: dispatcherSettings.data.name });
+    }
+    return options;
+  }, [dispatcherSettings.data, t]);
+
   const gallery = useQuery({
-    queryKey: ["imageGallery", galleryPage, galleryPageSize],
-    queryFn: () => api.imageGalleryItems({ page: galleryPage, limit: galleryPageSize }),
+    queryKey: ["imageGallery", galleryPage, galleryPageSize, gallerySource],
+    queryFn: () => api.imageGalleryItems({ page: galleryPage, limit: galleryPageSize, source: gallerySource }),
     placeholderData: (previousData) => previousData,
   });
   const galleryItems = useMemo(() => galleryItemsFromApiItems(gallery.data?.items ?? []), [gallery.data?.items]);
@@ -172,7 +188,7 @@ export function ImageStudioPage() {
     mutationFn: (payload: ImageGenerationRequest) => api.createImageJob(payload),
     onSuccess: (job) => {
       setGalleryPage(1);
-      queryClient.setQueryData(["imageGallery", 1, galleryPageSize], (current: typeof gallery.data | undefined) => {
+      queryClient.setQueryData(["imageGallery", 1, galleryPageSize, gallerySource], (current: typeof gallery.data | undefined) => {
         if (!current) return current;
         const existingSlots = current.items.filter((item) => item.job.id === job.id).length;
         const incomingSlots = galleryApiItemsFromJob(job);
@@ -446,6 +462,15 @@ export function ImageStudioPage() {
     setPendingDeleteItems(null);
   }
 
+  function selectGallerySource(source: string) {
+    if (source === gallerySource) return;
+    setGallerySource(source);
+    setGalleryPage(1);
+    setSelectedItemKey(null);
+    setPreviewReferenceId(null);
+    setPendingDeleteItems(null);
+  }
+
   function openImagePreview(key: string) {
     setPreviewReferenceId(null);
     setPendingDeleteItems(null);
@@ -496,6 +521,9 @@ export function ImageStudioPage() {
           selectedKeys={selectedGalleryKeys}
           selectedDownloadableCount={selectedDownloadableCount}
           deleting={deleteImages.isPending}
+          source={gallerySource}
+          sourceOptions={gallerySourceOptions}
+          onSourceChange={selectGallerySource}
           onDownloadSelected={downloadSelectedImages}
           onDeleteSelected={deleteSelectedImages}
           onToggleSelecting={toggleSelectingGallery}

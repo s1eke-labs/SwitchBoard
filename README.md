@@ -21,7 +21,7 @@
     ◆ <a href="#quick-start">Quick Start</a>
     ◆ <a href="#demo">Demo</a>
     ◆ <a href="#installation">Installation</a>
-    ◆ <a href="#architecture">Architecture</a>
+    ◆ <a href="#documentation">Documentation</a>
   </p>
 
   <p><a href="./README.zh-CN.md">简体中文</a></p>
@@ -30,6 +30,7 @@
 ## Latest News
 
 - **[2026/05]** Refactored the Images page into focused feature modules and local HeroUI-backed components.
+- **[2026/05]** Improved queued image generation and task settings.
 - **[2026/05]** Added a paginated image gallery, per-image and per-job deletion, and responsive gallery page sizing.
 - **[2026/05]** Unified persistent data configuration under `SWITCHBOARD_DATA_DIR`.
 
@@ -45,7 +46,7 @@ SwitchBoard gives local Codex users a protected dashboard for the operational de
 
 ## Quick Start
 
-Run the backend and frontend in two terminals for day-to-day development.
+Run the backend and frontend in two terminals for local use.
 
 ```bash
 # 1. Start the backend API
@@ -96,7 +97,7 @@ What you can do from the UI:
 
 ## Installation
 
-This section covers detailed setup options. For the fastest development path, use [Quick Start](#quick-start).
+This section covers detailed setup options. For the fastest local start, use [Quick Start](#quick-start).
 
 ### Environment Setup
 
@@ -157,50 +158,11 @@ Typical workflow:
 4. Browse results in the gallery. Pages are counted by image tile, and page size adapts to the gallery viewport.
 5. Preview, download, stop active jobs, retry failed jobs, delete individual outputs, or delete a whole job.
 
-Operational notes:
+Notes:
 
-- The Images page offers `auto` plus `1:1`, `3:4`, `4:3`, `9:16`, `16:9`, and `21:9` presets mapped to low, medium, and high pixel sizes. Backend requests may pass `auto` or any `WIDTHxHEIGHT` size that satisfies the resolution constraints: positive dimensions, both sides divisible by 16, longest side no greater than 3840 px, aspect ratio no wider than 3:1, and total pixels between 655,360 and 8,294,400.
-- Multi-image requests are split into one queued job per image. SwitchBoard runs up to 2 images concurrently by default, and each image has its own status, retry, metadata, and gallery tile.
-- Image details include sanitized upstream metadata when available, including resolved size, host model, image model, token totals, and upstream duration.
-- Upstream image requests use `store: false`; follow-up prompts should include the needed context or reference images.
-- Generated images and saved references live under `SWITCHBOARD_DATA_DIR/images` and are served through authenticated `/api/images/files/{file_path}` URLs.
-- Job metadata is stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`. If SwitchBoard restarts while an image is running, only that single-image job is marked failed; queued sibling images continue after the service starts again.
-
-Browser-facing image endpoints:
-
-| Endpoint | Use |
-| --- | --- |
-| `POST /api/images/jobs` | Queue an image generation job. |
-| `GET /api/images/gallery?page=1&limit={page_size}` | Fetch lightweight gallery tiles. |
-| `GET /api/images/jobs/statuses?ids={job_id}` | Fetch lightweight active and tracked job statuses for polling. |
-| `GET /api/images/jobs?page=1&limit=20` | Fetch lightweight job summaries. |
-| `GET /api/images/jobs/{job_id}` | Fetch full details for one job. |
-| `POST /api/images/jobs/{job_id}/stop` | Stop a queued or running image job. |
-| `DELETE /api/images/jobs/{job_id}/images/{image_index}` | Delete one generated output. |
-| `DELETE /api/images/jobs/{job_id}` | Delete a whole job. |
-| `POST /api/images/generations` | Run the direct synchronous generation endpoint. |
-
-## Development Commands
-
-Run backend commands from `backend/`:
-
-```bash
-uv run pylint --rcfile=.pylintrc .
-uv run pytest
-APP_PASSWORD=switchboard CODEX_HOME="$HOME/.codex" SWITCHBOARD_DATA_DIR=./data/dev uv run uvicorn main:app --host 127.0.0.1 --port 8080 --reload
-```
-
-Run frontend commands from `frontend/`:
-
-```bash
-npm install
-npm run dev
-npm run lint
-npm run build
-npm run preview
-```
-
-`uv run pylint --rcfile=.pylintrc .` runs backend lint checks. `uv run pytest` runs focused backend tests. `npm run lint` runs frontend ESLint and TypeScript checks. `npm run build` creates `frontend/dist`.
+- The gallery shows generated images, and files are stored under `SWITCHBOARD_DATA_DIR/images/YYYY/MM/DD/{job_id}/`.
+- Image job metadata is stored in `SWITCHBOARD_DATA_DIR/switchboard.sqlite`; ChatGPT tokens are not stored there.
+- Advanced image job, API, and integration details live in [docs/image-jobs.md](./docs/image-jobs.md).
 
 ## Production-Style Local Run
 
@@ -255,66 +217,10 @@ The exported JSON includes account IDs, generated display names, custom names, h
 
 Import merges by `account_id`: accounts in the file update local display metadata and latest rate-limit snapshots, unknown accounts are created as placeholders, and local accounts missing from the file are left unchanged. The current Codex account is never imported as hidden, and importing a `current` marker never switches the active Codex account.
 
-## Architecture
+## Documentation
 
-### System Overview
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│ Browser                                                     │
-│ React 19 + Vite + Tailwind CSS + HeroUI-backed wrappers     │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ authenticated /api requests
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│ FastAPI backend                                              │
-│ Login cookie, account APIs, session APIs, usage APIs, images │
-└───────────────┬───────────────────────┬─────────────────────┘
-                │                       │
-                ▼                       ▼
-┌────────────────────────────┐  ┌─────────────────────────────┐
-│ CODEX_HOME                 │  │ SWITCHBOARD_DATA_DIR         │
-│ auth.json, sessions, logs  │  │ SQLite, auth-vault, images   │
-└────────────────────────────┘  └─────────────────────────────┘
-                │                       │
-                └──────────────┬────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ ChatGPT backend                                              │
-│ Account scans and OpenAI Images-compatible generation proxy  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Key Design Decisions
-
-- **Flat FastAPI modules**: Backend behavior is organized by domain modules in `backend/` instead of a deep framework hierarchy.
-- **Local metadata boundary**: SwitchBoard metadata lives in SQLite, while ChatGPT tokens stay in `auth.json` files and are never stored in the database.
-- **Persistent image queue**: Image jobs are persisted in SQLite and files are stored under the data directory, so gallery state survives restarts.
-- **HeroUI-backed frontend primitives**: The React app uses local wrappers around HeroUI where available, with SwitchBoard-specific composition in pages and feature modules.
-
-## Repository Layout
-
-```text
-backend/
-  main.py             FastAPI app and API routes
-  accounts.py         Codex account scanning and switching
-  images/             Image generation package, queue, storage, and API proxy
-  sessions.py         Codex session reading and event previews
-  usage.py            Usage aggregation and request logs
-  db.py               SQLite setup and helpers
-  security.py         Login cookie helpers
-  tests/              Backend tests
-
-frontend/
-  src/app/            App shell and routing
-  src/pages/          Dashboard, sessions, request logs, login, and images
-  src/features/       Account, session, usage, and image UI modules
-  src/components/     Shared UI components and HeroUI wrappers
-  src/lib/            API client, errors, and utilities
-  dist/               Built frontend output
-
-docs/images/          Logo source and dashboard screenshot
-```
+- [docs/development.md](./docs/development.md) - Development commands, architecture, repository layout, and contribution notes.
+- [docs/image-jobs.md](./docs/image-jobs.md) - Image job API and task-dispatcher integration details.
 
 ## Security Notes
 
@@ -326,27 +232,10 @@ docs/images/          Logo source and dashboard screenshot
 - Hidden accounts and custom names are SwitchBoard-local metadata.
 - Config export includes only SwitchBoard-local account display state and never includes credentials.
 - Image generation reads the current access token only in memory; tokens are never returned to the frontend.
+- Task dispatcher tokens are encrypted in the private auth vault and are returned to the frontend only as masked summaries.
 - Image debug logging and stored upstream metadata never include the access token, Authorization header value, image base64 payloads, safety identifiers, or prompt cache keys.
 - Do not commit `.env`, SQLite databases, generated private data, or local Codex credentials.
 - Usage cost estimates use a local pricing table for known model names; unknown model costs remain null.
-
-## Contributing
-
-Contributions are welcome. Keep changes focused and preserve the local-first credential boundary.
-
-```bash
-# Backend checks
-cd backend
-uv run pylint --rcfile=.pylintrc .
-uv run pytest
-
-# Frontend checks
-cd ../frontend
-npm run lint
-npm run build
-```
-
-Commit messages use Conventional Commits: `<type>(<scope>): <summary>`. This repository prefers Chinese summaries unless the surrounding change is already English-only.
 
 ## License
 

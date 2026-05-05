@@ -34,12 +34,12 @@ def _ensure_private_dir(path: Path) -> None:
     os.chmod(path, 0o700)
 
 
-def _month_dir(created: int) -> str:
-    return time.strftime("%Y/%m", time.gmtime(created))
+def _date_dir(created: int) -> str:
+    return time.strftime("%Y/%m/%d", time.gmtime(created))
 
 
 def _task_dir(job_id: str, created: int) -> str:
-    return f"{_month_dir(created)}/{job_id}"
+    return f"{_date_dir(created)}/{job_id}"
 
 
 def _compact_stem(role: str, index: int) -> str:
@@ -105,8 +105,8 @@ def _thumbnail_candidates(image_dir: Path, file_name: str | None, thumbnail_url:
             parts = file_name.split("/")
             if len(parts) == 2 and parts[0] in {"generated", "references"}:
                 candidates.append(image_dir / "thumbnails" / parts[0] / image_thumbnail_filename(parts[1]))
-            elif len(parts) == 5 and parts[3] in {IMAGE_OUTPUTS_DIR, IMAGE_REFERENCES_DIR}:
-                candidates.append(image_dir.joinpath(*parts[:3], IMAGE_DERIVED_DIR, image_thumbnail_filename(parts[4])))
+            elif len(parts) in {5, 6} and parts[-2] in {IMAGE_OUTPUTS_DIR, IMAGE_REFERENCES_DIR}:
+                candidates.append(image_dir.joinpath(*parts[:-2], IMAGE_DERIVED_DIR, image_thumbnail_filename(parts[-1])))
             elif len(parts) == 1:
                 candidates.append(image_dir / image_thumbnail_filename(file_name))
     unique: list[Path] = []

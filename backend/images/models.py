@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -11,7 +11,12 @@ CODEX_ORIGINATOR = "codex-tui"
 
 ImageQuality = Literal["auto"]
 ImageResponseFormat = Literal["b64_json", "url"]
-ImageJobStatus = Literal["queued", "running", "succeeded", "failed"]
+ImageJobStatus = Literal["queued", "leased", "running", "succeeded", "failed", "canceled"]
+ImagePublicJobStatus = Literal["queued", "running", "succeeded", "failed"]
+ImageJobSource = Literal["local_ui", "local_api", "external_dispatcher", "retry"]
+ImageJobPriority = Literal["low", "normal", "high"]
+ImageWorkerRunStatus = Literal["executed", "no_job", "failed"]
+ImageDispatcherConnectionStatus = Literal["unconfigured", "registering", "online", "offline", "auth_failed", "paused"]
 
 IMAGE_MAX_SIDE_PX = 3840
 IMAGE_SIZE_MULTIPLE_PX = 16
@@ -126,7 +131,7 @@ class ImageGenerationJobResponse(BaseModel):
     size: str
     quality: str
     n: int
-    status: ImageJobStatus
+    status: ImagePublicJobStatus
     created_at: int
     updated_at: int
     previous_response_id: str | None = None
@@ -136,6 +141,11 @@ class ImageGenerationJobResponse(BaseModel):
     references: list[ImageReferenceData] = Field(default_factory=list)
     result: ImageGenerationResponse | None = None
     error: IssueDetail | None = None
+    submission_id: str | None = None
+    source: str = "local"
+    source_label: str = "本地"
+    dispatcher_id: str | None = None
+    source_task_id: str | None = None
 
 
 class ImageGenerationJobSummaryResponse(BaseModel):
@@ -145,11 +155,16 @@ class ImageGenerationJobSummaryResponse(BaseModel):
     size: str
     quality: str
     n: int
-    status: ImageJobStatus
+    status: ImagePublicJobStatus
     created_at: int
     updated_at: int
     position: int | None = None
     error: IssueDetail | None = None
+    submission_id: str | None = None
+    source: str = "local"
+    source_label: str = "本地"
+    dispatcher_id: str | None = None
+    source_task_id: str | None = None
 
 
 class ImageGenerationJobListResponse(BaseModel):
@@ -159,7 +174,7 @@ class ImageGenerationJobListResponse(BaseModel):
 
 class ImageGenerationJobStatusResponse(BaseModel):
     id: str
-    status: ImageJobStatus
+    status: ImagePublicJobStatus
     updated_at: int
     position: int | None = None
     error: IssueDetail | None = None
@@ -189,13 +204,18 @@ class ImageGalleryJobResponse(BaseModel):
     size: str
     quality: str
     n: int
-    status: ImageJobStatus
+    status: ImagePublicJobStatus
     created_at: int
     updated_at: int
     position: int | None = None
     references: list[ImageReferenceData] = Field(default_factory=list)
     upstream_metadata: list[ImageUpstreamMetadata] = Field(default_factory=list)
     error: IssueDetail | None = None
+    submission_id: str | None = None
+    source: str = "local"
+    source_label: str = "本地"
+    dispatcher_id: str | None = None
+    source_task_id: str | None = None
 
 
 class ImageGalleryItemResponse(BaseModel):
@@ -220,3 +240,132 @@ class ImageGenerationError(Exception):
 
 def _image_error(status_code: int, code: str, message: str) -> ImageGenerationError:
     return ImageGenerationError(status_code, issue_detail(code, message))
+
+
+class ImageJobSubmitPayload(BaseModel):
+    prompt: str
+    model: str | None = None
+    size: str = "1024x1024"
+    quality: str = "auto"
+    n: int = 1
+    response_format: str = "b64_json"
+    reference_images: list[ImageReferenceInput] = Field(default_factory=list)
+    conversation_id: str | None = None
+    previous_response_id: str | None = None
+
+    def to_generation_request(self) -> ImageGenerationRequest:
+        return ImageGenerationRequest.model_validate(self.model_dump())
+
+
+class ImageJobSubmitRequest(BaseModel):
+    source: ImageJobSource = "local_ui"
+    source_task_id: str | None = None
+    idempotency_key: str
+    queue: str = "default"
+    priority: ImageJobPriority = "normal"
+    payload: ImageJobSubmitPayload
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ImageJobSubmitResponse(BaseModel):
+    submission_id: str
+    job_ids: list[str]
+    created: bool
+
+
+class ImageJobLease(BaseModel):
+    job_id: str
+    lease_owner: str
+    lease_token: str
+    lease_expires_at: int
+    attempt_count: int
+
+
+class ImageWorkerRunResult(BaseModel):
+    status: ImageWorkerRunStatus
+    job_id: str | None = None
+    error: IssueDetail | None = None
+
+
+class ImageWorkerDrainResult(BaseModel):
+    executed: int
+    failed: int
+    stopped_reason: Literal["no_job", "max_jobs", "timeout"]
+
+
+class ImageDispatcherTokenSummary(BaseModel):
+    configured: bool
+    preview: str | None = None
+
+
+class ImageTaskDispatcherSettingsRequest(BaseModel):
+    name: str
+    api_base_url: str
+    token: str | None = None
+
+
+class ImageTaskDispatcherSettingsResponse(BaseModel):
+    configured: bool
+    name: str | None = None
+    api_base_url: str | None = None
+    token: ImageDispatcherTokenSummary = Field(default_factory=lambda: ImageDispatcherTokenSummary(configured=False))
+    paused: bool = False
+    external_runner_id: str | None = None
+    external_runner_status: ImageDispatcherConnectionStatus = "unconfigured"
+    external_heartbeat_interval_seconds: int | None = None
+    external_poll_interval_seconds: int | None = None
+    external_last_heartbeat_at: int | None = None
+    external_last_claim_at: int | None = None
+    external_current_task_id: str | None = None
+    external_last_error: str | None = None
+
+
+class ImageDispatcherTestRequest(BaseModel):
+    name: str | None = None
+    api_base_url: str | None = None
+    token: str | None = None
+
+
+class ImageDispatcherActionResponse(BaseModel):
+    ok: bool
+    settings: ImageTaskDispatcherSettingsResponse
+
+
+class ImageExternalResultImage(BaseModel):
+    index: int
+    file_url: str | None = None
+    width: int | None = None
+    height: int | None = None
+    size_bytes: int | None = None
+    duration_seconds: int | None = None
+
+
+class ImageExternalResultPayload(BaseModel):
+    source_task_id: str | None = None
+    submission_id: str
+    status: Literal["succeeded", "failed", "canceled"]
+    created_at: int
+    finished_at: int
+    images: list[ImageExternalResultImage] = Field(default_factory=list)
+    upstream: dict[str, Any] = Field(default_factory=dict)
+    error: IssueDetail | None = None
+
+
+class ImageRunningExternalTaskResponse(BaseModel):
+    id: str
+    source_task_id: str | None = None
+    prompt: str
+    status: ImageJobStatus
+    started_at: int | None = None
+    updated_at: int
+    lease_owner: str | None = None
+
+
+class ImageWorkerStatusResponse(BaseModel):
+    active_worker_running: bool
+    active_worker_slots: int
+    dispatcher: ImageTaskDispatcherSettingsResponse
+    active_leases: int
+    queued_jobs: int
+    running_jobs: int
+    running_external_tasks: list[ImageRunningExternalTaskResponse] = Field(default_factory=list)

@@ -25,6 +25,11 @@ from images import (
     ImageGenerationQueue,
     ImageGenerationRequest,
     ImageGenerationResponse,
+    ImageDispatcherActionResponse,
+    ImageDispatcherTestRequest,
+    ImageTaskDispatcherSettingsRequest,
+    ImageTaskDispatcherSettingsResponse,
+    ImageWorkerStatusResponse,
     generate_image,
     image_file_path,
 )
@@ -327,11 +332,47 @@ def create_app() -> FastAPI:
         return await image_queue.list_statuses(tracked_job_ids=tracked_ids)
 
     @app.get("/api/images/gallery", response_model=ImageGalleryListResponse, dependencies=authed)
-    async def image_gallery(page: int = 1, limit: int = 20) -> ImageGalleryListResponse:
+    async def image_gallery(page: int = 1, limit: int = 20, source: str = "all") -> ImageGalleryListResponse:
         try:
-            return await image_queue.list_gallery_items(page=page, limit=max(1, min(limit, 50)))
+            return await image_queue.list_gallery_items(page=page, limit=max(1, min(limit, 50)), source=source)
         except ImageGenerationError as exc:
             raise http_error_from_detail(exc.status_code, exc.detail) from exc
+
+    @app.get("/api/images/task-dispatcher/settings", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    def image_task_dispatcher_settings() -> ImageTaskDispatcherSettingsResponse:
+        return image_queue.external_dispatcher.get_settings()
+
+    @app.put("/api/images/task-dispatcher/settings", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def save_image_task_dispatcher_settings(payload: ImageTaskDispatcherSettingsRequest) -> ImageTaskDispatcherSettingsResponse:
+        try:
+            return await image_queue.external_dispatcher.save_settings(payload)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_SUBMISSION_INVALID", str(exc)) from exc
+
+    @app.post("/api/images/task-dispatcher/test", response_model=ImageDispatcherActionResponse, dependencies=authed)
+    async def test_image_task_dispatcher(payload: ImageDispatcherTestRequest) -> ImageDispatcherActionResponse:
+        try:
+            return await image_queue.external_dispatcher.test(payload)
+        except ValueError as exc:
+            raise http_error(status.HTTP_400_BAD_REQUEST, "IMAGE_SUBMISSION_INVALID", str(exc)) from exc
+        except Exception as exc:
+            raise http_error(status.HTTP_502_BAD_GATEWAY, "IMAGE_EXTERNAL_DELIVERY_FAILED", "Task dispatcher connection failed") from exc
+
+    @app.post("/api/images/task-dispatcher/register", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def register_image_task_dispatcher() -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.register()
+
+    @app.post("/api/images/task-dispatcher/pause", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def pause_image_task_dispatcher() -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.pause()
+
+    @app.post("/api/images/task-dispatcher/resume", response_model=ImageTaskDispatcherSettingsResponse, dependencies=authed)
+    async def resume_image_task_dispatcher() -> ImageTaskDispatcherSettingsResponse:
+        return await image_queue.external_dispatcher.resume()
+
+    @app.get("/api/images/workers/status", response_model=ImageWorkerStatusResponse, dependencies=authed)
+    def image_workers_status() -> ImageWorkerStatusResponse:
+        return image_queue.worker_status()
 
     @app.get("/api/images/jobs/{job_id}", response_model=ImageGenerationJobResponse, dependencies=authed)
     async def image_job(job_id: str) -> ImageGenerationJobResponse:
