@@ -3,14 +3,12 @@ from __future__ import annotations
 import sqlite3
 import time
 import uuid
-from contextlib import suppress
 
 from config import Settings
 from db import connect, init_db
 from issues import IssueDetail, issue_detail
 from .common import upstream_metadata_json
 from .models import (
-    ImageGenerationError,
     ImageGenerationResponse,
     ImageJobLease,
     ImageRunningExternalTaskResponse,
@@ -286,14 +284,14 @@ class ImageJobStore:
         with connect(self.settings.db_path) as conn:
             rows = list(
                 conn.execute(
-                    """
+                    f"""
                     SELECT id, dispatcher_id, source_task_id, prompt, status, started_at, updated_at, lease_owner
                     FROM image_jobs
                     WHERE source = 'external_dispatcher'
                       AND status IN ('leased', 'running')
                       {dispatcher_filter}
                     ORDER BY COALESCE(started_at, updated_at) ASC, created_at ASC, id ASC
-                    """.format(dispatcher_filter=dispatcher_filter),
+                    """,
                     params,
                 )
             )

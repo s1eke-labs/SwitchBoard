@@ -96,7 +96,7 @@ class ActiveImageWorker:
             index = len(self._tasks) + 1
             task = asyncio.create_task(self._run_slot(index))
             self._tasks.add(task)
-            task.add_done_callback(lambda done_task: self._tasks.discard(done_task))
+            task.add_done_callback(self._tasks.discard)
         self.coordinator.notify_new_job()
 
     async def close(self) -> None:
